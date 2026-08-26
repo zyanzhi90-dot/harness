@@ -1,0 +1,437 @@
+{
+  "schema_version": 1,
+  "workflow_id": "idea-discovery-v3",
+  "description": "Problem-first discovery with Root-Cause-driven Principle formation, Evidence-driven convergence, explicit human checkpoints, and one owner per formal gate.",
+  "context_budget": {
+    "active_packet_max_chars": 24000,
+    "review_bundle_max_chars": 32000,
+    "max_evidence_cards": 12,
+    "max_unresolved_issue_ids": 8,
+    "history_policy": "paths-and-ids-only"
+  },
+  "artifact_manifest": {
+    "active_field_map": "idea-stage/ACTIVE_FIELD_MAP.md",
+    "evidence_registry": "idea-stage/EVIDENCE_REGISTRY.jsonl",
+    "literature_corpus": "idea-stage/LITERATURE_CORPUS.jsonl",
+    "source_admission_policy": "idea-stage/SOURCE_ADMISSION_POLICY.yaml",
+    "search_log": "idea-stage/SEARCH_LEDGER.jsonl",
+    "root_cause_analysis": "idea-stage/ROOT_CAUSE_ANALYSIS.json",
+    "root_cause_analysis_view": "idea-stage/ROOT_CAUSE_ANALYSIS.md",
+    "root_cause_verdict": "idea-stage/ROOT_CAUSE_VERDICT.json",
+    "method_design_packet": "idea-stage/METHOD_DESIGN_PACKET.json",
+    "method_design_view": "idea-stage/METHOD_DESIGN.md",
+    "method_design_review": "idea-stage/METHOD_DESIGN_REVIEW.json",
+    "method_principles": "idea-stage/METHOD_PRINCIPLES.jsonl",
+    "method_test_evidence": "idea-stage/METHOD_TEST_EVIDENCE.jsonl",
+    "principle_evidence_context": "idea-stage/PRINCIPLE_EVIDENCE_CONTEXT.json",
+    "principle_evaluation": "idea-stage/PRINCIPLE_EVALUATION.json",
+    "principle_evaluation_verdict": "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json",
+    "selected_principle": "idea-stage/SELECTED_PRINCIPLE.yaml",
+    "final_proposal": "refine-logs/FINAL_PROPOSAL.md",
+    "final_method_review": "refine-logs/FINAL_BLIND_REVIEW.md",
+    "refine_state": "refine-logs/REFINE_STATE.json",
+    "final_method_novelty_verdict": "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+    "final_human_report": "idea-stage/IDEA_REPORT.md"
+  },
+  "artifact_contracts": {
+    "method_design_packet": {
+      "format": "json",
+      "schema_version": 1,
+      "lifecycle": "phase_scoped_cycle_artifact",
+      "required_fields": ["schema_version", "cycle_id", "execution_set_id", "problem_binding", "root_cause_binding", "required_mechanism_changes", "required_capabilities", "design_obligations", "principle_search_record", "candidate_principles", "discriminating_tests", "recommended_execution_set", "estimated_total_cost", "relevant_history_refs", "return_feedback_refs"],
+      "required_mechanism_change_fields": ["mechanism_change_id", "causal_chain_ids", "failed_relation_state_or_information_structure", "required_mechanism_change", "root_cause_resolution_rationale", "capability_ids", "obligation_ids", "acceptance_conditions"],
+      "required_capability_fields": ["capability_id", "mechanism_change_ids", "required_capability", "acceptance_conditions"],
+      "design_obligation_fields": ["obligation_id", "mechanism_change_ids", "capability_ids", "design_obligation", "acceptance_conditions"],
+      "candidate_principle_fields": ["principle_id", "principle_version", "parent_version", "principle", "origin", "mechanism_change_ids", "capability_ids", "obligation_ids", "causal_chain_ids", "activation_conditions", "intervention", "changed_structure", "root_cause_resolution_rationale", "failure_conditions", "fatal_assumptions", "target_domain_operationalization", "provisional_scientific_delta", "predictions", "proposed_test_ids", "evidence_refs", "status", "status_rationale"],
+      "candidate_status_enum": ["ACTIVE", "REVISED", "WEAKENED", "MERGED", "RETIRED", "REJECTED"],
+      "fatal_assumption_fields": ["assumption_id", "assumption", "failure_consequence"],
+      "prediction_fields": ["prediction_id", "assumption_ids", "predicted_observation", "activation_conditions", "discriminates_from_principle_ids"],
+      "principle_search_record_fields": ["first_principles", "representation_transformations", "same_field_mechanisms", "cross_domain_structural_isomorphisms", "closure_rationale"],
+      "cross_domain_candidate_fields": ["source_problem", "source_root_cause", "source_intervention", "changed_relation_state_or_information_structure", "source_mechanism_evidence_refs", "solution_principle", "target_source_structural_mapping", "causal_direction", "activation_transfer_conditions", "disanalogies", "transfer_boundaries"],
+      "discriminating_test_required_fields": ["test_id", "test_type", "operationalization", "targets", "execution_requirements", "estimated_cost", "terminal_outcome_contract"],
+      "discriminating_test_optional_fields": ["test_only_concrete_realization"],
+      "test_target_fields": ["principle_id", "principle_version", "assumption_id", "prediction_id", "mechanism_change_id", "causal_chain_id"],
+      "recommended_execution_set_fields": ["execution_set_id", "test_ids", "estimated_total_cost"]
+    },
+    "method_design_view": {
+      "format": "markdown",
+      "authority": "deterministic_view_of_method_design_packet"
+    },
+    "method_design_review": {
+      "format": "json",
+      "schema_version": 1,
+      "required_fields": ["schema_version", "review_request_id", "reviewer", "verdict_id", "decision", "reviewed_artifact", "findings", "return_guidance"],
+      "decision_enum": ["PRINCIPLE_PACKET_READY", "REVISE_PRINCIPLES", "RCA_CONFLICT"]
+    },
+    "method_principles": {
+      "format": "jsonl",
+      "lifecycle": "cross_cycle_append_only_scientific_history",
+      "history_scope": "all_records_relevant_to_current_RMC_principle_version_assumption_test_evidence_update_and_return_context",
+      "evidence_currentness": "history_does_not_make_evidence_current_without_existing_formal_current_context_or_readoption",
+      "event_types": ["PROPOSED", "REVISED", "EVIDENCE_UPDATED", "WEAKENED", "MERGED", "RETIRED", "REJECTED", "CONVERGED", "SELECTED", "VALIDATION_REJECTED"],
+      "required_event_fields": ["schema_version", "event_id", "event_type", "cycle_id", "principle_id", "principle_version", "parent_version", "scientific_context_refs", "evidence_refs", "reason"]
+    },
+    "method_test_evidence": {
+      "format": "jsonl",
+      "lifecycle": "cross_cycle_append_only_scientific_history",
+      "history_scope": "all_records_relevant_to_current_RMC_principle_version_assumption_test_evidence_update_and_return_context",
+      "evidence_currentness": "history_does_not_make_evidence_current_without_existing_formal_current_context_or_readoption",
+      "event_types": ["PROPOSED", "EXECUTION_SET_APPROVED", "EXECUTION_HANDED_OFF", "RESULT_AVAILABLE", "NO_RESULT", "EVIDENCE_UPDATED", "PRINCIPLE_DECISION_RECORDED"],
+      "required_event_fields": ["schema_version", "event_id", "event_type", "cycle_id", "execution_set_id", "test_id", "targets", "record_refs", "reason"],
+      "test_target_fields": ["principle_id", "principle_version", "assumption_id", "prediction_id", "mechanism_change_id", "causal_chain_id"],
+      "terminal_outcomes": ["RESULT_AVAILABLE", "NO_RESULT"],
+      "no_result_reasons": ["execution_failed", "unavailable", "operationalization_failed", "user_stopped"]
+    },
+    "principle_evidence_context": {
+      "format": "json",
+      "schema_version": 1,
+      "lifecycle": "controller_formed_cycle_scoped_pre_start_input",
+      "required_fields": ["schema_version", "cycle_id", "execution_set_id", "active_principles", "test_targets", "approved_test_ids", "terminal_outcomes", "result_refs", "historical_evidence_refs", "current_evidence_refs", "unresolved_assumption_ids", "execution_metadata"],
+      "test_target_fields": ["test_id", "principle_id", "principle_version", "assumption_id", "prediction_id", "mechanism_change_id", "causal_chain_id"],
+      "same_cycle_rebuild_on": ["REVISE_EVALUATION"],
+      "deactivate_on": ["PRINCIPLE_CONVERGED", "MORE_EVIDENCE", "RCA_CONFLICT", "new_test_cycle", "principle_reopened", "root_cause_reopened", "problem_premise_reopened"]
+    },
+    "principle_evaluation": {
+      "format": "json",
+      "schema_version": 1,
+      "lifecycle": "phase_scoped_cycle_artifact",
+      "required_fields": ["schema_version", "cycle_id", "execution_set_id", "evidence_context_ref", "operationalization_assessments", "test_validity_assessments", "activation_condition_assessments", "prediction_comparisons", "principle_updates", "rca_conflicts", "remaining_uncertainties", "relevant_history_refs", "return_feedback_refs"],
+      "principle_update_fields": ["principle_id", "principle_version", "evidence_refs", "decision", "rationale", "updated_boundary_or_assumption_refs"],
+      "principle_update_decisions": ["SUPPORTED", "EXTENDED", "REVISED", "WEAKENED", "MERGED", "RETIRED", "REJECTED", "UNCHANGED"]
+    },
+    "principle_evaluation_verdict": {
+      "format": "json",
+      "schema_version": 1,
+      "required_fields": ["schema_version", "review_request_id", "reviewer", "verdict_id", "decision", "reviewed_artifact", "findings", "return_guidance"],
+      "decision_enum": ["PRINCIPLE_CONVERGED", "REVISE_EVALUATION", "MORE_EVIDENCE", "RCA_CONFLICT"],
+      "principle_converged_required_fields": ["selected_principle_id", "selected_principle_version"]
+    },
+    "selected_principle": {
+      "format": "yaml",
+      "schema_version": 1,
+      "lifecycle": "controller_materialized_after_accepted_convergence",
+      "required_fields": ["schema_version", "principle_id", "principle_version", "problem_binding", "root_cause_binding", "causal_chain_ids", "mechanism_change_ids", "capability_ids", "obligation_ids", "evidence_closure", "activation_conditions", "failure_conditions", "applicability_boundaries", "remaining_uncertainty"],
+      "preserve_on": ["REVISE", "HOLD", "REVISE_METHOD_DELTA", "final_human_request_revision", "METHOD_REFINEMENT_REQUIRED"],
+      "invalidate_on": ["RETHINK", "RETHINK_PRINCIPLE_DELTA", "SELECTED_PRINCIPLE_REJECTED", "RCA_CONFLICT", "ROOT_CAUSE_REJECTED", "PROBLEM_PREMISE_REJECTED"]
+    },
+    "final_proposal": {
+      "format": "markdown",
+      "required_sections": ["Selected Principle binding", "Target-domain adaptation", "Minimal faithful realization", "Principle-only closure attempt", "Residual mechanism and adaptation gaps", "Minimal necessary composition", "Core method changes", "Predicted mechanism changes", "Failure conditions and applicability boundaries", "Final Scientific Delta Claim", "Claim-validation obligations"]
+    },
+    "validation_result": {
+      "format": "json",
+      "schema_version": 1,
+      "decision_enum": ["VALIDATED", "METHOD_REFINEMENT_REQUIRED", "SELECTED_PRINCIPLE_REJECTED", "ROOT_CAUSE_REJECTED", "PROBLEM_PREMISE_REJECTED"],
+      "required_fields": ["schema_version", "validation_result_id", "decision", "evidence_refs", "findings", "return_guidance"],
+      "validated_required_fields": ["supported_claim_elements", "applicability_boundaries", "retained_limitations", "remaining_uncertainties", "established_scientific_delta"]
+    }
+  },
+  "research_effort_budget": {
+    "max_search_cycles": 8,
+    "max_queries": 80,
+    "max_fulltext_papers": 80
+  },
+  "research_lit": {
+    "controller": "arisctl.controller.ARISController",
+    "stages": ["SOURCE_POLICY_DRAFTING", "WAITING_FOR_HUMAN", "QUERY_PLANNING", "METADATA_RETRIEVAL", "HUMAN_SEARCH_REQUIRED", "PAPER_READING", "FIELD_SYNTHESIS", "COVERAGE_REVIEW", "LANDSCAPE_ACCEPTED"],
+    "allowed_actions": {
+      "SOURCE_POLICY_DRAFTING": ["submit_source_admission_policy"],
+      "WAITING_FOR_HUMAN": ["human_approve", "request_source_policy_revision"],
+      "QUERY_PLANNING": ["submit_query_plan"],
+      "METADATA_RETRIEVAL": ["execute_query", "register_user_source", "decide_admission", "select_reading_subset", "finish_retrieval"],
+      "HUMAN_SEARCH_REQUIRED": ["submit_human_search_results", "submit_human_fulltext_batch"],
+      "PAPER_READING": ["read_full_text", "submit_evidence_card", "select_reading_subset", "finish_reading"],
+      "FIELD_SYNTHESIS": ["submit_field_map", "select_formal_primary_subset"],
+      "COVERAGE_REVIEW": ["submit_coverage_review"],
+      "LANDSCAPE_ACCEPTED": []
+    },
+    "allowed_agents": {
+      "SOURCE_POLICY_DRAFTING": ["main_research_agent"],
+      "WAITING_FOR_HUMAN": [],
+      "QUERY_PLANNING": ["main_research_agent"],
+      "METADATA_RETRIEVAL": ["main_research_agent"],
+      "HUMAN_SEARCH_REQUIRED": [],
+      "PAPER_READING": ["main_research_agent", "paper_reader"],
+      "FIELD_SYNTHESIS": ["main_research_agent"],
+      "COVERAGE_REVIEW": ["coverage_reviewer"],
+      "LANDSCAPE_ACCEPTED": []
+    },
+    "coverage_review_triggers": ["candidate_sufficient", "major_taxonomy_change", "final_acceptance"],
+    "canonicalization": "staging_then_validator_then_controller_acceptance",
+    "ledger_source": "gateway_events_only"
+  },
+  "scientific_core": {
+    "controller": "arisctl.controller.ARISController",
+    "phases": ["problem_generation", "problem_quality_gate", "problem_novelty_gate", "problem_human_acceptance", "root_cause_analysis", "root_cause_gate", "method_design", "principle_test_human_approval", "principle_evaluation", "method_refinement", "final_method_novelty_gate", "final_method_human_acceptance"],
+    "allowed_agents": {
+      "problem_generation": ["main_research_agent"],
+      "problem_quality_gate": ["independent_problem_reviewer"],
+      "problem_novelty_gate": ["independent_novelty_reviewer"],
+      "problem_human_acceptance": ["main_research_agent"],
+      "root_cause_analysis": ["main_research_agent"],
+      "root_cause_gate": ["independent_root_cause_reviewer"],
+      "method_design": ["main_research_agent", "independent_method_reviewer"],
+      "principle_test_human_approval": ["main_research_agent"],
+      "principle_evaluation": ["main_research_agent", "independent_method_reviewer"],
+      "method_refinement": ["main_research_agent", "independent_method_reviewer"],
+      "final_method_novelty_gate": ["independent_novelty_reviewer"],
+      "final_method_human_acceptance": ["main_research_agent"]
+    },
+    "artifact_hook_policy": "registered_path_sha256_provenance_and_upstream_snapshot",
+    "formal_review_binding_policy": "finalize_current_controller_accepted_inputs_and_declared_reviewed_artifact_before_reviewer_dispatch",
+    "incremental_literature": {
+      "permitted_phases": ["problem_generation", "problem_novelty_gate", "root_cause_analysis", "method_design", "method_refinement", "final_method_novelty_gate"],
+      "entry_policy": "problem_generation_may_enter_existing_research_lit_gateway_only_while_running_with_lead_bound_query_context; other eligible phases may enter before start; problem_generation_root_cause_analysis_and_method_design_may_reenter_while_running; method_design_running_uses_RMC_capability_obligation_bound_principle_search; method_refinement_running_uses_selected_principle_bound_adaptation_gap_search",
+      "completion": "return_to_landscape_accepted_without_coverage_review",
+      "evidence_binding": "phase_scoped_Evidence_Card_hashes_with_binding-time_formal_upstream_anchor; historical_bindings_remain_auditable_and_require_explicit_same-card_re-adoption_in_a_new_current_context"
+    },
+    "completion_state": "METHOD_CONFIRMED_AWAITING_USER_VALIDATION",
+    "validation_entry_policy": "human_initiated_only_after_method_confirmation",
+    "validation_required_inputs": ["idea-stage/RESEARCH_CONTRACT.md", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict", "@artifact:selected_principle", "@artifact:final_proposal", "@artifact:final_method_novelty_verdict", "@artifact:final_human_report"],
+    "validation_accepted_decisions": ["VALIDATED"],
+    "validation_return_targets": {
+      "METHOD_REFINEMENT_REQUIRED": "method_refinement",
+      "SELECTED_PRINCIPLE_REJECTED": "method_design",
+      "ROOT_CAUSE_REJECTED": "root_cause_analysis",
+      "PROBLEM_PREMISE_REJECTED": "problem_generation"
+    },
+    "validation_success_contract": "predicted_mechanism_change_to_observed_mechanism_change_to_discriminating_evidence_to_performance_consequence"
+  },
+  "terminal_statuses": ["accepted", "human_accepted", "skipped"],
+  "phases": [
+    {
+      "phase": "landscape",
+      "depends_on": [],
+      "required_inputs": [],
+      "produced_artifacts": ["@artifact:active_field_map", "@artifact:evidence_registry", "@artifact:literature_corpus", "@artifact:source_admission_policy", "@artifact:search_log"],
+      "gate_id": "landscape_sufficiency",
+      "gate_owner": "research-lit",
+      "formal_gate": true,
+      "human_checkpoint": false
+    },
+    {
+      "phase": "scope_human_approval",
+      "depends_on": ["landscape"],
+      "required_inputs": ["idea-stage/ACTIVE_FIELD_MAP.md"],
+      "produced_artifacts": [],
+      "gate_id": "scope_approval",
+      "gate_owner": "human",
+      "formal_gate": true,
+      "human_checkpoint": true,
+      "requires_selection": false,
+      "accepted_decisions": ["approve"],
+      "return_targets": {"request_revision": "landscape"}
+    },
+    {
+      "phase": "problem_generation",
+      "depends_on": ["scope_human_approval"],
+      "required_inputs": ["idea-stage/ACTIVE_FIELD_MAP.md"],
+      "produced_artifacts": ["idea-stage/PROBLEM_CANDIDATES.md", "idea-stage/PROBLEM_CANDIDATES.jsonl"],
+      "requires_coverage": {"phase": "landscape", "statuses": ["SUFFICIENT", "PARTIAL"]},
+      "gate_id": "problem_candidate_completeness",
+      "gate_owner": "idea-creator:problem",
+      "formal_gate": false,
+      "human_checkpoint": false
+    },
+    {
+      "phase": "problem_quality_gate",
+      "depends_on": ["problem_generation"],
+      "required_inputs": ["idea-stage/ACTIVE_FIELD_MAP.md", "idea-stage/PROBLEM_CANDIDATES.md", "idea-stage/PROBLEM_CANDIDATES.jsonl"],
+      "produced_artifacts": ["idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl"],
+      "gate_id": "problem_quality",
+      "gate_owner": "idea-creator:problem-jury",
+      "formal_gate": true,
+      "human_checkpoint": false,
+      "reviewer_role": "independent_problem_reviewer",
+      "accepted_verdicts": ["CERTIFIED"],
+      "return_targets": {
+        "HOLD": "problem_generation",
+        "REJECT": "problem_generation",
+        "BLOCKED": "problem_generation"
+      }
+    },
+    {
+      "phase": "problem_novelty_gate",
+      "depends_on": ["problem_quality_gate"],
+      "required_inputs": ["idea-stage/ACTIVE_FIELD_MAP.md", "idea-stage/PROBLEM_CANDIDATES.md", "idea-stage/PROBLEM_CANDIDATES.jsonl", "idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl"],
+      "produced_artifacts": ["idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl"],
+      "gate_id": "problem_novelty",
+      "gate_owner": "novelty-check:problem",
+      "formal_gate": true,
+      "human_checkpoint": false,
+      "reviewer_role": "independent_novelty_reviewer",
+      "accepted_verdicts": ["NOVEL", "NOT_NOVEL", "UNCERTAIN"],
+      "return_targets": {
+        "BLOCKED": "problem_generation"
+      }
+    },
+    {
+      "phase": "problem_human_acceptance",
+      "depends_on": ["problem_novelty_gate"],
+      "required_inputs": ["idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl"],
+      "produced_artifacts": ["idea-stage/RESEARCH_CONTRACT.md", "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md"],
+      "gate_id": "problem_acceptance",
+      "gate_owner": "human",
+      "formal_gate": true,
+      "human_checkpoint": true,
+      "requires_coverage": {"phase": "landscape", "statuses": ["SUFFICIENT"]},
+      "requires_selection": true,
+      "accepted_decisions": ["approve"],
+       "return_targets": {"request_revision": "problem_generation", "reject": "problem_generation"}
+    },
+    {
+      "phase": "root_cause_analysis",
+      "depends_on": ["problem_human_acceptance"],
+      "required_inputs": ["idea-stage/RESEARCH_CONTRACT.md", "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md"],
+      "produced_artifacts": ["@artifact:root_cause_analysis", "@artifact:root_cause_analysis_view"],
+      "gate_id": "root_cause_analysis_completeness",
+      "gate_owner": "idea-creator:diagnosis",
+      "formal_gate": false,
+      "human_checkpoint": false
+    },
+    {
+      "phase": "root_cause_gate",
+      "depends_on": ["root_cause_analysis"],
+      "required_inputs": ["idea-stage/RESEARCH_CONTRACT.md", "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md", "@artifact:root_cause_analysis", "@artifact:root_cause_analysis_view"],
+      "produced_artifacts": ["@artifact:root_cause_verdict"],
+      "requires_validated_artifacts": [
+        {"phase": "root_cause_analysis", "artifacts": ["idea-stage/RESEARCH_CONTRACT.md", "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md", "@artifact:root_cause_analysis", "@artifact:root_cause_analysis_view"]}
+      ],
+      "gate_id": "root_cause_quality",
+      "gate_owner": "root-cause-reviewer",
+      "formal_gate": true,
+      "human_checkpoint": false,
+      "reviewer_role": "independent_root_cause_reviewer",
+      "accepted_verdicts": ["DIAGNOSIS_READY"],
+      "return_targets": {"REVISE_DIAGNOSIS": "root_cause_analysis", "REOPEN_PROBLEM": "problem_generation"}
+    },
+    {
+      "phase": "method_design",
+      "depends_on": ["root_cause_gate"],
+      "required_inputs": ["idea-stage/ACTIVE_FIELD_MAP.md", "idea-stage/RESEARCH_CONTRACT.md", "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict"],
+      "scientific_history_inputs": ["@artifact:method_principles", "@artifact:method_test_evidence"],
+      "scientific_history_scope": "all_records_relevant_to_current_RMC_principle_version_assumption_test_evidence_update_and_return_context",
+      "produced_artifacts": ["@artifact:method_design_packet", "@artifact:method_design_view", "@artifact:method_design_review"],
+      "reviewed_artifacts": ["@artifact:method_design_packet"],
+      "requires_validated_artifacts": [
+        {"phase": "root_cause_analysis", "artifacts": ["idea-stage/RESEARCH_CONTRACT.md", "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md", "@artifact:root_cause_analysis"]},
+        {"phase": "root_cause_gate", "artifacts": ["@artifact:root_cause_verdict"]}
+      ],
+      "gate_id": "principle_packet_semantic_review",
+      "gate_owner": "idea-creator:method-principle",
+      "formal_gate": true,
+      "human_checkpoint": false,
+      "reviewer_role": "independent_method_reviewer",
+      "accepted_verdicts": ["PRINCIPLE_PACKET_READY"],
+      "return_targets": {
+        "REVISE_PRINCIPLES": "method_design",
+        "RCA_CONFLICT": "root_cause_analysis"
+      },
+      "return_effects": {
+        "REVISE_PRINCIPLES": "revise_current_principle_test_packet_with_return_guidance",
+        "RCA_CONFLICT": "reopen_root_cause_with_linked_evidence_and_return_guidance"
+      }
+    },
+    {
+      "phase": "principle_test_human_approval",
+      "depends_on": ["method_design"],
+      "required_inputs": ["@artifact:method_design_packet", "@artifact:method_design_view", "@artifact:method_design_review"],
+      "produced_artifacts": [],
+      "requires_validated_artifacts": [
+        {"phase": "method_design", "artifacts": ["@artifact:method_design_packet", "@artifact:method_design_view", "@artifact:method_design_review"]}
+      ],
+      "gate_id": "principle_test_approval",
+      "gate_owner": "human",
+      "formal_gate": true,
+      "human_checkpoint": true,
+      "requires_selection": false,
+      "approval_subject": "method_design_packet.recommended_execution_set_and_estimated_total_cost",
+      "accepted_decisions": ["approve"],
+      "return_targets": {"request_revision": "method_design"}
+    },
+    {
+      "phase": "principle_evaluation",
+      "depends_on": ["principle_test_human_approval"],
+      "required_inputs": ["@artifact:method_design_packet", "@artifact:method_design_review", "@artifact:principle_evidence_context"],
+      "scientific_history_inputs": ["@artifact:method_principles", "@artifact:method_test_evidence"],
+      "scientific_history_scope": "all_records_relevant_to_current_RMC_principle_version_assumption_test_evidence_update_and_return_context",
+      "produced_artifacts": ["@artifact:principle_evaluation", "@artifact:principle_evaluation_verdict"],
+      "reviewed_artifacts": ["@artifact:principle_evaluation"],
+      "requires_validated_artifacts": [
+        {"phase": "method_design", "artifacts": ["@artifact:method_design_packet", "@artifact:method_design_review"]}
+      ],
+      "pre_start_conditions": ["approved_execution_set_all_tests_terminal", "active_principle_evidence_context_matches_approved_cycle"],
+      "gate_id": "principle_convergence_review",
+      "gate_owner": "idea-creator:principle-evaluation",
+      "formal_gate": true,
+      "human_checkpoint": false,
+      "reviewer_role": "independent_method_reviewer",
+      "accepted_verdicts": ["PRINCIPLE_CONVERGED"],
+      "acceptance_artifacts": ["@artifact:selected_principle"],
+      "return_targets": {
+        "REVISE_EVALUATION": "principle_evaluation",
+        "MORE_EVIDENCE": "method_design",
+        "RCA_CONFLICT": "root_cause_analysis"
+      },
+      "return_effects": {
+        "REVISE_EVALUATION": "preserve_cycle_execution_set_and_terminal_results_then_rebuild_equivalent_evidence_context_without_new_tests",
+        "MORE_EVIDENCE": "end_active_evidence_context_and_create_a_new_test_cycle_requiring_human_approval",
+        "RCA_CONFLICT": "end_active_evidence_context_and_reopen_root_cause_with_linked_evidence_and_return_guidance"
+      }
+    },
+    {
+      "phase": "method_refinement",
+      "depends_on": ["principle_evaluation"],
+      "required_inputs": ["idea-stage/ACTIVE_FIELD_MAP.md", "idea-stage/RESEARCH_CONTRACT.md", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict", "@artifact:selected_principle"],
+      "produced_artifacts": ["@artifact:final_proposal", "@artifact:final_method_review", "@artifact:refine_state"],
+      "reviewed_artifacts": ["@artifact:final_proposal"],
+      "requires_validated_artifacts": [
+        {"phase": "root_cause_analysis", "artifacts": ["idea-stage/RESEARCH_CONTRACT.md", "@artifact:root_cause_analysis"]},
+        {"phase": "root_cause_gate", "artifacts": ["@artifact:root_cause_verdict"]},
+        {"phase": "principle_evaluation", "artifacts": ["@artifact:principle_evaluation", "@artifact:principle_evaluation_verdict"]}
+      ],
+      "gate_id": "method_refinement",
+      "gate_owner": "research-refine",
+      "formal_gate": true,
+      "human_checkpoint": false,
+      "reviewer_role": "independent_method_reviewer",
+      "accepted_verdicts": ["METHOD_READY"],
+      "return_targets": {
+        "REVISE": "method_refinement",
+        "RETHINK": "method_design",
+        "HOLD": "method_refinement",
+        "RCA_CONFLICT": "root_cause_analysis"
+      }
+    },
+    {
+      "phase": "final_method_novelty_gate",
+      "depends_on": ["method_refinement"],
+      "required_inputs": ["@artifact:selected_principle", "@artifact:final_proposal", "@artifact:final_method_review"],
+      "produced_artifacts": ["@artifact:final_method_novelty_verdict"],
+      "gate_id": "method_novelty_final",
+      "gate_owner": "novelty-check:method-final",
+      "formal_gate": true,
+      "human_checkpoint": false,
+      "reviewer_role": "independent_novelty_reviewer",
+      "accepted_verdicts": ["NOVEL"],
+      "return_targets": {
+        "REVISE_METHOD_DELTA": "method_refinement",
+        "RETHINK_PRINCIPLE_DELTA": "method_design",
+        "HOLD": "final_method_novelty_gate"
+      }
+    },
+    {
+      "phase": "final_method_human_acceptance",
+      "depends_on": ["final_method_novelty_gate"],
+      "required_inputs": ["@artifact:selected_principle", "@artifact:final_proposal", "@artifact:final_method_novelty_verdict"],
+      "produced_artifacts": ["@artifact:final_human_report"],
+      "gate_id": "method_acceptance",
+      "gate_owner": "human",
+      "formal_gate": true,
+      "human_checkpoint": true,
+      "requires_selection": false,
+      "accepted_decisions": ["approve"],
+      "return_targets": {"request_revision": "method_refinement"}
+    }
+  ]
+}
