@@ -1,6 +1,6 @@
 ---
 name: "novelty-check"
-description: "Verify research idea novelty against recent literature. Use when user says \"查新\", \"novelty check\", \"有没有人做过\", \"check novelty\", or wants to verify a research idea is novel before implementing."
+description: "Gemini cross-family verification of problem novelty, method novelty, or both against recent literature."
 ---
 
 > Override for Codex users who want **Gemini**, not a second Codex agent, to act as the reviewer. Install this package **after** `skills/skills-codex/*`.
@@ -9,7 +9,8 @@ description: "Verify research idea novelty against recent literature. Use when u
 
 > **Gemini overlay assurance:** `review_independence: cross-family` and `acceptance_status: accepted`.
 
-Check whether a proposed method/idea has already been done in the literature: **$ARGUMENTS**
+Check whether a proposed problem framing and/or method is already established:
+**$ARGUMENTS**
 
 ## Constants
 
@@ -17,30 +18,35 @@ Check whether a proposed method/idea has already been done in the literature: **
 
 ## Instructions
 
-Given a method description, systematically verify its novelty:
+Parse `mode: problem|method|combined`. Follow
+[`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
+for problem mode and
+[`method-design-contract.md`](../shared-references/method-design-contract.md)
+for method mode. Keep problem, scientific-delta, and technical-route novelty
+distinct.
+
+Apply
+[`source-admission-policy.md`](../shared-references/source-admission-policy.md)
+before reading or expanding any candidate paper.
 
 ### Phase A: Extract Key Claims
-1. Read the user's method description
-2. Identify 3-5 core technical claims that would need to be novel:
-   - What is the method?
-   - What problem does it solve?
-   - What is the mechanism?
-   - What makes it different from obvious baselines?
+1. For `problem|combined`, extract phenomenon, setting, failure/boundary,
+   causal framing, importance, and research question as `P1...`.
+2. For `method|combined`, extract falsifiable hypothesis, intended scientific
+   delta, dominant method, backbone, innovation carrier, supporting mechanisms,
+   integration interfaces, targeted evidence, and technical delta as `M1...`.
 
-### Phase B: Multi-Source Literature Search
-For EACH core claim, search using ALL available sources:
+### Phase B: Controller-Governed Literature Search
+For each applicable claim:
 
-1. **Web Search** (via `WebSearch`):
-   - Search arXiv, Google Scholar, Semantic Scholar
-   - Use specific technical terms from the claim
-   - Try at least 3 different query formulations per claim
-   - Include year filters for 2024-2026
-
-2. **Known paper databases**: Check against:
-   - ICLR 2025/2026, NeurIPS 2025, ICML 2025/2026
-   - Recent arXiv preprints (2025-2026)
-
-3. **Read abstracts**: For each potentially overlapping paper, WebFetch its abstract and related work section
+1. In a formal run, use a pending phase's `submit_query_plan` Controller action,
+   then only the existing query, admission, read and evidence actions. Never
+   use hosted web search/fetch or a private corpus/ledger.
+2. Use `problem_novelty_gate` or `final_method_novelty_gate` as appropriate and
+   finish reading before starting the Gate; newly accepted Evidence Card hashes
+   are bound by the Controller to its request.
+3. Read only `ADMIT_DECISION_GRADE` or `USER_SUPPLIED_READ` content; discovery
+   records remain metadata, never scientific evidence.
 
 ### Phase C: Cross-Model Verification
 Call REVIEWER_MODEL via `mcp__gemini-review__review_start` with high-rigor review:
@@ -52,9 +58,14 @@ mcp__gemini-review__review_start:
 
 After this start call, immediately save the returned `jobId` and poll `mcp__gemini-review__review_status` with a bounded `waitSeconds` until `done=true`. Treat the completed status payload's `response` as the reviewer output, and save the completed `threadId` for any follow-up round.
 Prompt should include:
-- The proposed method description
+- mode and separate problem/method claim lists
 - All papers found in Phase B
-- Ask: "Is this method novel? What is the closest prior work? What is the delta?"
+- Ask for independent problem/method verdicts, closest framing/route, residual
+  delta, and confidence. One verdict cannot substitute for the other.
+- A potentially decisive closest/concurrent prior must use the existing
+  `decisive_closest_prior_or_concurrent` admission exception and resolve to a
+  decision-grade Evidence Card whose source ID is that same prior. If it cannot be verified, return problem
+  `UNCERTAIN`, not `NOVEL`.
 
 ### Phase D: Novelty Report
 Output a structured report:
@@ -62,22 +73,34 @@ Output a structured report:
 ```markdown
 ## Novelty Check Report
 
-### Proposed Method
-[1-2 sentence description]
+### Mode
+problem / method / combined
 
-### Core Claims
-1. [Claim 1] — Novelty: HIGH/MEDIUM/LOW — Closest: [paper]
-2. [Claim 2] — Novelty: HIGH/MEDIUM/LOW — Closest: [paper]
-...
+### Problem Novelty
+- Problem statement and P-claims
+- Closest framing and residual unresolved delta
+- Verdict: HIGH / MEDIUM / LOW / BLOCKED
+- Confidence and evidence gaps
+
+### Method Novelty
+- Scientific hypothesis and intended delta
+- Dominant method + backbone + innovation carrier and M-claims
+- Supporting mechanisms, integration interfaces, and targeted responsibilities
+- Closest route, residual scientific delta, and technical-route delta
+- Scientific closure: structural match, actual interfaces,
+  capability-specific removal failures, targeted evidence, and one causal chain
+- Verdict: HIGH / MEDIUM / LOW / BLOCKED
+- Confidence and evidence gaps
 
 ### Closest Prior Work
-| Paper | Year | Venue | Overlap | Key Difference |
-|-------|------|-------|---------|----------------|
+| Paper | Year | Venue | Overlap type | Claim IDs | Key difference |
+|-------|------|-------|--------------|-----------|----------------|
 
 ### Overall Novelty Assessment
-- Score: X/10
+- Problem novelty: X/10 or N/A
+- Method novelty: X/10 or N/A
 - Recommendation: PROCEED / PROCEED WITH CAUTION / ABANDON
-- Key differentiator: [what makes this unique, if anything]
+- Key differentiator(s): [problem and method separately]
 - Risk: [what a reviewer would cite as prior work]
 
 ### Suggested Positioning
@@ -86,7 +109,14 @@ Output a structured report:
 
 ### Important Rules
 - Be BRUTALLY honest — false novelty claims waste months of research time
-- "Applying X to Y" is NOT novel unless the application reveals surprising insights
-- Check both the method AND the experimental setting for novelty
+- A supporting mechanism is justified only when it closes a declared residual
+  `MUST` gap after Field-Map and same-field options have been assessed;
+  combination itself is not a novelty claim.
+- "Applying X to Y" needs structural correspondence, real integration, and a
+  scientific delta.
+- In combined mode, report problem, scientific-delta, and technical-route
+  novelty separately.
+`mode: method-final` is a final-method alias and may run only on the refined
+`FINAL_PROPOSAL.md`, not on preliminary routes.
 - If the method is not novel but the FINDING would be, say so explicitly
-- Always check the most recent 6 months of arXiv — the field moves fast
+- Apply the Source Admission Gate without using recency as an eligibility gate.

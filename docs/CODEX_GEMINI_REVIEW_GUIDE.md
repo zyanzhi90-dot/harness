@@ -144,7 +144,6 @@ The overlay replaces the predefined reviewer-aware Codex skills:
 
 - `idea-creator`
 - `idea-discovery`
-- `idea-discovery-robot`
 - `research-review`
 - `novelty-check`
 - `research-refine`
@@ -160,12 +159,12 @@ The overlay replaces the predefined reviewer-aware Codex skills:
 
 Everything else still comes from the upstream `skills/skills-codex/` package.
 
-## Core 8 vs Runtime 15
+## Core 8 vs Runtime 14
 
 There are two equally correct ways to describe the scope of this path:
 
 - **Core 8**: the direct one-to-one reviewer overlay set that aligns with the existing Claude-review path
-- **Runtime 15**: the full reviewer-aware Codex skill surface that is routed to Gemini in the current installed skill set
+- **Runtime 14**: the full reviewer-aware Codex skill surface that is routed to Gemini in the current installed skill set
 
 The **core 8** are:
 
@@ -180,11 +179,10 @@ The **core 8** are:
 
 These are the skills that most directly mirror the earlier Claude-review overlay structure and reviewer contract.
 
-The additional **7** reviewer-aware skills routed to Gemini are:
+The additional **6** reviewer-aware skills routed to Gemini are:
 
 - `idea-creator`
 - `idea-discovery`
-- `idea-discovery-robot`
 - `grant-proposal`
 - `paper-writing`
 - `paper-slides`
@@ -193,13 +191,13 @@ The additional **7** reviewer-aware skills routed to Gemini are:
 So the practical summary is:
 
 - the **core mechanism** still tracks the same 8-skill overlay pattern as the Claude route
-- the **current runtime reviewer surface** is broader, reaching 15 skills in total
+- the **current runtime reviewer surface** is broader, reaching 14 skills in total
 
 This is why the diff is larger without changing the underlying reviewer contract shape.
 
 ## Direct Consumers vs Wrappers
 
-Within those 15 skills, there are two categories:
+Within those 14 skills, there are two categories:
 
 - **12 direct consumers** that call `mcp__gemini-review__review_start` / `review_reply_start` / `review_status` themselves:
   - `research-review`
@@ -214,12 +212,11 @@ Within those 15 skills, there are two categories:
   - `grant-proposal`
   - `paper-slides`
   - `paper-poster-html`
-- **3 wrappers** that mainly orchestrate downstream reviewer-aware sub-skills and pass `REVIEWER_MODEL=gemini-review` through:
+- **2 wrappers** that mainly orchestrate downstream reviewer-aware sub-skills and pass `REVIEWER_MODEL=gemini-review` through:
   - `idea-discovery`
-  - `idea-discovery-robot`
   - `paper-writing`
 
-This matters for validation: you do not need to fully complete all 15 workflows to validate the reviewer transport. A combination of full structural checks, bridge runtime checks, and representative direct-consumer / wrapper smoke tests is enough to validate the PR-level integration logic.
+This matters for validation: you do not need to fully complete all 14 workflows to validate the reviewer transport. A combination of full structural checks, bridge runtime checks, and representative direct-consumer / wrapper smoke tests is enough to validate the PR-level integration logic.
 
 ## Async reviewer flow
 

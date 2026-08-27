@@ -171,7 +171,7 @@ Copilot CLI supports the **same slash command syntax** as Claude Code:
 /idea-discovery "factorized gap in discrete diffusion LMs"
 /auto-review-loop "your paper topic"
 /paper-writing "NARRATIVE_REPORT.md"
-/research-pipeline "your direction"
+/research-pipeline "<canonical-run-id>"
 ```
 
 Skills are also auto-discovered from their `description` field — just describe what you want naturally:
@@ -187,10 +187,14 @@ Type `/` to see all available skills.
 
 Since Copilot CLI uses the same slash command syntax, **all workflows work identically to Claude Code**:
 
-### Full Pipeline
+### Canonical Validation Continuation
 ```
-/research-pipeline "your research direction"
+/research-pipeline "<canonical-run-id>"
 ```
+
+Use this only after the canonical Controller workflow has accepted the method
+and the user explicitly starts validation. It is not an idea-discovery or
+paper-writing shortcut.
 
 ### Individual Workflows
 
@@ -206,7 +210,7 @@ Since Copilot CLI uses the same slash command syntax, **all workflows work ident
 
 Same syntax as Claude Code:
 ```
-/research-pipeline "topic" — effort: beast, difficulty: nightmare, auto_write: true, venue: NeurIPS
+/research-pipeline "<canonical-run-id>"
 /auto-review-loop "topic" — human checkpoint: true, compact: true
 ```
 
@@ -267,7 +271,7 @@ Copilot CLI supports multiple executor models. Use `/model` to switch:
 | GPT-5 | Complex reasoning, long pipelines | Premium requests |
 | o3 | Deep mathematical reasoning | Premium requests |
 
-> **Tip:** For full research pipelines (`/research-pipeline`, `/paper-writing`), use GPT-5 or o3 for best results. For quick tasks (`/research-lit`, `/paper-compile`), GPT-5 mini is sufficient.
+> **Tip:** Use GPT-5 or o3 for canonical validation continuation and paper writing. For quick tasks (`/research-lit`, `/paper-compile`), GPT-5 mini is sufficient.
 
 ## 9. Copilot CLI-Specific Features
 
@@ -292,8 +296,8 @@ Use `/task` for running builds and tests alongside ARIS workflows:
 Copilot's native GitHub MCP integrates with ARIS workflows for issue/PR management:
 
 ```
-/research-pipeline "topic"
-# ... after completion ...
+/research-pipeline "<canonical-run-id>"
+# ... after bound validation completes ...
 # Create a PR with the paper
 ```
 

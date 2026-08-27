@@ -1,473 +1,389 @@
 ---
 name: idea-creator
-description: Generate and rank research ideas given a broad direction. Use when user says "找idea", "brainstorm ideas", "generate research ideas", "what can we work on", or wants to explore a research area for publishable directions.
-argument-hint: "[research-direction]"
-allowed-tools: Bash(*), Read, Write, Grep, Glob, WebSearch, WebFetch, Agent, Skill, mcp__codex__codex, mcp__codex__codex-reply, mcp__manual_review__review, mcp__manual_review__review_reply
+description: "Run one independent problem-discovery, root-cause diagnosis, or method-design module. Use mode: problem to certify an evidence-grounded problem; mode: diagnosis to execute 1a-2b and obtain an independent root-cause verdict; mode: method only after DIAGNOSIS_READY."
+argument-hint: "mode: problem|diagnosis|method; direction or handoff path"
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
-# Research Idea Creator
+# Research Idea Creator — three independent modes
 
-Generate publishable research ideas for: $ARGUMENTS
+Run exactly one mode for: **$ARGUMENTS**.
 
-## Overview
+This skill is intentionally split at artifact boundaries. Fresh invocations in
+`mode: diagnosis` and `mode: method` must not inherit the previous module's
+reasoning history. Diagnosis reads the accepted problem handoff; method reads
+the validated diagnosis handoff. The parent orchestrator may call the modes
+sequentially, but it must not skip either boundary.
 
-Given a broad research direction from the user, systematically generate, validate, and rank concrete research ideas. Standalone, Phase 1's landscape survey is **inline** (WebSearch — it does not invoke `/research-lit`); Phases 4-5 invoke `/novelty-check`, `/run-experiment`, and `/monitor-experiment` for validation and pilots. For the full sub-skill pipeline (`/research-lit` → idea generation → `/novelty-check` → `/research-review`), run `/idea-discovery` (Workflow 1), which orchestrates this skill.
+## Shared execution contract
 
-## Constants
+Read only the references needed for the active mode:
 
-- **PILOT_MAX_HOURS = 2** — Skip any pilot estimated to take > 2 hours per GPU. Flag as "needs manual pilot".
-- **PILOT_TIMEOUT_HOURS = 3** — Hard timeout: kill pilots exceeding 3 hours. Collect partial results if available.
-- **MAX_PILOT_IDEAS = 3** — Pilot at most 3 ideas in parallel. Additional ideas are validated on paper only.
-- **MAX_TOTAL_GPU_HOURS = 8** — Total GPU budget for all pilots combined.
-- **REVIEWER_MODEL = `gpt-5.6-sol`** — Default model for the Codex backend. Must be an OpenAI model (e.g., `gpt-5.6-sol`, `o3`, `gpt-4o`). Manual backend uses whatever model the user chooses, **but it must be a non-Claude model** — the executor is Claude, so pasting into any Claude product makes Claude judge Claude and voids the cross-model invariant (see `shared-references/reviewer-routing.md`).
-- **REVIEWER_BACKEND = `codex`** — Default: Codex MCP (xhigh). Override with `— reviewer: oracle-pro` for Oracle MCP, or `— reviewer: manual` for Manual Review MCP. If manual-review MCP is unavailable, stop and print the install command; do not fall back to Codex. See `shared-references/reviewer-routing.md`.
-- **OUTPUT_DIR = `idea-stage/`** — All idea-stage outputs go here. Create the directory if it doesn't exist.
+- [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
+- [`root-cause-analysis-contract.md`](../shared-references/root-cause-analysis-contract.md)
+- [`method-design-contract.md`](../shared-references/method-design-contract.md)
+- [`source-admission-policy.md`](../shared-references/source-admission-policy.md)
+- [`reviewer-independence.md`](../shared-references/reviewer-independence.md)
+- [`idea-fanout-module.md`](../shared-references/idea-fanout-module.md) — read
+  for problem-mode breadth generation only
+- [`idea-wiki-integration.md`](../shared-references/idea-wiki-integration.md) —
+  read when `research-wiki/` is present
+- [`idea-output-composition.md`](../shared-references/idea-output-composition.md) —
+  read when composing or exporting the final report
 
-> 💡 Override via argument, e.g., `/idea-creator "topic" — pilot budget: 4h per idea, 20h total`.
+Use `idea-stage/` as the working directory. Keep the full literature registry
+and raw search history out of the active prompt. Compile a compact packet with
+stable evidence IDs, claim/boundary/failure fields, and unresolved questions.
+Do not paste the complete `IDEA_REPORT.md` into downstream contexts.
 
-## Reviewer Calling Convention
+When `LESSONS_LEARNED.md` exists, read only entries relevant to the active
+problem, diagnosis, or method as anti-repetition checks. A lesson is neither
+formal evidence nor a handoff and cannot authorize a transition. Never read
+`.aris/archive/` as an active input: a Controller `return-phase` has moved
+invalidated outputs there precisely because their former conclusion no longer
+authorizes downstream work.
 
-When calling the reviewer for idea evaluation, branch on REVIEWER_BACKEND:
+Every output must distinguish `evidence`, `inference`, `hypothesis`, and
+`decision`. Never treat a model score as acceptance. Formal verdicts require a
+verdict ID, reviewer identity/family, evidence anchors, and one status allowed
+by the active contract: problem certification uses
+`CERTIFIED/HOLD/REJECT/BLOCKED`; diagnosis uses
+`DIAGNOSIS_READY/REVISE_DIAGNOSIS/REOPEN_PROBLEM`. Human acceptance remains separate from
+machine or model review.
 
-**If REVIEWER_BACKEND = `codex`:**
-  Use `mcp__codex__codex` for new review threads.
-  Use `mcp__codex__codex-reply` for follow-up rounds (reuse threadId).
+### Context budget (starting defaults)
 
-**If REVIEWER_BACKEND = `manual`:**
-  Use `mcp__manual_review__review` for new review threads with:
-    prompt: [exact same prompt that would go to Codex]
-    config: {"model_reasoning_effort": "xhigh"}
-  Save the returned `threadId`.
-  Use `mcp__manual_review__review_reply` for follow-up rounds with:
-    threadId: [saved manual-review threadId]
-    prompt: [follow-up prompt]
-    config: {"model_reasoning_effort": "xhigh"}
+Compile each active packet to at most 24,000 characters, with at most 12
+evidence cards and 8 unresolved issue IDs. Keep review bundles below 32,000
+characters; pass paths and stable IDs for larger artifacts. These are benchmark
+starting points, not scientific limits: measure task success, retrieval
+coverage, latency, and token cost before changing them. If a decision needs
+more evidence, retrieve the specific card by ID rather than appending the full
+registry or history.
 
-Content fidelity: the manual reviewer should see the same substantive bundle
-content Codex would read. If the manual UI supports file upload / attachment,
-reuse the same bundle file; otherwise paste the bundle contents inline because
-remote web UIs cannot read your local filesystem paths. Review tracing applies
-equally to both backends.
+For Codex-compatible path-only review transport, write the problem generator
+bundle to `idea-stage/codex_brainstorm_bundle.md` and prompt
+`Read the idea-generation bundle at <absolute path>`. Write the independent
+jury packet to `idea-stage/codex_triage_bundle.md`; never paste the full bundle
+into the reviewer context.
 
-## Workflow
+## Mode dispatch
 
-### Phase 0: Load Research Wiki (if active)
+Parse the first explicit `mode:` value. If absent, default to `problem` and
+state that default in the output. Unknown modes are an error. The modes have
+different inputs, outputs, and stopping conditions:
 
-**Skip this phase entirely if `research-wiki/` does not exist.**
+| Mode | Reads | Writes | Must stop at |
+|---|---|---|---|
+| `problem` | Field Evidence Map and source records | `PROBLEM_CANDIDATES.*`, `PROBLEM_QUALITY_VERDICTS.jsonl`, `PROBLEM_NOVELTY_VERDICTS.jsonl`, then the separate `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` after user selection and before the Controller records human acceptance | human problem selection |
+| `diagnosis` | accepted `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` | `ROOT_CAUSE_ANALYSIS.json`, faithful `.md` view, independent `ROOT_CAUSE_VERDICT.json` | `DIAGNOSIS_READY` or return path |
+| `method` | accepted problem plus validated root-cause analysis/verdict | `METHOD_ROUTES.*`, `SELECTED_ROUTE.yaml` only after selection | human route selection |
 
-If `research-wiki/` exists, resolve the canonical helper using the
-shared resolution chain (see `../research-wiki/SKILL.md` for the
-contract):
+`IDEA_REPORT.md` is a final human-facing report only. It is never the machine
+handoff between these modes.
 
-```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
-if [ -z "${ARIS_REPO:-}" ] && [ -f "$HOME/.aris/repo" ]; then
-  ARIS_REPO=$(cat "$HOME/.aris/repo" 2>/dev/null) || true
-fi
-WIKI_SCRIPT=".aris/tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
-[ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research_wiki.py not found at .aris/tools/, tools/, \$ARIS_REPO/tools/, or via ~/.aris/repo." >&2
-  echo "      The idea-creation primary output (idea ranking) will still be produced." >&2
-  echo "      Wiki integration (load query_pack, write idea pages, add edges, rebuild query_pack) will be skipped." >&2
-  echo "      Fix: rerun 'bash tools/install_aris.sh' or 'smart_update.sh' (refreshes ~/.aris/repo), export ARIS_REPO, or 'cp <ARIS-repo>/tools/research_wiki.py tools/'." >&2
-  WIKI_SCRIPT=""
-}
+---
+
+## Mode: `problem` — discovery and certification
+
+### P0. Validate the landscape
+
+Require a `SUFFICIENT` or bounded `PARTIAL` Field Evidence Map from
+`/research-lit`. The active map must cover field purpose, tasks, bottlenecks,
+method families, assumptions, effective and failure conditions, contradictions,
+evaluation blind spots, and negative evidence. If the map is `INSUFFICIENT`,
+return a blocked handoff with the missing searches; do not generate ideas.
+
+### P1. Discover and triage Leads in fresh lens contexts
+
+Follow [`idea-fanout-module.md`](../shared-references/idea-fanout-module.md):
+use isolated lens contexts and return structured Lead cognition only. Fan-out
+is for discovery and triage, not ranking, certification, or materializing a
+formal Candidate.
+
+Use all three routes when they yield useful Leads, without treating them as
+quotas:
+
+1. community-open problems;
+2. self-discovered failures, boundary conditions, and contradictions;
+3. structurally justified problem migration.
+
+Discover self-discovered Leads in two complementary ways: compare Field Map
+families horizontally for shared assumptions, recurring failures, boundaries,
+inconsistent results, and unresolved contradictions; and let a key paper's
+discussion/conclusion, exposed bottleneck, or underdeveloped direction suggest
+a Lead. In neither case does a paper limitation directly become a formal
+Candidate: first compare it against the wider map and validate it by targeted
+deep dive.
+
+For each Lead, establish its starting observation, reason to track, largest
+uncertainty, current basis, and possible disconfirming evidence. A promising
+Lead alone may use the existing targeted literature gateway after
+`problem_generation` has entered `running`. Each query has exactly one of
+Reality, Importance, Unresolvedness, Precision, Falsifiability, or
+Answerability as `decision_dimension`, with immutable non-empty Lead ID,
+statement, purpose, close condition, and current Field Map hash. Generators do
+not create formal Candidates, rank, certify, write Lead artifacts, or design
+methods.
+
+### P2. Evidence-led maturation
+
+After each Evidence round, strengthen, narrow, reframe, reject, or mature the
+Lead. Use the deep dive to seek disconfirmation, not merely support: check closest/strongest prior and residual unresolved delta, strongest
+counterevidence, alternative explanations, true unresolvedness, and whether
+simple application or tuning already resolves it. Judge Reality, Importance,
+Unresolvedness, Precision, Falsifiability, and Answerability scientifically;
+the Controller does not score these judgments.
+
+Only when a Lead is mature, expand it into the existing Candidate schema,
+resolve evidence IDs, and write:
+
+- `idea-stage/PROBLEM_CANDIDATES.jsonl` — machine handoff, one candidate per line;
+- `idea-stage/PROBLEM_CANDIDATES.md` — compact human-readable index.
+
+Rejected Leads remain internal cognition: create no Candidate and continue
+other Lead discovery/triage as needed. Do not send them to a validator, Gate,
+or Human Acceptance.
+
+### P3. Problem-quality gate
+
+Use a fresh reviewer context and a path-only bundle. Assess Reality,
+Importance, Unresolvedness, Precision, Falsifiability, and Answerability, plus
+hard gates for evidence, scope, decisive test, feasibility, and calibrated
+claim language. Record a `PASS`, `INSUFFICIENT_EVIDENCE`, or `FAIL` judgment
+for each dimension. Reality, Importance, and Unresolvedness require formal
+evidence anchors; Precision, Falsifiability, and Answerability may rely on the
+bound candidate and Field Map without irrelevant literature anchors. Return one
+verdict per candidate with issue IDs and applicable evidence anchors. This is a
+provisional scientific gate, not human acceptance.
+
+### P4. Problem novelty packet
+
+Prepare the compact candidate/evidence packet for the orchestrator's unique
+problem-novelty Gate. The parent workflow invokes
+`/novelty-check "mode: problem | candidate IDs + compact evidence packet"` only
+for quality-gate survivors. Keep problem novelty separate from method novelty;
+record closest prior framing, search coverage, concurrent-work risk, and
+`NOVEL / UNCERTAIN / NOT_NOVEL / BLOCKED` with a durable verdict ID in
+`PROBLEM_NOVELTY_VERDICTS.jsonl`. This module must not invoke the same formal
+Gate a second time.
+
+When the Controller returns to `problem_generation`, read only its latest
+`return_history` entry. For `request_revision`, use its selected Candidate
+baseline, human feedback, novelty audit, and reviewer guidance; retain that
+`problem_id` and make only the directed correction and directly affected
+content changes. Use the Controller return record as the active input for its
+feedback and reviewer guidance. For `reject`, use the human feedback as the re-analysis
+reason, reassess the active Field Map and Evidence, and form a different
+Candidate when warranted. Both paths repeat the existing Quality, Novelty, and
+Human Gate sequence. Use the existing incremental-literature route only when a
+real evidence gap is found; do not write an ordinary evidence gap into
+`LESSONS_LEARNED.md`.
+
+### P5. Human acceptance checkpoint
+
+Present every Quality-certified candidate with a completed, consumable novelty
+audit (`NOVEL`, `NOT_NOVEL`, or `UNCERTAIN`), including its evidence, weakest
+assumption, novelty conclusion, and the cost of a decisive test. Do not use
+novelty `survivor_ids` as the Human candidate set. Stop until the user selects
+one problem or explicitly rejects/reframes it. After the user selects a problem
+and before the Controller records human acceptance, create exactly these two
+independent artifacts:
+
+- `idea-stage/RESEARCH_CONTRACT.md` — the accepted Problem Contract;
+- `idea-stage/PROBLEM_EVIDENCE_CAPSULE.md` — the sole formal compact evidence
+  handoff for that Contract, using
+  `templates/PROBLEM_EVIDENCE_CAPSULE_TEMPLATE.md`.
+
+You must not embed a second capsule in the Contract or replace this artifact with a
+report section. The Controller assigns and records the accepted problem version
+with both artifact hashes. Do not create routes in this mode. A directed
+correction uses the live `problem_acceptance` Human Gate with
+`request_revision`, selected Candidate ID, and human feedback; a rejected
+Candidate uses `reject` with its selected ID and rejection reason. The
+Controller archives and invalidates the candidate-to-acceptance outputs before
+returning only to `problem_generation`.
+
+### Problem-mode forbidden actions
+
+- Do not write a scientific method, method route, method novelty verdict, or
+  method review.
+- Do not turn a search gap into a novelty claim.
+- Do not treat an LLM jury score as acceptance.
+- Do not pass the full evidence registry or generator transcript downstream.
+
+---
+
+## Mode: `diagnosis` — independent 1a-2b root-cause analysis
+
+Require a human-accepted `RESEARCH_CONTRACT.md` and its unchanged
+`PROBLEM_EVIDENCE_CAPSULE.md`. Record both SHA-256 values, then follow
+[`root-cause-analysis-contract.md`](../shared-references/root-cause-analysis-contract.md):
+
+If this is a Method-triggered reopen, inspect the matching existing Controller
+return record (`method_design` → `root_cause_analysis`) before analysis. Use
+its scientific reason and any trigger Evidence IDs to reassess the diagnosis;
+formally re-adopt a cited method-stage Evidence Card through
+`readopt-evidence`, rather than copying or relabeling it.
+
+1. 1a collects and describes phenomenon evidence that directly represents the
+   accepted problem/failure, from existing experiments, literature, datasets,
+   real-world scenarios, or a necessary diagnostic pilot; failed experiments
+   are not a prerequisite;
+2. 1b groups phenomena while allowing multiple material mechanisms;
+3. 2a traces progressively deeper causes and competing explanations;
+4. 2b constructs evidence-calibrated, falsifiable causal chains with explicit
+   intervention targets.
+
+Write `ROOT_CAUSE_ANALYSIS.json` as the canonical handoff and a faithful
+`ROOT_CAUSE_ANALYSIS.md` view. Then a fresh independent reviewer writes
+`ROOT_CAUSE_VERDICT.json`. Only `DIAGNOSIS_READY`, with matching analysis ID and
+analysis/problem/evidence hashes, closes the Gate. `REVISE_DIAGNOSIS` returns
+to `root_cause_analysis`; `REOPEN_PROBLEM` returns to
+`problem_generation` so the problem is regenerated or revised and passes the
+existing quality, novelty, and human-acceptance sequence again. The Agent
+cannot choose another target. Do not
+name, search, rank, or combine methods in diagnosis mode.
+
+---
+
+## Mode: `method` — initial route design after diagnosis acceptance
+
+### M0. Preconditions
+
+Require `idea-stage/RESEARCH_CONTRACT.md` with:
+
+- `problem_status: CERTIFIED`;
+- `acceptance_status: human_accepted`;
+- selected problem ID and durable acceptance record;
+- the Controller-recorded problem version and problem-contract hash;
+- evidence IDs and scope boundaries.
+
+Also require `ROOT_CAUSE_ANALYSIS.json` and `ROOT_CAUSE_VERDICT.json` with:
+
+- verdict `DIAGNOSIS_READY`;
+- matching run ID, analysis ID, problem-contract hash, evidence-capsule hash,
+  and reviewed-analysis hash;
+- non-empty `primary_causal_chain_ids`.
+
+If any precondition is absent, return `BLOCKED_PRECONDITION` and do nothing.
+
+### M1. Scientific closure before technique search
+
+Using the accepted problem and validated primary causal chains, derive the
+falsifiable scientific mainline, decisive falsifier, claim type, and design
+obligations. Preserve each chain's competing explanations and discriminating
+evidence; do not invent a replacement diagnosis to justify a preferred
+technique. The method is a consequence of the problem contract, not a
+free-standing list of fashionable components. If method reasoning reveals that
+the accepted diagnosis itself needs re-analysis, first finish any active
+method literature session, then invoke the Controller's unique
+`reopen-root-cause` action with a specific reason and any triggering formal
+method Evidence IDs. Do not silently rewrite the diagnosis or continue route
+design after that request.
+
+### M2. Necessary completion decision
+
+Start the running `method_design` phase from the Controller-accepted
+`ACTIVE_FIELD_MAP.md` and its Evidence Registry. First derive one canonical
+Design Obligation set from the accepted primary chains and their intervention
+targets. If current knowledge cannot support a credible dominant mechanism,
+use `DOMINANT_SOLUTION_SEARCH` through the existing incremental gateway. Its
+Query Plan is the formal pre-route binding: every query names current
+obligation IDs and their derived chains, without requiring a dominant solution,
+closure, or residual gap. Search same-field mechanisms first, then causally
+isomorphic mechanisms, and cross-field mechanisms only when necessary.
+
+After that evidence is sufficient to choose a dominant carrier, derive the
+minimal dominant solution and its dominant-only closure. Only a specific
+residual `MUST` obligation may use `RESIDUAL_MUST_GAP_SEARCH`; every query then
+binds a non-empty decision target and declared residual `MUST` IDs. Do not
+repeat mapped knowledge, use unregistered web evidence, or add support except
+to close that recorded residual gap.
+
+### M3. Route synthesis and preliminary risk
+
+Produce at most three routes. Each route must specify dominant method,
+backbone, innovation carrier, mechanism chain, integration, expected failure
+mode, minimum validation logic, feasibility, and separate scientific-delta vs
+technical-route novelty hypotheses. `/novelty-check "mode: method | preliminary
+route"` may be used as a risk screen; it is not the final method novelty gate.
+
+Write `METHOD_ROUTES.jsonl` and `METHOD_ROUTES.md`, each bound in Controller
+state to the current problem ID/version/contract hash. The latter is a compact
+decision packet, not the final proposal.
+
+### M4. Human route selection
+
+Present ranked routes with evidence, unresolved risks, and the cheapest
+discriminating test. Stop for explicit selection or revision. On selection,
+write `SELECTED_ROUTE.yaml` with route ID, problem ID/version, problem-contract
+hash, selected dominant method, innovation carrier, unresolved risks, and user
+decision. A requested revision uses the live `route_selection` Human Gate with
+decision `request_revision`; the Controller returns only to `method_design`.
+Do not call `/research-refine` until that file exists.
+
+### Method-mode forbidden actions
+
+- Do not revise the accepted problem silently. A material change must use
+  explicit `arisctl revise-problem`, which creates a draft next version and
+  restarts the existing problem quality, novelty, and human-acceptance sequence.
+- Do not run the final method novelty gate before refinement.
+- Do not plan or execute experiments; hand validation obligations downstream.
+- Do not call `research-review` as a mandatory core stage. It remains an
+  optional external challenge after the relevant artifact exists.
+
+---
+
+## Compatibility integrations
+
+When `research-wiki/` exists, follow
+[`idea-wiki-integration.md`](../shared-references/idea-wiki-integration.md).
+This preserves the old **Load Research Wiki** and **Write Ideas to Research
+Wiki** behavior without making Wiki state an acceptance gate. The module owns
+helper resolution, threat scanning, deterministic `upsert_idea`, and warn-only
+failure handling. Keep `review-tracing.md` records for generator and jury
+calls, with generator and jury identities separated.
+
+The module's deterministic write remains an actual helper invocation:
+
+```text
+python3 "$WIKI_SCRIPT" upsert_idea research-wiki/ --slug <stable-id> \
+  --title <title> --stage proposed --outcome pending --thesis <problem-thesis>
 ```
 
-```
-if research-wiki/query_pack.md exists AND is less than 7 days old:
-    Read query_pack.md and use it as initial landscape context:
-    - Treat listed gaps as priority search seeds
-    - Treat failed ideas as a banlist (do NOT regenerate similar ideas)
-    - Treat top papers as known prior work (do not re-search them)
-    Still run Phase 1 below for papers from the last 3-6 months (wiki may be stale)
-else if research-wiki/ exists but query_pack.md is stale or missing:
-    if [ -n "$WIKI_SCRIPT" ]: python3 "$WIKI_SCRIPT" rebuild_query_pack research-wiki/
-    Then read query_pack.md as above
-```
+The old single-report interface is retained for compatibility: after the human
+accepts a route, the orchestrator may compose `IDEA_REPORT.md` from the compact
+handoff artifacts. It must not use that report as a prompt-sized state store.
+Follow [`idea-output-composition.md`](../shared-references/idea-output-composition.md)
+for explicit standalone/composed mode, versioning, compact output, and render
+timing.
 
-### Phase 1: Landscape Survey (5-10 min)
+## Optional downstream skills
 
-Map the research area to understand what exists and where the gaps are.
-
-1. **Scan local paper library first**: Check `papers/` and `literature/` in the project directory for existing PDFs. Read first 3 pages of relevant papers to build a baseline understanding before searching online. This avoids re-discovering what the user already knows.
-
-2. **Search recent literature** using WebSearch:
-   - Top venues in the last 2 years (NeurIPS, ICML, ICLR, ACL, EMNLP, etc.)
-   - Recent arXiv preprints (last 6 months)
-   - Use 5+ different query formulations
-   - Read abstracts and introductions of the top 10-15 papers
-
-2. **Build a landscape map**:
-   - Group papers by sub-direction / approach
-   - Identify what has been tried and what hasn't
-   - Note recurring limitations mentioned in "Future Work" sections
-   - Flag any open problems explicitly stated by multiple papers
-
-3. **Identify structural gaps**:
-   - Methods that work in domain A but haven't been tried in domain B
-   - Contradictory findings between papers (opportunity for resolution)
-   - Assumptions that everyone makes but nobody has tested
-   - Scaling regimes that haven't been explored
-   - Diagnostic questions that nobody has asked
-
-### Phase 1.5: Parallel lens fan-out (Tier-aware) — breadth, not verdict
-
-Idea generation benefits from **breadth**: more independent analytic angles
-surface more candidate ideas. This skill fans out *candidate generation*
-across analytic **lenses**, then funnels every candidate through the single
-Phase-4 cross-model jury. Fan-out widens the jury's input; it never makes the
-accept/reject decision. This follows
-[`shared-references/fan-out-pattern.md`](../shared-references/fan-out-pattern.md);
-the verdict stays cross-model per
-[`shared-references/acceptance-gate.md`](../shared-references/acceptance-gate.md)
-(idea novelty/quality is a Type-B verdict — same-family generation is fine,
-same-family *acquittal* is not).
-
-**Lenses** (the structural-gap angles from Phase 1, step 3):
-`method-transfer` (works in domain A, untried in B) · `contradiction`
-(conflicting findings to resolve) · `untested-assumption` (everyone assumes,
-nobody tested) · `scaling-regime` (unexplored regime) · `diagnostic`
-(question nobody asked). This set is a floor, not a ceiling — add a
-domain-specific lens when the direction warrants.
-
-**Tier-portable dispatch** (the Phase-4 jury downstream is identical on every tier):
-- **Tier 1** (Workflow available): spawn one **Claude subagent per lens**;
-  each runs the Phase-1 survey *through its lens* and the Phase-2 generation
-  prompt *restricted to that lens*, returning candidates as structured output.
-- **Tier 2** (Agent tool, no Workflow): spawn the same per-lens subagents via
-  the Agent tool.
-- **Tier 3** (no spawning): enumerate the lenses sequentially in one pass —
-  the original single-thread behavior, made explicit. No capability assumed.
-
-> **Why the lens shards are Claude, not Codex.** Generation is candidate
-> production, not a verdict, so same-family is safe — and Codex MCP is
-> **serial** (concurrent codex calls hang), so spending its scarce capacity
-> on parallel generation is both unsafe-to-parallelize and wasteful. Reserve
-> Codex for the one Phase-4 jury call. On Tier 1/2 the lens subagents are the
-> generators; the single Phase-2 codex brainstorm below still runs once as an
-> optional cross-model *seed* (a generator, not a judge), and its ideas join
-> the merged pool.
-
-**Per-shard output** (the generation-fan-out schema from
-[`fan-out-pattern.md`](../shared-references/fan-out-pattern.md) — `shard_id` +
-`candidates[]` + per-item `dedup_key`):
-```json
-{"shard_id": "<lens id>", "candidates": [{"summary": "...", "hypothesis": "...",
-  "mve": "...", "contribution_type": "...", "risk": "...", "effort": "...",
-  "dedup_key": "<hypothesis slug — the mechanical-dedup identity>"}]}
+```text
+/research-lit -> /idea-creator "mode: problem" -> /novelty-check "mode: problem"
+                 -> human acceptance
+                 -> /idea-creator "mode: diagnosis" -> root-cause Gate
+                 -> /idea-creator "mode: method" -> human route selection
+                 -> /research-refine -> /novelty-check "mode: method-final"
 ```
 
-**Merge + mechanical dedup**: union all lenses' ideas; cluster near-identical
-ideas by hypothesis (mechanical similarity only — **never** drop one for being
-"weak"; weakness is a Phase-4 verdict, not a merge step). The deduped union is
-the candidate set that enters Phase 3.
+`/research-review` is optional and may challenge a specific problem or route;
+it is not a duplicate acceptance gate in the default pipeline.
 
-### Phase 2: Idea Generation (brainstorm with external LLM)
+## Compatibility fields retained in the handoff
 
-Use the selected reviewer backend (see Reviewer Calling Convention) for divergent thinking.
+The final human-facing **Problem-First Ranked Idea Report** contains
+**Certified Problems and Derived Routes**. Its route entries retain the fields
+**Design obligations**, **Scientific mainline**, **dominant-only closure and
+residual MUST gaps**, **necessary supporting-mechanism ledger**,
+**Scientific-delta novelty**, and **minimal sufficient dominant solution**. Problem juries and generators run in fresh contexts; **do
+not reuse** a generator context for the jury. A problem is
+`CERTIFIED/provisional` until explicit human confirmation creates
+`CERTIFIED/accepted`. The route may then be handed to `/experiment-plan` only
+as an optional downstream action.
 
-For the `codex` backend, **do not inline the full landscape + gaps prompt**
-once it stops being tiny. Write the full brainstorming request to
-`idea-stage/codex_brainstorm_bundle.md`, then keep the MCP prompt short:
-
-```
-mcp__codex__codex:
-  model: REVIEWER_MODEL
-  config: {"model_reasoning_effort": "xhigh"}
-  prompt: |
-    Read the idea-generation bundle at <absolute path to
-    idea-stage/codex_brainstorm_bundle.md> and follow all instructions in it.
-```
-
-*For `manual` backend:* use `mcp__manual_review__review` with the same bundle
-contents. If the manual-review UI supports attachments, attach
-`idea-stage/codex_brainstorm_bundle.md`; otherwise paste the bundle contents
-inline. Save the returned `threadId` for Phase 4 follow-up.
-
-Bundle contents:
-
-```
-    You are a senior ML researcher brainstorming research ideas.
-
-    Research direction: [user's direction]
-
-    Here is the current landscape:
-    [write the Phase-1 landscape map into this bundle file]
-
-    Key gaps identified:
-    [write the Phase-1 gap summary into this bundle file]
-
-    Generate 8-12 concrete research ideas. For each idea:
-    1. One-sentence summary
-    2. Core hypothesis (what you expect to find and why)
-    3. Minimum viable experiment (what's the cheapest way to test this?)
-    4. Expected contribution type: empirical finding / new method / theoretical result / diagnostic
-    5. Risk level: LOW (likely works) / MEDIUM (50-50) / HIGH (speculative)
-    6. Estimated effort: days / weeks / months
-
-    Prioritize ideas that are:
-    - Testable with moderate compute (8x RTX 3090 or less)
-    - Likely to produce a clear positive OR negative result (both are publishable)
-    - Not "apply X to Y" unless the application reveals genuinely surprising insights
-    - Differentiated from the 10-15 papers above
-
-    Be creative but grounded. A great idea is one where the answer matters regardless of which way it goes.
-```
-
-Save the threadId for follow-up.
-
-### Phase 3: Mechanical consolidation + objective feasibility gate
-
-> **This phase does NOT judge idea quality, novelty, or impact.** Those are
-> Type-B verdicts reserved for the Phase-4 cross-model jury (see
-> [`shared-references/acceptance-gate.md`](../shared-references/acceptance-gate.md)).
-> Eliminating ideas here on a same-family novelty or impact call would
-> pre-filter the jury's input with same-family quality judgment — exactly
-> what [`fan-out-pattern.md`](../shared-references/fan-out-pattern.md) forbids.
-> Phase 3 only (a) finishes the mechanical dedup from the fan-out merge and
-> (b) drops ideas that are **objectively** out of budget. Everything else
-> passes through **annotated, not eliminated** — the jury decides.
-
-1. **Objective feasibility gate (Type-A — safe same-model)**: drop an idea
-   ONLY on a mechanical, budget-based fact:
-   - estimated compute > 1 week of available GPU time, OR
-   - requires a dataset that is provably unavailable.
-   These are objective resource facts. Do **not** drop on "implementation
-   looks complex" — annotate complexity as `effort_note` instead.
-
-2. **Novelty signal — ANNOTATE, do not eliminate**: for each surviving idea,
-   do 2-3 targeted searches and attach a `prior_work` note (what looks
-   related, with links). This is *input for the jury*, not a filter. The
-   authoritative novelty verdict is Phase 4's `/novelty-check` (multi-source +
-   cross-model). Do **not** drop an idea here because it "might already be
-   done."
-
-3. **Impact signal — ANNOTATE, do not eliminate**: attach a one-line
-   `so_what` note (why the result would matter either way). Do **not** drop on
-   a same-family "a reviewer wouldn't care" call — "would a reviewer care?" is
-   *precisely* the question the Phase-4 cross-model devil's-advocate asks.
-   Forward the note; let the jury rule.
-
-Every feasible, non-duplicate idea — carrying its `prior_work`, `so_what`, and
-`effort_note` annotations — proceeds to Phase 4. Typically only the
-budget-infeasible are dropped; the cross-model jury, not the executor, does
-the quality narrowing.
-
-### Phase 4: Deep Validation (the cross-model jury)
-
-**This is the jury.** It receives the FULL annotated candidate set from
-Phase 3 (Phase 3 no longer pre-narrows on quality), and the **cross-model
-reviewer — not the executor — does the quality/novelty narrowing.** Run the
-steps in this order so the cheap cross-model triage gates the expensive
-per-idea novelty search:
-
-1. **Cross-model triage (devil's advocate) — ranks ALL candidates first.**
-   Use the selected reviewer backend (see Reviewer Calling Convention). For
-   `codex`, use `mcp__codex__codex-reply` (same thread). For `manual`, use
-   `mcp__manual_review__review_reply` with the saved threadId. For the
-   `codex` backend, write the full annotated candidate set to
-   `idea-stage/codex_triage_bundle.md` and send only a path-based follow-up:
-   ```
-   Read the idea-triage bundle at <absolute path to
-   idea-stage/codex_triage_bundle.md> and follow all instructions in it.
-   ```
-   For the `manual` backend, attach that same bundle if possible; otherwise
-   paste its contents inline. Bundle contents:
-   ```
-   Here is the full annotated candidate set (deduped, budget-feasible):
-   [write all candidates with their prior_work / so_what / effort_note notes]
-
-   For each, play devil's advocate:
-   - What's the strongest objection a reviewer would raise?
-   - What's the most likely failure mode?
-   - Is the prior_work note a real novelty problem, or differentiable?
-   - How would you rank these for a top venue submission?
-   - Which 2-3 would you actually work on, and why?
-   ```
-   The reviewer's ranking is the authoritative quality verdict. The executor
-   does not eliminate candidates on its own taste before or instead of this.
-
-2. **Novelty check — on the reviewer's top picks only.** Run the
-   `/novelty-check` workflow (multi-source search + cross-model verification)
-   on the ideas the triage ranked worth pursuing. This bounds the expensive
-   multi-source search to the survivors instead of every candidate, while
-   keeping the novelty verdict cross-model.
-
-3. **Select for pilots**: take the top 2-3 ideas that survive both the
-   cross-model triage and the novelty check forward to Phase 5.
-
-### Phase 5: Parallel Pilot Experiments (for top 2-3 ideas)
-
-Before committing to a full research effort, run cheap pilot experiments to get empirical signal. This is the key differentiator from paper-only validation.
-
-1. **Design pilots**: For each top idea, define the minimal experiment that would give a positive or negative signal:
-   - Single seed, small scale (e.g., small dataset subset, fewer epochs)
-   - Target: 30 min - PILOT_MAX_HOURS per pilot on 1 GPU
-   - **Estimate GPU-hours BEFORE launching.** If estimated time > PILOT_MAX_HOURS, reduce scale (fewer epochs, smaller subset) or flag as "needs manual pilot"
-   - Clear success metric defined upfront (e.g., "if metric improves by > 1%, signal is positive")
-
-2. **Deploy in parallel**: Use `/run-experiment` to launch pilots on different GPUs simultaneously:
-   ```
-   GPU 0: Pilot for Idea 1
-   GPU 1: Pilot for Idea 2
-   GPU 2: Pilot for Idea 3
-   ```
-   Use `run_in_background: true` to launch all at once.
-
-3. **Collect results**: Use `/monitor-experiment` to check progress. If any pilot exceeds PILOT_TIMEOUT_HOURS, kill it and collect partial results. Once all pilots complete (or timeout), compare:
-   - Which ideas showed positive signal?
-   - Which showed null/negative results? (eliminate or deprioritize)
-   - Any surprising findings that suggest a pivot?
-   - Total GPU-hours consumed (track against MAX_TOTAL_GPU_HOURS budget)
-
-4. **Re-rank based on empirical evidence**: Update the idea ranking using pilot results. An idea with strong pilot signal jumps ahead of a theoretically appealing but untested idea.
-
-Note: Skip this phase if the ideas are purely theoretical or if no GPU is available. Flag skipped ideas as "needs pilot validation" in the report.
-
-### Phase 6: Output — Ranked Idea Report
-
-Write a structured report to `idea-stage/IDEA_REPORT.md`:
-
-**Lead every recommended idea with its method, in plain language.** Before any hypothesis, novelty score, or claim, state in 2–4 concrete steps what we actually build / train / run — no jargon, no claim-IDs. The reader must understand *what we do* before *what we claim*; claims (hypothesis, validation, expected outcome) come after and read as the method's acceptance criteria.
-
-```markdown
-# Research Idea Report
-
-**Direction**: [user's research direction]
-**Generated**: [date]
-**Ideas evaluated**: X generated → Y survived filtering → Z piloted → W recommended
-
-## Landscape Summary
-[3-5 paragraphs on the current state of the field]
-
-## Recommended Ideas (ranked)
-
-### Idea 1: [title]
-- **Method (what we actually do)**: [2–4 concrete steps in plain language — what we build / train / run. No jargon, no claim-IDs, no hypothesis yet. Lead with this so the reader grasps the approach first.]
-- **Hypothesis**: [one sentence]
-- **Minimum experiment**: [concrete description]
-- **Expected outcome**: [what success/failure looks like]
-- **Novelty**: X/10 — closest work: [paper]
-- **Feasibility**: [compute, data, implementation estimates]
-- **Risk**: LOW/MEDIUM/HIGH
-- **Contribution type**: empirical / method / theory / diagnostic
-- **Pilot result**: [POSITIVE: metric +X% / NEGATIVE: no signal / SKIPPED: needs GPU]
-- **Reviewer's likely objection**: [strongest counterargument]
-- **Why we should do this**: [1-2 sentences]
-
-### Idea 2: [title]
-...
-
-## Eliminated Ideas (for reference)
-| Idea | Reason eliminated |
-|------|-------------------|
-| ... | Already done by [paper] |
-| ... | Requires > 1 week GPU time |
-| ... | Result wouldn't be interesting either way |
-
-## Pilot Experiment Results
-| Idea | GPU | Time | Key Metric | Signal |
-|------|-----|------|------------|--------|
-| Idea 1 | GPU 0 | 45 min | +2.3% CE | POSITIVE |
-| Idea 2 | GPU 1 | 30 min | -0.1% CE | NEGATIVE |
-| Idea 3 | GPU 2 | 1.5 hr | +0.8% CE | WEAK POSITIVE |
-
-## Suggested Execution Order
-1. Start with Idea 1 (positive pilot signal, lowest risk)
-2. Idea 3 as backup (weak signal, may need larger scale to confirm)
-3. Idea 2 eliminated by pilot — negative result documented
-
-## Next Steps
-- [ ] Scale up Idea 1 to full experiment (multi-seed, full dataset)
-- [ ] If confirmed, invoke /auto-review-loop for full iteration
-```
-
-## Phase 7: Write Ideas to Research Wiki (if active)
-
-**Skip this phase entirely if `research-wiki/` does not exist.**
-
-This is critical for spiral learning — without it, `ideas/` stays empty and re-ideation has no memory.
-
-`$WIKI_SCRIPT` was resolved in Phase 0 above. If Phase 0 did not run
-(no `research-wiki/`), skip this phase. The idea page is written by a
-**deterministic helper (`upsert_idea`)** — NOT freehand markdown — so **every
-generation, including a re-run with updated constraints, records reliably**
-(one CLI call per idea, not a prose step the model can skip). `upsert_idea`
-writes the page, wires the `inspired_by` / `addresses_gap` edges, and rebuilds
-index + query_pack in a single call. **Default skip-on-exist**: a re-ideation
-run records NEW ideas without clobbering an existing idea whose `outcome`
-`/result-to-claim` may already have enriched. If `$WIKI_SCRIPT` is empty
-(helper unreachable) the ideas are **NOT** recorded and a single WARN prints
-(fix: `bash tools/install_aris.sh` or `export ARIS_REPO`).
-
-```
-if research-wiki/ exists AND [ -n "$WIKI_SCRIPT" ]:
-    for each idea in recommended_ideas + eliminated_ideas:
-        # recommended → --stage proposed; eliminated-at-ideation → --stage archived.
-        # --outcome stays "pending" (the experiment verdict, negative/mixed/positive,
-        # is set LATER by /result-to-claim — never guessed here).
-        python3 "$WIKI_SCRIPT" upsert_idea research-wiki/ \
-          --slug "<stable-idea-id>" --title "<idea title>" \
-          --stage "<proposed|archived>" --outcome pending \
-          --thesis "<core hypothesis / direction>" \
-          --risks "<novelty / feasibility risks; why killed if eliminated>" \
-          --based-on "<paper:slug,paper:slug2>" --target-gaps "<G2,G10>" \
-          || echo "WARN: upsert_idea failed for <id> (continuing; audit/report unaffected)" >&2
-    python3 "$WIKI_SCRIPT" log research-wiki/ "idea-creator wrote N ideas (M recommended, K eliminated)"
-elif research-wiki/ exists AND [ -z "$WIKI_SCRIPT" ]:
-    echo "WARN: ideas NOT recorded — research_wiki.py unreachable (see Phase 0). Fix: bash tools/install_aris.sh or smart_update.sh (refreshes ~/.aris/repo), or export ARIS_REPO." >&2
-```
-
-## Output Protocols
-
-> Follow these shared protocols for all output files:
-> - **[Output Composition Protocol](../shared-references/output-composition.md)** — see composed-mode note below
-> - **[Output Versioning Protocol](../shared-references/output-versioning.md)** — write timestamped file first, then copy to fixed name
-> - **[Output Manifest Protocol](../shared-references/output-manifest.md)** — maintain `MANIFEST.md` only above the 15-artifact threshold (not "log every output")
-> - **[Output Language Protocol](../shared-references/output-language.md)** — respect the project's language setting
-
-> **Composed mode** — if invoked with `— composed: <canonical-report-path>` (e.g.
-> `/idea-discovery` passes `— composed: idea-stage/IDEA_REPORT.md`), that report is the
-> single canonical deliverable: fold the literature survey, novelty notes, and any
-> external-review conclusions into it as sections/appendices instead of emitting
-> `LIT_LANDSCAPE.md` / `RESEARCH_REVIEW.md` / `MANIFEST.md` alongside. Pilot scratch is
-> disposable (keep the script + one results file; delete launcher logs and redundant
-> `*_summary.json`); review traces stay in `.aris/traces/…` and the report cites the
-> path. **Default (no `— composed:` directive): standalone — write `IDEA_REPORT.md` and
-> any other documented files as normal.** Never infer composed mode from a report file
-> merely existing. Full rules:
-> [`shared-references/output-composition.md`](../shared-references/output-composition.md).
-
-## Key Rules
-
-- **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
-
-- The user provides a DIRECTION, not an idea. Your job is to generate the ideas.
-- Quantity first, quality second: brainstorm broadly, then filter ruthlessly.
-- A good negative result is just as publishable as a positive one. Prioritize ideas where the answer matters regardless of direction.
-- Don't fall in love with any idea before validating it. Be willing to kill ideas.
-- Always estimate compute cost. An idea that needs 1000 GPU-hours is not actionable for most researchers.
-- "Apply X to Y" is the lowest form of research idea. Push for deeper questions.
-- Include eliminated ideas in the report — they save future time by documenting dead ends.
-- **If the user's direction is too broad (e.g., "NLP", "computer vision", "reinforcement learning"), STOP and ask them to narrow it.** A good direction is 1-2 sentences specifying the problem, domain, and constraint — e.g., "factorized gap in discrete diffusion LMs" or "sample efficiency of offline RL with image observations". Without sufficient specificity, generated ideas will be too vague to run experiments on.
-- **Anti-hallucination for cited papers.** When the landscape survey or novelty justification cites specific papers, every cited paper must pass pre-search verification (`verify_papers.py`, canonical name resolved per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2; 3-layer arXiv / CrossRef / S2 fallback inside the helper itself). Policy D1 (primary + degraded-output fallback): if the helper is unresolved **or** its invocation fails, mark candidates `[UNVERIFIED]` and continue rather than dropping or guessing. Never fabricate arXiv IDs, DOIs, or titles from memory. Full protocol in [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md) § Pre-Search Verification Protocol.
-
-## Composing with Other Skills
-
-After this skill produces the ranked report:
-```
-/idea-creator "direction"     → ranked ideas
-/novelty-check "top idea"     → deep novelty verification (already done in Phase 4, but user can re-run)
-/research-review "top idea"   → external critical feedback
-implement                     → write code
-/run-experiment               → deploy to GPU
-/auto-review-loop             → iterate until submission-ready
-```
-
-## Review Tracing
-
-After each reviewer call (`mcp__codex__codex`, `mcp__codex__codex-reply`, `mcp__manual_review__review`, or `mcp__manual_review__review_reply`), save the trace following `shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/<skill>/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).
+Transfer/combination may appear only as the necessary support for a recorded
+residual MUST gap; assess the Field Map and same-field options before any
+cross-field search. It is neither an innovation verdict nor a default route.

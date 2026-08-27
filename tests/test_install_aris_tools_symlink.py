@@ -101,7 +101,7 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertFalse((self.project / ".aris" / "tools").is_symlink())
         self.assertTrue(marker.exists(), "user-created content must be preserved")
-        self.assertEqual(marker.read_text(), "user content")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "user content")
 
     def test_install_does_not_replace_different_symlink(self):
         # User already has .aris/tools pointing somewhere else
@@ -142,7 +142,7 @@ class InstallTest(unittest.TestCase):
         result = self._run("--uninstall")
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertTrue(link.is_dir(), "user-created dir must be preserved by uninstall")
-        self.assertEqual(marker.read_text(), "preserved")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "preserved")
 
     def test_uninstall_preserves_non_managed_symlink(self):
         # Install creates managed symlink, user replaces with custom symlink, uninstall must skip

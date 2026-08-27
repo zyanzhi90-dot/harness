@@ -208,21 +208,17 @@ cd claude-fleet && bash run.sh
 
 ## 1. 🎯 不止一句 Prompt
 
-**基础模式** — 给 ARIS 一个研究方向，全自动：
+**正式验证模式** — Controller 已验收问题、根因和方法后，继续该正式 run：
 
 ```
-/research-pipeline "离散扩散语言模型的 factorized gap"
+/research-pipeline "<canonical-run-id>"
 ```
 
-**🔥 精准模式** — 有篇论文想改进？把论文 + 代码给 ARIS：
+`/research-pipeline` 不是 idea 发现命令；研究方向、论文、base repo 都不能替代
+run ID。新正式研究必须先走 canonical Controller workflow，只有通过方法确认 Gate
+并由用户显式发起验证后，才能调用该 pipeline。
 
-```
-/research-pipeline "改进方法 X" — ref paper: https://arxiv.org/abs/2406.04329, base repo: https://github.com/org/project
-```
-
-ARIS 读论文 → 找弱点 → 克隆代码 → 针对*那些*弱点用*那套*代码生成改进方案 → 跑实验 → 写论文。就像跟研究助手说：*"读这篇论文，用这个 repo，找出哪里不行，然后修好它。"*
-
-> 自由组合：`ref paper` 单独 = "这篇论文哪里能改进？"，`base repo` 单独 = "这个代码能做什么？"，两个都给 = "用*这个*代码改进*这篇*论文。"
+探索性或独立工作请直接调用相应 skill，且不得把它表述为 canonical continuation。
 
 **🔥 Rebuttal 模式** — 审稿意见来了？别慌。ARIS 读每条意见、制定策略、起草安全的 rebuttal：
 
@@ -352,7 +348,7 @@ ARIS 读论文 → 找弱点 → 克隆代码 → 针对*那些*弱点用*那套
 - **2026-03-14** — 📱 [飞书集成](docs/integrations/FEISHU_CN.md)：三种模式（关闭/推送/交互）
 - **2026-03-13** — 🛑 Human-in-the-loop：`AUTO_PROCEED` 检查点
 - **2026-03-12** — 🔗 Zotero + Obsidian + arXiv/Scholar 多源文献检索
-- **2026-03-12** — 🚀 三大工作流端到端贯通 + 📝 论文写作流水线（4/10 → 8.5/10）
+- **2026-03-12** — 🚀 旧版 pre-Controller 工作流公告，现已由 canonical Controller 主线和用户显式 validation handoff 取代；`/research-pipeline` 不再启动 discovery、review 或论文写作。
 
 </details>
 </details>
@@ -367,7 +363,7 @@ ARIS 读论文 → 找弱点 → 克隆代码 → 针对*那些*弱点用*那套
 git clone https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git
 bash Auto-claude-code-research-in-sleep/tools/install_aris.sh ~/your-project   # 把 ARIS skill symlink 进 <project>/.claude/skills/
 # （想全局安装？cp -r Auto-claude-code-research-in-sleep/skills/* ~/.claude/skills/）
-# （不需要全部 81 个？--list-groups / --groups X,Y / --skills X —— 见下方"选择性安装"）
+# （不需要全部 80 个？--list-groups / --groups X,Y / --skills X —— 见下方"选择性安装"）
 
 # 可选：Codex mirror 项目级受管安装
 bash Auto-claude-code-research-in-sleep/tools/install_aris_codex.sh ~/your-codex-project
@@ -394,12 +390,12 @@ claude
 > /rebuttal "paper/ + reviews" — venue: ICML  # 工作流 4：解析 review → 起草 rebuttal → follow-up
 > /resubmit-pipeline "paper/" — venue: NeurIPS  # 工作流 5：把已打磨论文移植到新 venue（纯文本，不跑新实验）
 > /paper-talk "paper/" — venue: ICLR            # 工作流 6：论文 → Beamer + PPTX talk slides + 讲稿 + 评审审计
-> /research-pipeline "你的研究方向"            # 全流程：工作流 1 → 1.5 → 2 → 3 端到端
+> /research-pipeline "<canonical-run-id>"       # 已批准方法 → 正式验证
 > /research-wiki init                          # 📚 启用持久化研究记忆（一次性）
 > /meta-optimize                               # 元优化：分析使用记录 → 提出技能改进方案
 ```
 
-> 不需要全部 81 个 skill？见下方[选择性安装](#install-skills)按组/按 skill 挑选。
+> 不需要全部 80 个 skill？见下方[选择性安装](#install-skills)按组/按 skill 挑选。
 
 <details>
 <summary><b>📚 Research Wiki（可选）</b> —— 一行 init 启用跨 session 持久记忆；完整说明见 <a href="#-research-wiki--persistent-research-memory">§ Research Wiki</a></summary>
@@ -463,11 +459,12 @@ cd Auto-claude-code-research-in-sleep && ls skills/ | xargs -I{} rm -rf ~/.claud
 <details>
 <summary><b>展开全部 15 个内联参数和 10 个 override 示例</b> —— AUTO_PROCEED / sources / arxiv download / DBLP_BIBTEX / code review / wandb / illustration / venue / base repo / compact / ref paper / effort / reviewer / difficulty（完整 per-skill 默认值见 <a href="#customization">§ 自定义</a>）</summary>
 
-所有流水线行为均可通过内联参数配置——在命令后追加 `— key: value`：
+仅在声明该参数的 skill 后追加 `— key: value`。`/research-pipeline` 只接收
+canonical run ID，不接收 idea 选择、检索、review 或写作参数。
 
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `AUTO_PROCEED` | `true` | 在 idea 选择关卡自动继续。设为 `false` 可在花 GPU 前手动挑选 idea |
+| `AUTO_PROCEED` | `true` | 仅适用于明确声明该参数的独立 skill；不能跨越 canonical 的人工或 reviewer Gate |
 | `human checkpoint` | `false` | 每轮 review 后暂停，让你查看分数、给出修改意见、跳过特定修复或提前终止 |
 | `sources` | `all` | 搜索哪些文献源：`zotero`、`obsidian`、`local`、`web`、`semantic-scholar`、`deepxiv`、`exa`、`gemini`、`openalex`、`all`。`semantic-scholar`、`deepxiv`、`exa`、`gemini` 和 `openalex` 都需显式指定 |
 | `arxiv download` | `false` | 文献调研时下载最相关的 arXiv PDF。为 `false` 时仅获取元数据（标题、摘要、作者） |
@@ -484,16 +481,9 @@ cd Auto-claude-code-research-in-sleep && ls skills/ | xargs -I{} rm -rf ~/.claud
 | `difficulty` | `medium` | 审稿对抗强度：`medium`（默认）、`hard`（+ memory + 辩论）、`nightmare`（+ GPT 通过 `codex exec` 直读仓库） |
 
 ```
-/research-pipeline "你的课题" — AUTO_PROCEED: false                          # 在 idea 选择关卡暂停
-/research-pipeline "你的课题" — human checkpoint: true                       # 每轮 review 后暂停，可给修改意见
-/research-pipeline "你的课题" — sources: zotero, web                         # 只搜 Zotero + 网络（跳过本地 PDF）
-/research-pipeline "你的课题" — sources: all, deepxiv                        # 默认源 + DeepXiv 渐进式检索
-/research-pipeline "你的课题" — sources: all, exa                            # 默认源 + Exa AI 智能网页搜索
-/research-pipeline "你的课题" — sources: all, gemini                         # 默认源 + Gemini 智能发现
-/research-pipeline "你的课题" — sources: all, openalex                       # 默认源 + OpenAlex 引用图
-/research-pipeline "你的课题" — arxiv download: true                         # 文献调研时下载最相关的 arXiv PDF
-/research-pipeline "你的课题" — difficulty: nightmare                        # 投顶会前极限压测
-/research-pipeline "你的课题" — AUTO_PROCEED: false, human checkpoint: true  # 组合使用
+/idea-discovery "你的课题" — sources: zotero, web                            # 探索性 idea 发现
+/auto-review-loop "你的论文范围" — human checkpoint: true                   # 审阅已有结果
+/research-pipeline "<canonical-run-id>"                                      # 已批准方法 → 验证
 ```
 
 </details>
@@ -541,14 +531,14 @@ Codex 基础镜像默认由新的 Codex `spawn_agent` 自审：流程可以继�
 
 ## 4. ✨ 功能亮点
 
-ARIS 用 **81 个可组合 skill** 覆盖科研全生命周期——文献查新 → idea 发现 → GPU 实验 → 自动 review 循环 → 论文写作 → peer review——配合**跨模型对抗审**（Claude 执行 · GPT-5.6-Sol xhigh 审 · 可选 **GPT-5.5 Pro** via Oracle）、DBLP/CrossRef 反幻觉引用、持久化 **Research Wiki**、灵活模型后端、human-in-the-loop 检查点，以及可选的飞书 / Zotero / Obsidian / GPU 集成。
+ARIS 用 **80 个可组合 skill** 覆盖科研全生命周期——文献查新 → idea 发现 → GPU 实验 → 自动 review 循环 → 论文写作 → peer review——配合**跨模型对抗审**（Claude 执行 · GPT-5.6-Sol xhigh 审 · 可选 **GPT-5.5 Pro** via Oracle）、DBLP/CrossRef 反幻觉引用、持久化 **Research Wiki**、灵活模型后端、human-in-the-loop 检查点，以及可选的飞书 / Zotero / Obsidian / GPU 集成。
 
 🔥 *而且这套"广度 / 审 / 记忆"三角能适配任何 agent 的 **ultracode 式深度模式**：广度 pass 适配运行时暴露的能力（Claude Code 原生 ultracode / workflows + Opus 4.8、Codex `spawn_agent`，或纯顺序执行），并按层级干净降级（fan-out → agent spawn → 顺序）。三件事分得很清楚：**广度 · 跨模型对抗审 → 准确性 · research wiki → 记忆性**。无论循环由谁推进，最后都回到同一套跨模型对抗审 + research wiki：**能推进，不能定案**。*
 
 <details>
 <summary><b>完整功能清单</b></summary>
 
-- 📊 **81 个可组合 skill** — 自由混搭，或串联为完整流水线（`/idea-discovery`、`/auto-review-loop`、`/paper-writing`、`/research-pipeline`）。[完整目录 →](docs/SKILLS_CATALOG.md)
+- 📊 **80 个可组合 skill** — 自由混搭，或串联为完整流水线（`/idea-discovery`、`/auto-review-loop`、`/paper-writing`、`/research-pipeline`）。[完整目录 →](docs/SKILLS_CATALOG.md)
 - 🔍 **文献 & 查新** — 多源论文搜索（**[Zotero](docs/integrations/ZOTERO_CN.md)** + **[Obsidian](docs/integrations/OBSIDIAN_CN.md)** + **本地 PDF** + arXiv/Scholar）+ 跨模型查新验证
 - 💡 **Idea 发现** — 文献调研 → 头脑风暴 8-12 个 idea → 查新 → GPU pilot 实验 → 排名报告
 - 🔄 **自动 review 循环** — 4 轮自主审稿，一夜从 5/10 提升到 7.5/10，自动跑 20+ 组 GPU 实验
@@ -581,14 +571,14 @@ ARIS 用 **81 个可组合 skill** 覆盖科研全生命周期——文献查新
 <a id="skills-catalog"></a>
 <a id="-skills-catalog"></a>
 
-ARIS 现有 **81+ 个 skill**，覆盖文献调研、idea 生成、实验、审计、论文写作、演讲、专利、meta 工具等——完整目录（每个 skill 含 role / category / 依赖）在 **[`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md)**，独立成文以保持 README 可扫读。
+ARIS 现有 **80+ 个 skill**，覆盖文献调研、idea 生成、实验、审计、论文写作、演讲、专利、meta 工具等——完整目录（每个 skill 含 role / category / 依赖）在 **[`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md)**，独立成文以保持 README 可扫读。
 
 <details>
 <summary><b>常用入口</b> —— 场景 → 入口 skill</summary>
 
 | 场景 | 入口 skill |
 |---|---|
-| 端到端研究（idea → paper） | [`/research-pipeline`](skills/research-pipeline/SKILL.md) |
+| 已批准 canonical 方法 → 验证 | [`/research-pipeline "<canonical-run-id>"`](skills/research-pipeline/SKILL.md) |
 | Idea 发现 + 方案精炼 | [`/idea-discovery`](skills/idea-discovery/SKILL.md) |
 | 按计划跑实验 | [`/experiment-bridge`](skills/experiment-bridge/SKILL.md) |
 | 自动 review → 修 → 再 review | [`/auto-review-loop`](skills/auto-review-loop/SKILL.md) |
@@ -602,7 +592,7 @@ ARIS 现有 **81+ 个 skill**，覆盖文献调研、idea 生成、实验、审�
 
 </details>
 
-→ **[按 category 浏览全部 81 个 skill →](docs/SKILLS_CATALOG.md)**
+→ **[按 category 浏览全部 80 个 skill →](docs/SKILLS_CATALOG.md)**
 
 ---
 
@@ -656,18 +646,18 @@ ARIS 全流程完成并进入投稿/审稿阶段的真实项目。**所列分数
 
 > 💡 **使用方法：** 社区 skill 不会自动接入核心工作流。使用时，让你的执行者（Claude Code / OpenClaw 等）先读一遍该 skill 的 `SKILL.md`，再根据下方描述接入对应的工作流阶段。
 
-🎉 **社区 Skills（13 个）：** [research-refine](skills/research-refine/SKILL.md) · [experiment-plan](skills/experiment-plan/SKILL.md) · [research-refine-pipeline](skills/research-refine-pipeline/SKILL.md) · [grant-proposal](skills/grant-proposal/SKILL.md) · [paper-poster](skills/paper-poster/SKILL.md) (deprecated → [paper-poster-html](skills/paper-poster-html/SKILL.md)) · [paper-slides](skills/paper-slides/SKILL.md) · [mermaid-diagram](skills/mermaid-diagram/SKILL.md) · [proof-writer](skills/proof-writer/SKILL.md) · [comm-lit-review](skills/comm-lit-review/SKILL.md) · [dse-loop](skills/dse-loop/SKILL.md) · [idea-discovery-robot](skills/idea-discovery-robot/SKILL.md) · [paper-illustration](skills/paper-illustration/SKILL.md) · [skills-codex](skills/skills-codex/)
+🎉 **社区 Skills（12 个）：** [research-refine](skills/research-refine/SKILL.md) · [experiment-plan](skills/experiment-plan/SKILL.md) · [research-refine-pipeline](skills/research-refine-pipeline/SKILL.md) · [grant-proposal](skills/grant-proposal/SKILL.md) · [paper-poster](skills/paper-poster/SKILL.md) (deprecated → [paper-poster-html](skills/paper-poster-html/SKILL.md)) · [paper-slides](skills/paper-slides/SKILL.md) · [mermaid-diagram](skills/mermaid-diagram/SKILL.md) · [proof-writer](skills/proof-writer/SKILL.md) · [comm-lit-review](skills/comm-lit-review/SKILL.md) · [dse-loop](skills/dse-loop/SKILL.md) · [paper-illustration](skills/paper-illustration/SKILL.md) · [skills-codex](skills/skills-codex/)
 
 🌐 **外部项目 & 文档（12 个）：** [rosetta](https://github.com/SyntaxSmith/rosetta) · [open-source-hardening-skills](https://github.com/zeyuzhangzyz/open-source-hardening-skills) · [CitationClaw](https://github.com/VisionXLab/CitationClaw) · [auto-hparam-tuning](https://github.com/zxh0916/auto-hparam-tuning) · [paper-to-course](https://github.com/KaguraTart/paper-to-course) · [deep-research-skills](https://github.com/Weizhena/deep-research-skills) · [Antigravity 适配指南](docs/ANTIGRAVITY_ADAPTATION_CN.md) · [OpenClaw 适配指南](docs/OPENCLAW_ADAPTATION.md) · [Cursor 适配指南](docs/CURSOR_ADAPTATION.md) · [Trae 适配指南](docs/TRAE_ARIS_RUNBOOK_CN.md) · [posterly](https://github.com/Chenruishuo/posterly) · [Claude Fleet](https://github.com/tianyilt/claude-fleet)
 
 > 🙌 感谢每一位贡献者！为了 README 的可读性，下方表格折叠展示——但每个 skill 和项目都同样珍贵。欢迎 PR！
 
 <details>
-<summary><b>🎉 社区 Skills（13 个）</b> — 点击展开</summary>
+<summary><b>🎉 社区 Skills（12 个）</b> — 点击展开</summary>
 
 | 名称 | 领域 | 描述 | Codex MCP？ |
 |------|------|------|-----------|
-| 🔬 [`research-refine`](skills/research-refine/SKILL.md) | 通用 | 把模糊 idea 精炼成问题锚点明确、可实现的方法方案 | 是 |
+| 🔬 [`research-refine`](skills/research-refine/SKILL.md) | 通用 | 把已认证的问题合同精炼成自然统一的方法路线，并通过独立盲审验收 | 是 |
 | 🧪 [`experiment-plan`](skills/experiment-plan/SKILL.md) | 通用 | claim-driven 实验路线图，含 ablation、预算和执行顺序 | 否 |
 | 🧭 [`research-refine-pipeline`](skills/research-refine-pipeline/SKILL.md) | 通用 | 一条龙：`/research-refine` → `/experiment-plan` | 是 |
 | 📝 [`grant-proposal`](skills/grant-proposal/SKILL.md) | 通用 | 基金申请书（科研費/NSF/国自然/ERC/DFG/SNSF/ARC/NWO） | 是 |
@@ -675,7 +665,6 @@ ARIS 全流程完成并进入投稿/审稿阶段的真实项目。**所列分数
 | 📐 [`proof-writer`](skills/proof-writer/SKILL.md) | ML 理论 | 严格定理/引理证明撰写——可行性分类、依赖图谱 | 否 |
 | 📡 [`comm-lit-review`](skills/comm-lit-review/SKILL.md) | 通信 / 无线 | 通信领域文献检索——IEEE/ACM 优先、venue 分层、PHY/MAC/NTN 分类 | 否 |
 | 🏗️ [`dse-loop`](skills/dse-loop/SKILL.md) | 体系结构 / EDA | 自动设计空间探索——迭代调参（gem5、Yosys 等） | 否 |
-| 🤖 [`idea-discovery-robot`](skills/idea-discovery-robot/SKILL.md) | 机器人 / 具身智能 | 工作流 1 适配版——按 embodiment、sim2real、安全约束筛选 idea | 是 |
 | 🖼️ [`paper-poster`](skills/paper-poster/SKILL.md) | 通用 | 已弃用——重定向 stub,指向核心 [`/paper-poster-html`](skills/paper-poster-html/SKILL.md)(测量门控 HTML/CSS 流水线);旧 LaTeX 实现仅存于 git history | — |
 | 📐 [`mermaid-diagram`](skills/mermaid-diagram/SKILL.md) | 通用 | Mermaid 图表（20+ 种类型）——`paper-illustration` 的免费替代，无需 API key | 否 |
 | 🎨 [`paper-illustration`](skills/paper-illustration/SKILL.md) | 通用 | AI 生成架构图（Gemini），基于 [PaperBanana](https://github.com/dwzhu-pku/PaperBanana)，集成到工作流 3 | 否 |
@@ -714,62 +703,47 @@ ARIS 全流程完成并进入投稿/审稿阶段的真实项目。**所列分数
 - **有计划了，需要实现和跑实验？** 工作流 1.5 → `/experiment-bridge`
 - **已有结果，需要迭代改进？** 工作流 2 → `/auto-review-loop`
 - **准备写论文了？** 工作流 3 → `/paper-writing`（或分步：`/paper-plan` → `/paper-figure` → `/paper-write` → `/paper-compile` → `/auto-paper-improvement-loop`）
-- **全流程？** 工作流 1 → 1.5 → 2 → 3 → `/research-pipeline`，从文献调研一路到投稿
+- **已批准 canonical 方法，准备验证？** `/research-pipeline "<canonical-run-id>"` — 只消费 Controller 已批准交接物
 - **想让 ARIS 记住并学习？** 📚 `/research-wiki init` — 跨会话持久记忆，论文、idea、失败实验复合积累
 - **想让 ARIS 优化自己？** 工作流 M → `/meta-optimize` — 分析使用日志，提出技能改进，reviewer 审核
 
 > ⚠️ **重要提醒：** 这些工具加速科研，但不能替代你自己的思考。生成的 idea 一定要用你的领域知识审视，质疑其假设，最终决策权在你手上。最好的研究 = 人的洞察 + AI 的执行力，而不是全自动流水线。
 
-### 完整流程 🚀
+### Canonical 科研主线 🚀
 
 ```
-/research-lit → /idea-creator → /novelty-check → /research-refine → /experiment-bridge → /auto-review-loop → /paper-plan → /paper-figure → /paper-write → /auto-paper-improvement-loop → 投稿
-  (调研文献)      (找idea)       (查新验证)      (打磨方案)      (实现+部署)       (自动改到能投)      (大纲)        (作图)        (LaTeX+PDF)     (审稿×2 + 格式检查)     (搞定!)
-  ├────────────── 工作流 1：找 Idea + 方案精炼 ──────────────┤ ├─ 工作流 1.5 ─┤ ├── 工作流 2 ──┤   ├───────────────── 工作流 3：论文写作 ─────────────────────┤
+/research-lit → 人工确认范围 → 问题生成 → 问题质量 + 新颖性 Gate
+  → 用户接受问题 → 根因分析 + 独立 Gate → 方法路线 → 用户选择路线
+  → 方法精炼 + 最终方法新颖性 Gate → 用户接受最终方法
+  → METHOD_CONFIRMED_AWAITING_USER_VALIDATION
+  → （仅在用户启动验证后）/research-pipeline <canonical-run-id>
+  → /experiment-plan → /experiment-bridge → /result-to-claim
 ```
 
-### 工作流 1：Idea 发现与方案精炼 🔍
+`/auto-review-loop`、`/paper-writing`、投稿和 rebuttal 是独立、由用户发起的
+工作流，不是 canonical 科研主线的自动阶段。
 
-> "这个领域最新进展是什么？哪里有 gap？怎么解决？"
+### 工作流 1：Canonical Idea 发现与方法设计 🔍
 
-还没有具体 idea？给一个研究方向就行——`/idea-discovery` 搞定剩下的：
+> "这个领域中真实、重要、尚未解决的问题是什么？它为何发生？哪种干预由其因果机制证明合理？"
 
-1. 📚 **调研**全景（最新论文、开放问题、反复出现的局限性）
-2. 🧠 **头脑风暴** 8-12 个具体 idea（GPT-5.6-Sol xhigh）
-3. 🔍 **初筛**可行性、算力成本、快速查新
-4. 🛡️ **深度验证** top idea（完整查新 + devil's advocate review）
-5. 🧪 **并行 pilot 实验**（top 2-3 个 idea 分别上不同 GPU，30 分钟 - 2 小时）
-6. 🏆 **按实验信号排序**——有正信号的 idea 排前面
-7. 🔬 **精炼方案**——冻结问题锚点，通过 GPT-5.6-Sol 迭代 review 打磨方法
-8. 🧪 **规划实验**——claim-driven 实验路线图，含 ablation、预算和执行顺序
+给 `/idea-discovery` 一个研究方向，启动由 Controller 管理的问题优先主线。它先建立可审计的 Field Map，再等待人工确认范围；未经确认的检索不能进入问题生成。固定顺序是：
 
-输出 `IDEA_REPORT.md`（排名后的 idea）+ `refine-logs/FINAL_PROPOSAL.md`（精炼后的方案）+ `refine-logs/EXPERIMENT_PLAN.md`（实验路线图）。失败的 idea 也记录在案，避免重复踩坑。
+1. 从证据生成候选问题，再独立完成问题质量和问题新颖性判断；
+2. 用户接受一个问题，并绑定 `RESEARCH_CONTRACT.md` 与 `PROBLEM_EVIDENCE_CAPSULE.md`；
+3. 将观察到的失效现象分析为因果链，并通过独立根因 Gate；
+4. 从已接受的因果设计义务推导方法路线，用户选择后再精炼，并通过最终方法新颖性与人工接受。
 
-**涉及 Skills：** `research-lit` + `idea-creator` + `novelty-check` + `research-review` + `research-refine-pipeline`
+正式产物包括 `idea-stage/ACTIVE_FIELD_MAP.md`、
+`idea-stage/SEARCH_LEDGER.jsonl`、已接受的问题和根因交接物、
+`refine-logs/FINAL_PROPOSAL.md` 以及供人阅读的最终 `IDEA_REPORT.md`。
+`IDEA_REPORT.md` 不是实验交接物；此阶段不会生成 `EXPERIMENT_PLAN.md`，也不会自动开始验证。只有用户在方法确认状态下显式调用
+`/research-pipeline "<canonical-run-id>"` 才能进入验证。
 
-> 💡 **一键调用：** `/idea-discovery "你的研究方向"` 自动跑完整个工作流 1。
-
-> 🔄 **人在回路中：** 每个阶段都会展示结果等你反馈。不满意？告诉它哪里不对——调整 prompt 重新生成。信任默认选择？它会自动带着最优方案继续。你决定参与多深。
-
-> ⚙️ Pilot 实验预算（最大时长、超时、GPU 总预算）均可配置——见[自定义](#customization)。
-
-<details>
-<summary><b>展开工作流 1 的命令清单示例</b> —— research-lit → idea-creator → novelty-check → research-refine → experiment-plan 一步步该敲什么</summary>
-
-```
-1. /research-lit "discrete diffusion models"    ← Zotero→Obsidian→本地→网络，整理全景
-   /research-lit "topic" — sources: zotero, web  ← 或指定只搜部分源
-   /research-lit "topic" — arxiv download: true   ← 同时下载最相关的 arXiv PDF
-2. /idea-creator "DLLMs post training"     ← 自动生成 8-12 个 idea，筛选排序
-3. 选 top 2-3 个 idea
-4. /novelty-check "top idea"                     ← 查新：有没有人做过？
-5. /research-review "top idea"                   ← 让外部 LLM 批判你的想法
-6. /research-refine "top idea"                   ← 冻结问题锚点 + 精炼方法
-7. /experiment-plan                              ← claim-driven 实验路线图
-8. /run-experiment → /auto-review-loop           ← 闭环！
-```
-
-</details>
+**Canonical 模块：** `research-lit`、`idea-creator`、`novelty-check` 与
+`research-refine`，均只能在 Controller 发出的 action 内运行，并受上述人工和
+reviewer Gate 约束。没有超时确认、自动选择、pilot 实验或 `AUTO_PROCEED` 设置
+可以跨越这些 Gate；`research-review` 只可作为可选外部挑战，不是重复 Gate。
 
 📝 **博客：** [Claude Code 两月 NeurIPS 指北](http://xhslink.com/o/7IvAJQ41IBA)
 
@@ -777,7 +751,8 @@ ARIS 全流程完成并进入投稿/审稿阶段的真实项目。**所列分数
 
 > "我有计划了，帮我实现代码、部署实验、拿到初始结果。"
 
-已有实验计划（来自工作流 1 或自己写的）？`/experiment-bridge` 一键搞定：
+已有 `/experiment-plan` 在 validation handoff 后生成的绑定计划，或明确标记为
+非 canonical 的自有计划？`/experiment-bridge` 可将其实现为可运行代码：
 
 1. 📋 **解析**实验计划（`refine-logs/EXPERIMENT_PLAN.md`）
 2. 💻 **实现**实验脚本（复用已有代码，加 argparse/logging/seed）
@@ -809,7 +784,7 @@ ARIS 全流程完成并进入投稿/审稿阶段的真实项目。**所列分数
 │   └──────────┘     └──────────┘     └──────────┘               │
 │         │                                                        │
 │         ▼                                                        │
-│   准备好进入 /auto-review-loop                                    │
+│   结果可供用户选择后续工作流使用                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -817,7 +792,9 @@ ARIS 全流程完成并进入投稿/审稿阶段的真实项目。**所列分数
 
 **涉及 Skills：** `experiment-bridge` + `run-experiment` + `monitor-experiment`
 
-> 💡 **一键调用：** `/experiment-bridge` 自动读取 `refine-logs/EXPERIMENT_PLAN.md`。也可指定：`/experiment-bridge "my_plan.md"`。
+> 💡 **Canonical 用法：** 先调用 `/research-pipeline "<canonical-run-id>"`；其
+> 绑定的 `/experiment-plan` 输出再交给 `/experiment-bridge`。直接提供给 bridge
+> 的计划保持明确的非 canonical 标记。
 
 > ⚙️ `CODE_REVIEW`、`AUTO_DEPLOY`、`SANITY_FIRST`、`MAX_PARALLEL_RUNS` 均可配置——见[自定义](#customization)。
 

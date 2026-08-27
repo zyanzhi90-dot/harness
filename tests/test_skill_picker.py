@@ -7,6 +7,7 @@ end-to-end tests drive the real curses UI through a pty via expect
 """
 import importlib.util
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,7 +100,7 @@ class ModelTest(unittest.TestCase):
         avail.write_text("alpha\n")
         out = self.tmp / "out.txt"
         result = subprocess.run(
-            ["python3", str(PICKER), "--catalog", str(self.catalog),
+            [sys.executable, str(PICKER), "--catalog", str(self.catalog),
              "--available", str(avail), "--out", str(out)],
             capture_output=True, text=True,
         )

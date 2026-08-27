@@ -45,6 +45,11 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
+try:
+    import msvcrt  # Windows
+except ImportError:  # pragma: no cover
+    msvcrt = None
+
 GATE_VERSION = "1"
 AUDITOR_FAMILY = "openai"   # Anti-AR's reviewer pins are GPT-family by upstream contract
 
@@ -181,14 +186,24 @@ def _ledger_lock(paper_dir):
     """One lock around every load→mutate→save transaction — concurrent
     update/resolve/waive must never lose records (append-only is a promise)."""
     lock_path = os.path.join(_forensics_dir(paper_dir), ".ledger.lock")
-    fh = open(lock_path, "w")
+    fh = open(lock_path, "a+b")
     try:
         if fcntl is not None:
             fcntl.flock(fh, fcntl.LOCK_EX)
+        elif msvcrt is not None:
+            fh.seek(0, os.SEEK_END)
+            if fh.tell() == 0:
+                fh.write(b"\0")
+                fh.flush()
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
         yield
     finally:
         if fcntl is not None:
             fcntl.flock(fh, fcntl.LOCK_UN)
+        elif msvcrt is not None:
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
         fh.close()
 
 
@@ -208,7 +223,9 @@ def _load_ledger(path):
 def _save_ledger(path, data):
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, ensure_ascii=False)
+        # Keep machine JSON ASCII-safe so Windows callers that omit an
+        # explicit encoding do not fail under GBK/CP936 locales.
+        json.dump(data, fh, indent=2, ensure_ascii=True)
     os.replace(tmp, path)
     # EVERY ledger mutation invalidates the standing gate: a gate computed
     # against the previous ledger state must never survive it (`evaluate`
@@ -518,7 +535,7 @@ def cmd_gate(args):
     out = os.path.join(_forensics_dir(args.paper_dir), "gate.json")
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(out), suffix=".tmp")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(gate, fh, indent=2, ensure_ascii=False)
+        json.dump(gate, fh, indent=2, ensure_ascii=True)
     os.replace(tmp, out)
     print(f"forensics gate: {decision} (upstream: {verdict or '(missing)'}; "
           f"open obligations: {len(open_obl)}, critical: {len(open_critical)}) -> {out}")

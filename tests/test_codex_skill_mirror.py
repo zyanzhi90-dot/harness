@@ -35,15 +35,28 @@ def has_send_input_block(text: str) -> bool:
 def test_codex_skill_set_matches_mainline() -> None:
     main_names = skill_names(MAIN_SKILLS)
     codex_names = skill_names(CODEX_SKILLS)
-    assert len(main_names) == 81
+    assert len(main_names) == 80
     assert main_names == codex_names
 
 
 def test_codex_shared_reference_set_matches_mainline() -> None:
     main_refs = {p.name for p in (MAIN_SKILLS / "shared-references").glob("*.md")}
     codex_refs = {p.name for p in (CODEX_SKILLS / "shared-references").glob("*.md")}
-    assert len(main_refs) == 30
+    assert len(main_refs) == 39
     assert codex_refs == main_refs
+
+
+def test_codex_problem_adapter_preserves_canonical_problem_gate_order() -> None:
+    """Keep the adapter from silently skipping either required problem Gate."""
+
+    adapter = read(CODEX_SKILLS / "idea-creator" / "SKILL.md")
+    order = (
+        '/research-lit -> /idea-creator "mode: problem" -> independent problem-quality Gate',
+        '-> /novelty-check "mode: problem" -> human problem acceptance',
+        '-> /idea-creator "mode: diagnosis"',
+    )
+    positions = [adapter.index(item) for item in order]
+    assert positions == sorted(positions)
 
 
 def test_codex_mirror_shared_reference_links_resolve() -> None:
@@ -226,8 +239,15 @@ def test_codex_review_assurance_is_explicit_and_honest() -> None:
         for skill_file in overlay.glob("*/SKILL.md"):
             text = read(skill_file)
             assert "review_independence: cross-family" in text
-            assert "acceptance_status: accepted" in text
-            assert "acceptance_status: provisional" not in text
+            if (
+                overlay == GEMINI_OVERLAY
+                and skill_file.parent.name in {"idea-creator", "idea-discovery"}
+            ):
+                assert "acceptance_status: provisional" in text
+                assert "human acceptance" in text.lower()
+            else:
+                assert "acceptance_status: accepted" in text
+                assert "acceptance_status: provisional" not in text
 
     for skill_file in CLAUDE_OVERLAY.glob("*/SKILL.md"):
         text = read(skill_file)
@@ -260,7 +280,6 @@ def test_overlay_boundaries_are_exact() -> None:
         "grant-proposal",
         "idea-creator",
         "idea-discovery",
-        "idea-discovery-robot",
         "novelty-check",
         "paper-figure",
         "paper-plan",
@@ -360,15 +379,13 @@ def test_codex_high_risk_skills_preserve_claude_semantics() -> None:
             "Debate Transcript",
         ],
         "research-pipeline": [
-            "REVIEWER_DIFFICULTY",
-            "Reviewer Memory",
-            "Debate Protocol",
-            "nightmare",
-            "Review Tracing",
-            "AUTO_WRITE",
-            "NARRATIVE_REPORT.md",
-            "experiment-queue",
-            "Stage 6: Paper Writing",
+            "validation-handoff <run_id>",
+            "METHOD_CONFIRMED_AWAITING_USER_VALIDATION",
+            "canonical Controller run ID",
+            "`/experiment-plan`",
+            "`/experiment-bridge`",
+            "`/result-to-claim`",
+            "does not operate in `NON_CANONICAL_AD_HOC` mode",
         ],
         "experiment-bridge": [
             "Vast.ai",
@@ -395,9 +412,9 @@ def test_codex_high_risk_skills_preserve_claude_semantics() -> None:
             "oracle-pro",
         ],
         "research-lit": [
-            "semantic-scholar",
-            "Semantic Scholar API search",
-            "semantic_scholar_fetch.py",
+            "SerpApi Google Scholar",
+            "scholar.google.hk",
+            "HUMAN_SEARCH_REQUIRED",
         ],
         "arxiv": [
             "Update Research Wiki",
@@ -472,12 +489,6 @@ def test_codex_medium_risk_skills_preserve_claude_semantics() -> None:
 
 def test_codex_optional_helpers_are_guarded() -> None:
     checks = {
-        "research-lit": [
-            'if [ -n "$DEEPXIV_FETCHER" ]; then',
-            'if [ -n "$EXA_FETCHER" ]; then',
-            'echo "DeepXiv unavailable',
-            'echo "Exa unavailable',
-        ],
         "deepxiv": [
             '[ -n "$DEEPXIV_FETCHER" ] && python3 "$DEEPXIV_FETCHER"',
             "fall back to raw `deepxiv` commands",

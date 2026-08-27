@@ -42,15 +42,14 @@ skill	web-debug-search	lit-search	-	GitHub Issues/Discussions 调试检索与版
 skill	gemini-search	lit-search	-	Gemini 驱动的文献发现
 skill	research-lit	lit-search	-	文献综述与相关工作分析
 skill	comm-lit-review	lit-search	-	通信领域专用文献综述
-skill	idea-creator	ideation	-	给定方向生成并排序研究 idea
-skill	idea-discovery	ideation	idea-creator,novelty-check,research-lit,research-review,research-refine-pipeline,research-refine,render-html	W1:从方向到验证过的 idea 全流程
-skill	idea-discovery-robot	ideation	idea-creator,novelty-check,research-lit,research-review	W1 机器人/具身智能特化版
+skill	idea-creator	ideation	novelty-check,research-lit	给定方向生成并排序研究 idea
+skill	idea-discovery	ideation	idea-creator,novelty-check,research-lit,research-refine,render-html	W1:problem-first research discovery with explicit human checkpoints
 skill	novelty-check	ideation	-	idea 查新(有没有人做过)
 skill	research-refine	ideation	-	粗糙方向打磨成聚焦提案
 skill	research-refine-pipeline	ideation	research-refine,experiment-plan	refine+实验计划一条龙
 skill	research-wiki	ideation	-	跨生命周期研究知识库
 skill	wiki-enrich	ideation	research-wiki	补全 wiki 论文页 TODO
-skill	research-pipeline	ideation	idea-discovery,experiment-bridge,auto-review-loop,render-html	端到端总 pipeline:找 idea→实验→论文
+skill	research-pipeline	ideation	experiment-plan,experiment-bridge,result-to-claim	正式验证续接:已批准方法→计划→执行→结果解释
 skill	research-review	review-loop	-	研究方案/结果批判性评审
 skill	auto-review-loop	review-loop	result-to-claim,training-check,render-html	外部模型多轮 review→修复循环
 skill	auto-review-loop-llm	review-loop	-	用任意 OpenAI 兼容 API 做 review

@@ -145,7 +145,6 @@ codex mcp add gemini-review --env GEMINI_REVIEW_BACKEND=api --env GEMINI_REVIEW_
 
 - `idea-creator`
 - `idea-discovery`
-- `idea-discovery-robot`
 - `research-review`
 - `novelty-check`
 - `research-refine`
@@ -161,12 +160,12 @@ codex mcp add gemini-review --env GEMINI_REVIEW_BACKEND=api --env GEMINI_REVIEW_
 
 其它能力仍然来自上游 `skills/skills-codex/`。
 
-## 核心 8 个 vs 运行态 15 个
+## 核心 8 个 vs 运行态 14 个
 
 这条路径有两种都成立的描述方式：
 
 - **核心 8 个**：和现有 Claude-review 路径一一对齐的 reviewer overlay 核心集合
-- **运行态 15 个**：当前安装后的 Codex skill 集里，实际切到 Gemini reviewer 的完整 reviewer-aware 技能面
+- **运行态 14 个**：当前安装后的 Codex skill 集里，实际切到 Gemini reviewer 的完整 reviewer-aware 技能面
 
 其中 **核心 8 个** 是：
 
@@ -181,11 +180,10 @@ codex mcp add gemini-review --env GEMINI_REVIEW_BACKEND=api --env GEMINI_REVIEW_
 
 这 8 个最直接对应早先 Claude-review overlay 的组织方式和 reviewer 契约。
 
-另外扩展进去的 **7 个** reviewer-aware 技能是：
+另外扩展进去的 **6 个** reviewer-aware 技能是：
 
 - `idea-creator`
 - `idea-discovery`
-- `idea-discovery-robot`
 - `grant-proposal`
 - `paper-writing`
 - `paper-slides`
@@ -194,13 +192,13 @@ codex mcp add gemini-review --env GEMINI_REVIEW_BACKEND=api --env GEMINI_REVIEW_
 所以更准确的理解是：
 
 - **核心机制** 仍然沿用和 Claude 路径相同的 8-skill overlay 形状
-- **运行态 reviewer 覆盖面** 则已经扩展到 15 个 skill
+- **运行态 reviewer 覆盖面** 则已经扩展到 14 个 skill
 
 这也解释了为什么 diff 更大，但并不意味着 reviewer 契约本身被改乱了。
 
 ## 直接消费者 vs wrapper
 
-这 15 个 skill 里又可以分成两类：
+这 14 个 skill 里又可以分成两类：
 
 - **12 个直接消费者**：自己会直接调用 `mcp__gemini-review__review_start` / `review_reply_start` / `review_status`
   - `research-review`
@@ -215,12 +213,11 @@ codex mcp add gemini-review --env GEMINI_REVIEW_BACKEND=api --env GEMINI_REVIEW_
   - `grant-proposal`
   - `paper-slides`
   - `paper-poster-html`
-- **3 个 wrapper**：主要负责串联下游 reviewer-aware 子 skill，并向下传递 `REVIEWER_MODEL=gemini-review`
+- **2 个 wrapper**：主要负责串联下游 reviewer-aware 子 skill，并向下传递 `REVIEWER_MODEL=gemini-review`
   - `idea-discovery`
-  - `idea-discovery-robot`
   - `paper-writing`
 
-这层分类对验收很重要：不需要把 15 条工作流都完整跑到底，才能证明 reviewer transport 是通的。对于 PR 验收，更合理的做法是：全量结构检查 + bridge 运行时验证 + 少量直接消费者 / wrapper 的代表性 smoke test 组合验证。
+这层分类对验收很重要：不需要把 14 条工作流都完整跑到底，才能证明 reviewer transport 是通的。对于 PR 验收，更合理的做法是：全量结构检查 + bridge 运行时验证 + 少量直接消费者 / wrapper 的代表性 smoke test 组合验证。
 
 ## 异步 reviewer 流程
 

@@ -1,0 +1,59 @@
+# Copy this file to idea-stage/SOURCE_ADMISSION_POLICY.yaml, replace the field
+# and venue placeholders, then submit it through arisctl for human approval.
+schema_version: 2
+
+# Scope and elite venues are project-specific.  Add canonical names and aliases
+# only after verifying that they are appropriate for this field.
+fields:
+  - name: "REPLACE_WITH_FIELD"
+    approved_elite_venues:
+      - canonical_name: "REPLACE_WITH_ELITE_VENUE"
+        aliases: []
+
+# Raw citation thresholds identify high-citation *candidates*, not automatic
+# full-text obligations. After title/abstract screening, use the label
+# HIGH_CITATION_BACKBONE only for a task's in-scope foundational or turning-point
+# mechanism papers; that label requires full-text reading. Each comparison is
+# strict. Record provider and retrieval date because counts change over time.
+high_citation_rule:
+  metric: raw_citation_count
+  comparison: strictly_greater_than
+  thresholds:
+    - publication_year_max: 1999
+      citation_count_strictly_greater_than: 300
+    - publication_year_min: 2000
+      publication_year_max: 2009
+      citation_count_strictly_greater_than: 200
+    - publication_year_min: 2010
+      publication_year_max: 2017
+      citation_count_strictly_greater_than: 100
+    - publication_year_min: 2018
+      publication_year_max: 2020
+      citation_count_strictly_greater_than: 60
+    - publication_year_min: 2021
+      publication_year_max: 2022
+      citation_count_strictly_greater_than: 35
+    - publication_year_min: 2023
+      publication_year_max: 2023
+      citation_count_strictly_greater_than: 20
+    - publication_year_min: 2024
+      publication_year_max: 2024
+      citation_count_strictly_greater_than: 10
+    - publication_year_min: 2025
+      publication_year_max: 2025
+      citation_count_strictly_greater_than: 3
+    - publication_year_min: 2026
+      publication_year_max: 9999
+      citation_count_strictly_greater_than: 1
+
+source_tracks:
+  proactively_retrieved_literature:
+    initial_decision: DISCOVERY_METADATA_ONLY
+    active_read_gate: high_citation_or_approved_elite_venue
+  user_supplied_material:
+    decision: USER_SUPPLIED_READ
+
+notes: >-
+  Replace this baseline when field citation norms differ materially. Citation or
+  venue status establishes active-reading eligibility only; it does not itself
+  select full text, establish a backbone label, or establish claim validity.

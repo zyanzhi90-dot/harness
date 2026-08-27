@@ -90,7 +90,7 @@ class SelectiveInstallTest(unittest.TestCase):
         f = self.project / ".aris" / "skills-declined.txt"
         if not f.is_file():
             return set()
-        return set(f.read_text().split())
+        return set(f.read_text(encoding="utf-8").split())
 
     # ─── fresh install ─────────────────────────────────────────────────────
 
@@ -185,7 +185,7 @@ class SelectiveInstallTest(unittest.TestCase):
         self._run()
         pointer = self.home / ".aris" / "repo"
         self.assertTrue(pointer.is_file(), "installer must write ~/.aris/repo")
-        self.assertEqual(pointer.read_text().strip(), str(self.repo))
+        self.assertEqual(pointer.read_text(encoding="utf-8").strip(), str(self.repo))
 
     def test_dry_run_writes_nothing(self):
         self._run("--dry-run")

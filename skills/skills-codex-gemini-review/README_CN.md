@@ -22,7 +22,6 @@
 
 - `idea-creator`
 - `idea-discovery`
-- `idea-discovery-robot`
 - `research-review`
 - `novelty-check`
 - `research-refine`
@@ -36,12 +35,12 @@
 - `paper-writing`
 - `auto-paper-improvement-loop`
 
-## 核心 8 个 vs 完整 15 个
+## 核心 8 个 vs 完整 14 个
 
 为了避免误解，这个 overlay 有两种常用描述方式：
 
 - **核心 8 个**：和早先 Claude-review 路线一一对齐的 reviewer-heavy overlay 核心集合
-- **完整 15 个**：当前这个仓库里实际已经切到 Gemini reviewer 的 reviewer-aware Codex 技能面
+- **完整 14 个**：当前这个仓库里实际已经切到 Gemini reviewer 的 reviewer-aware Codex 技能面
 
 其中 **核心 8 个** 是：
 
@@ -54,11 +53,10 @@
 - `paper-write`
 - `auto-paper-improvement-loop`
 
-额外扩展的 **7 个** reviewer-aware 入口是：
+额外扩展的 **6 个** reviewer-aware 入口是：
 
 - `idea-creator`
 - `idea-discovery`
-- `idea-discovery-robot`
 - `grant-proposal`
 - `paper-writing`
 - `paper-slides`
@@ -66,7 +64,7 @@
 
 所以和 Claude overlay 对比时，最准确的一句话是：
 
-> Gemini 这条路保持了相同的核心 8-skill reviewer overlay 形状，但在当前仓库里把实际 reviewer 入口扩展到了 15 个。
+> Gemini 这条路保持了相同的核心 8-skill reviewer overlay 形状，但在当前仓库里把实际 reviewer 入口扩展到了 14 个。
 
 ## 直接消费者 vs wrapper
 
@@ -83,9 +81,8 @@
   - `grant-proposal`
   - `paper-slides`
   - `paper-poster-html`
-- **3 个 wrapper**：主要串联下游 reviewer-aware skill，并传递 `REVIEWER_MODEL=gemini-review`
+- **2 个 wrapper**：主要串联下游 reviewer-aware skill，并传递 `REVIEWER_MODEL=gemini-review`
   - `idea-discovery`
-  - `idea-discovery-robot`
   - `paper-writing`
 
 ## 安装方式

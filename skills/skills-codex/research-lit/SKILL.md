@@ -1,458 +1,370 @@
 ---
-name: "research-lit"
-description: "Search and analyze research papers, find related work, summarize key ideas. Use when user says \"find papers\", \"related work\", \"literature review\", \"what does this paper say\", or needs to understand academic papers."
+name: research-lit
+description: Build an evidence-grounded Active Field Map for a bounded research field. Use for literature landscapes, method-family taxonomies, bottleneck analysis, causal development traces, failure-boundary analysis, and unresolved problem leads. Formal runs are controlled by arisctl; this Skill contains scientific reasoning only.
+allowed-tools: Read, Agent
 ---
 
-# Research Literature Review
+# Research Literature Cognition
 
 Research topic: $ARGUMENTS
 
-## Constants
+## Execution boundary
 
-- **PAPER_LIBRARY** — Local directory containing user's paper collection (PDFs). Check these paths in order:
-  1. `papers/` in the current project directory
-  2. `literature/` in the current project directory
-  3. Custom path specified by user in `AGENTS.md` under `## Paper Library`
-- **MAX_LOCAL_PAPERS = 20** — Maximum number of local PDFs to scan (read first 3 pages each). If more are found, prioritize by filename relevance to the topic.
-- **SOURCES = `all`** — Which literature sources to search. Options: `zotero`, `obsidian`, `local`, `web`, `semantic-scholar`, `deepxiv`, `exa`, `gemini`, `openalex`, `all`. Full source table and selection rules: see `## Data Sources` below.
-- **ARXIV_DOWNLOAD = false** — When `true`, download top 3-5 most relevant arXiv PDFs to PAPER_LIBRARY after search. When `false` (default), only fetch metadata (title, abstract, authors) via arXiv API — no files are downloaded.
-- **ARXIV_MAX_DOWNLOAD = 5** — Maximum number of PDFs to download when `ARXIV_DOWNLOAD = true`.
-- **REVIEWER_BACKEND = `codex`** — Default reviewer route for optional literature synthesis cross-checks. Use `--reviewer: oracle-pro` only when explicitly requested; if Oracle is unavailable, warn and continue with Codex xhigh or local synthesis.
+For a formal run, first read the Controller status and perform only the action
+allowed for its current stage. Return structured cognition to the Controller;
+never search, fetch full text, admit a paper, write canonical artifacts, change
+state, approve a Gate, count a budget, or declare the stage complete yourself.
 
-> 💡 Overrides:
-> - `/research-lit "topic" — paper library: ~/my_papers/` — custom local PDF path
-> - `/research-lit "topic" — sources: zotero, local` — only search Zotero + local PDFs
-> - `/research-lit "topic" — sources: web` — only search the web (skip all local)
-> - `/research-lit "topic" — sources: web, semantic-scholar` — also search Semantic Scholar for published venue papers
-> - `/research-lit "topic" — sources: all, deepxiv` — use default sources plus DeepXiv
-> - `/research-lit "topic" — arxiv download: true` — download top relevant arXiv PDFs
-> - `/research-lit "topic" — arxiv download: true, max download: 10` — download up to 10 PDFs
+When the Controller reports `SOURCE_POLICY_DRAFTING`, Main Research Agent must
+draft a project-specific candidate using `source-admission-policy.md` and submit
+it through `arisctl submit-source-policy`. Do not write the canonical policy
+path directly and do not approve the candidate. The Controller validates the
+candidate before it opens `source_policy_approval`; retrieval remains forbidden
+until the user approves that exact validated candidate.
 
-## Data Sources
+The mechanical contract is `shared-references/idea-workflow.yaml`, enforced by
+`arisctl`. This Skill intentionally does not duplicate stage order, budgets,
+artifact-existence rules, admission permission, human approval, transition
+conditions, or schema validation.
 
-This skill checks multiple sources **in priority order**.
+Query planning and Field Map synthesis are Main Research Agent responsibilities.
+Spawn only `paper_reader` to isolate admitted-paper context and
+`coverage_reviewer` for a Controller-issued candidate-sufficiency, major-taxonomy,
+or final-acceptance review. Do not create role-named agents for the Main tasks.
 
-### Source Selection
+## Native reader/reviewer dispatch
 
-Parse `$ARGUMENTS` for a `— sources:` directive:
-- **If `— sources:` is specified**: Only search the listed sources (comma-separated). Valid values: `zotero`, `obsidian`, `local`, `web`, `semantic-scholar`, `deepxiv`, `exa`, `gemini`, `openalex`, `all`.
-- **If not specified**: Default to `all` — search every available source in priority order (`semantic-scholar`, `deepxiv`, `exa`, `gemini`, and `openalex` are excluded from `all`; they must be explicitly listed).
+Reader and coverage-review work stays inside the current active Codex turn.
+Prefer the configured native `paper_reader` or `coverage_reviewer` role. If this
+runtime cannot select that custom role, use a current-turn native generic child
+only for these two roles; never emulate a configured role through nested
+`codex exec`, a new Codex CLI session, or a new top-level turn.
 
-Examples:
-```
-/research-lit "diffusion models"                        → all (default)
-/research-lit "diffusion models" — sources: all         → all
-/research-lit "diffusion models" — sources: zotero      → Zotero only
-/research-lit "diffusion models" — sources: zotero, web → Zotero + web
-/research-lit "diffusion models" — sources: local       → local PDFs only
-/research-lit "topic" — sources: obsidian, local, web   → skip Zotero
-/research-lit "topic" — sources: web, semantic-scholar  → web + Semantic Scholar API
-/research-lit "topic" — sources: deepxiv                → DeepXiv only
-/research-lit "topic" — sources: all, deepxiv           → default sources + DeepXiv
-/research-lit "topic" — sources: all, semantic-scholar  → default sources + Semantic Scholar API
-/research-lit "topic" — sources: exa                    → Exa only (broad web + content extraction)
-/research-lit "topic" — sources: all, exa               → default sources + Exa web search
-/research-lit "topic" — sources: gemini                 → Gemini only (AI-powered broad discovery)
-/research-lit "topic" — sources: all, gemini            → default sources + Gemini discovery
-/research-lit "topic" — sources: openalex               → OpenAlex only (open citation graph + institutions)
-/research-lit "topic" — sources: all, openalex          → default sources + OpenAlex citation graph
-```
+The generic child must use `fork_turns = none`. Its Controller-bound user task
+must contain exactly one one-line `ARIS_NATIVE_GENERIC_COMPAT:` JSON binding
+with `dispatch_mode: native_generic_compat`, `formal_role`, the SHA-256 of the
+configured role's exact `developer_instructions`, and that verbatim contract.
+For `paper_reader`, bind `paper_id`, `read_event_id`, and `content_sha256` and
+include only the Controller-supplied paper content. For `coverage_reviewer`,
+bind the live `run_id`, `review_request_id`, and exact
+`reviewed_artifact_hashes`. The native lifecycle hook recognizes this only from
+the real child transcript and records `dispatch_mode = native_generic_compat`;
+it rejects incomplete bindings, non-native/root children, reader tool use, and
+reviewer capabilities beyond the configured contract. Submit no formal output
+unless that attestation exists.
 
-### Source Table
+Scientific source policy and the downstream problem boundary remain defined by:
 
-| Priority | Source | ID | How to detect | What it provides |
-|----------|--------|----|---------------|-----------------|
-| 1 | **Zotero** (via MCP) | `zotero` | Try calling any `mcp__zotero__*` tool — if unavailable, skip | Collections, tags, annotations, PDF highlights, BibTeX, semantic search |
-| 2 | **Obsidian** (via MCP) | `obsidian` | Try calling any `mcp__obsidian-vault__*` tool — if unavailable, skip | Research notes, paper summaries, tagged references, wikilinks |
-| 3 | **Local PDFs** | `local` | `Glob: papers/**/*.pdf, literature/**/*.pdf` | Raw PDF content (first 3 pages) |
-| 4 | **Web search** | `web` | Always available (WebSearch) | arXiv, Semantic Scholar, Google Scholar |
-| 5 | **Semantic Scholar API** | `semantic-scholar` | `$S2_FETCHER` resolves (canonical name `semantic_scholar_fetch.py`, per integration-contract §2 Codex chain) | Published venue papers (IEEE, ACM, Springer) with structured metadata: citation counts, venue info, TLDR. **Only runs when explicitly requested** |
-| 6 | **DeepXiv CLI** | `deepxiv` | `$DEEPXIV_FETCHER` resolves (canonical name `deepxiv_fetch.py`, per integration-contract §2) **and** `deepxiv` CLI present | Progressive paper retrieval: search, brief, head, section, trending, web search. **Only runs when explicitly requested** |
-| 7 | **Exa Search** | `exa` | `$EXA_FETCHER` resolves (canonical name `exa_search.py`, per integration-contract §2); fetcher handles `exa-py` SDK + API key internally | AI-powered broad web search with content extraction (highlights, text, summaries). Covers blogs, docs, news, companies, and research papers beyond arXiv/S2. **Only runs when explicitly requested** |
-| 8 | **Gemini** (MCP / CLI) | `gemini` | `mcp__gemini-cli__ask-gemini` is available, or `gemini` CLI is installed | AI-powered broad literature discovery that decomposes topics into sub-problems, aliases, and variants. **Only runs when explicitly requested** |
-| 9 | **OpenAlex** | `openalex` | `$OPENALEX_FETCHER` resolves (canonical name `openalex_fetch.py`, per integration-contract §2 Codex chain) and Python `requests` is importable | Open citation graph with institutional affiliations, funding data, and broad work metadata. **Only runs when explicitly requested** |
+- [`source-admission-policy.md`](../shared-references/source-admission-policy.md)
+- [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
+- [`fan-out-pattern.md`](../shared-references/fan-out-pattern.md)
 
-> If the user explicitly requests Zotero or Obsidian and that source is not configured, stop and tell the user how to enable it. Only sources that were not requested may be skipped silently.
+If an explicitly requested private source is unavailable, stop and ask the user to configure
+it; do not silently downgrade to public search. Provider routing is a
+Controller/gateway concern and not an agent action. The discovery order is fixed:
 
-## Workflow
+1. SerpApi Google Scholar (`engine=google_scholar`, key from `SERPAPI_KEY`);
+2. only when SerpApi is unavailable and the current environment exposes real
+   browser/computer interaction, normal serial page interaction with
+   `https://scholar.google.hk/`, conservative spacing, and immediate exit on
+   CAPTCHA, unusual-traffic, `We're sorry`, or HTTP 429/403 signals; without
+   that capability this route is unavailable, and no HTTP/HTML scraper is used;
+3. only when both Scholar routes are unavailable or blocked, the parallel,
+   deduplicated union of arXiv and IEEE Xplore (or whichever one remains
+   available), recorded explicitly as non-Google-Scholar fallback coverage;
+4. when a configured provider fails, do not permanently suppress it for later
+   queries. Record the query-scoped incident. If a lower-priority route produced
+   metadata after any such failure, or no route can run, enter
+   `HUMAN_SEARCH_REQUIRED` and STOP so coverage is not silently downgraded.
 
-### Per-source/per-paper fan-out
+A successful Scholar-provider response with few, low-relevance, or zero results
+is not provider failure. Keep that provider and use the existing targeted query
+refinement and citation-expansion cycle. At the final arXiv + IEEE Xplore level,
+use the existing admission and Field Map coverage decisions—never a new coverage
+rule—to determine whether the automated fallback completed the search. A human-search request is
+one batch: it includes every affected planned query, purpose, requested filters, and provider
+attempts; the user returns one matching batch of metadata before retrieval resumes. Ordinary Web Search and
+`site:scholar.google.*` queries never count as Google Scholar retrieval. Never
+add another automatic discovery source, bypass CAPTCHA, rotate proxies/IPs, or
+use anti-detection measures.
 
-Retrieval and extraction are breadth-bound. Use fresh `spawn_agent` shards when
-delegation is available, or the same work sequentially otherwise. Every shard
-is read-only and returns
-`{"shard_id": ..., "entries": [{"payload": ..., "dedup_key": "<DOI/arXiv/id>"}]}`.
-The parent invokes every resolved source, unions results, mechanically dedups on
-canonical IDs, and writes once. Shards do not rank paper quality. Source
-verification remains deterministic; optional Codex synthesis review is
-same-family provisional. See
-[`fan-out-pattern.md`](../shared-references/fan-out-pattern.md).
+Automatic full-text acquisition is arXiv-only. Partition the unread admitted
+papers before retrieval: call `fetch-fulltext` only when the admitted identity
+declares an `arxiv_id` or `arxiv.org` stable URL; pass every other unread ID to one
+`defer-fulltext-batch` call without probing publisher pages, Crossref, OpenAlex,
+Semantic Scholar, or general Web Search for a PDF. After the arXiv attempts and
+their Evidence Cards are complete, call `finish-reading` once; it must stop in
+`HUMAN_SEARCH_REQUIRED` with one download batch containing every deferred paper
+and any arXiv paper whose direct download failed. The user places one local file
+per listed paper under `source-materials/` and submits a single manifest; only
+then does normal paper reading and evidence extraction resume. Never ask for one
+download at a time or omit an admitted paper because its full text is unavailable.
 
-### Step 0a: Search Zotero Library (if available)
+## Scientific objective
 
-**If the user explicitly requested Zotero and the Zotero MCP is not configured, stop and ask the user to configure it. Otherwise skip this step entirely.**
+Construct a compact, revisable model of the field in this causal order:
 
-Try calling a Zotero MCP tool (e.g., search). If it succeeds:
-
-1. **Search by topic**: Use the Zotero search tool to find papers matching the research topic
-2. **Read collections**: Check if the user has a relevant collection/folder for this topic
-3. **Extract annotations**: For highly relevant papers, pull PDF highlights and notes — these represent what the user found important
-4. **Export BibTeX**: Get citation data for relevant papers (useful for `/paper-write` later)
-5. **Compile results**: For each relevant Zotero entry, extract:
-   - Title, authors, year, venue
-   - User's annotations/highlights (if any)
-   - Tags the user assigned
-   - Which collection it belongs to
-
-> 📚 Zotero annotations are gold — they show what the user personally highlighted as important, which is far more valuable than generic summaries.
-
-### Step 0b: Search Obsidian Vault (if available)
-
-**If the user explicitly requested Obsidian and the Obsidian MCP is not configured, stop and ask the user to configure it. Otherwise skip this step entirely.**
-
-Try calling an Obsidian MCP tool (e.g., search). If it succeeds:
-
-1. **Search vault**: Search for notes related to the research topic
-2. **Check tags**: Look for notes tagged with relevant topics (e.g., `#diffusion-models`, `#paper-review`)
-3. **Read research notes**: For relevant notes, extract the user's own summaries and insights
-4. **Follow links**: If notes link to other relevant notes (wikilinks), follow them for additional context
-5. **Compile results**: For each relevant note:
-   - Note title and path
-   - User's summary/insights
-   - Links to other notes (research graph)
-   - Any frontmatter metadata (paper URL, status, rating)
-
-> 📝 Obsidian notes represent the user's **processed understanding** — more valuable than raw paper content for understanding their perspective.
-
-### Step 0c: Scan Local Paper Library
-
-Before searching online, check if the user already has relevant papers locally:
-
-1. **Locate library**: Check PAPER_LIBRARY paths for PDF files
-   ```
-   Glob: papers/**/*.pdf, literature/**/*.pdf
-   ```
-
-2. **De-duplicate against Zotero**: If Step 0a found papers, skip any local PDFs already covered by Zotero results (match by filename or title).
-
-3. **Filter by relevance**: Match filenames and first-page content against the research topic. Skip clearly unrelated papers.
-
-4. **Summarize relevant papers**: For each relevant local PDF (up to MAX_LOCAL_PAPERS):
-   - Read first 3 pages (title, abstract, intro)
-   - Extract: title, authors, year, core contribution, relevance to topic
-   - Flag papers that are directly related vs tangentially related
-
-5. **Build local knowledge base**: Compile summaries into a "papers you already have" section. This becomes the starting point — external search fills the gaps.
-
-> 📚 If no local papers are found, skip to Step 1. If the user has a comprehensive local collection, the external search can be more targeted (focus on what's missing).
-
-### Step 1: Search (external)
-- Use WebSearch to find recent papers on the topic
-- Check arXiv, Semantic Scholar, Google Scholar
-- Focus on papers from last 2 years unless studying foundational work
-- **De-duplicate**: Skip papers already found in Zotero, Obsidian, or local library
-
-**arXiv API search** (always runs, no download by default):
-
-Resolve `$ARXIV_FETCHER` via the canonical strict-safe Codex chain
-(see [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2):
-
-```bash
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills-codex.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills-codex.txt 2>/dev/null) || true
-fi
-ARXIV_FETCHER=""
-[ -n "${ARIS_REPO:-}" ] && [ -f "$ARIS_REPO/tools/arxiv_fetch.py" ] && ARXIV_FETCHER="$ARIS_REPO/tools/arxiv_fetch.py"
-[ -z "$ARXIV_FETCHER" ] && [ -f tools/arxiv_fetch.py ] && ARXIV_FETCHER="tools/arxiv_fetch.py"
-[ -z "$ARXIV_FETCHER" ] && [ -f ~/.codex/skills/arxiv/arxiv_fetch.py ] && ARXIV_FETCHER="$HOME/.codex/skills/arxiv/arxiv_fetch.py"
-
-if [ -n "$ARXIV_FETCHER" ]; then
-  # Search arXiv API for structured results (title, abstract, authors, categories).
-  if python3 "$ARXIV_FETCHER" search "QUERY" --max 10; then
-    echo "D2 contribution: arxiv (helper invocation exit 0)" >&2
-  else
-    echo "WARN: arxiv_fetch.py invocation failed; D2 aggregate continues with WebSearch results." >&2
-  fi
-else
-  echo "WARN: arxiv_fetch.py not resolved; falling back to WebSearch for arXiv hits." >&2
-fi
+```text
+field core purposes -> typical tasks and scenarios -> core bottlenecks
+  -> evidence-validated major method families
+  -> bottleneck addressed and mechanism
+  -> assumptions -> effective conditions -> failure conditions
+  -> unresolved contradictions -> unresolved problem leads
 ```
 
-If `$ARXIV_FETCHER` is empty (D2 graceful degradation), fall back to WebSearch for arXiv (same as before).
+Do not start from a fashionable method and search backward for a problem. A
+paper list, a chronology, or a survey author's taxonomy is not a Field Map.
 
-The arXiv API returns structured metadata (title, abstract, full author list, categories, dates) — richer than WebSearch snippets. Merge these results with WebSearch findings and de-duplicate.
+## Role: query planner
 
-**Semantic Scholar API search** (only when `semantic-scholar` is in sources):
+### Evidence-acquisition ladder
 
-When the user explicitly requests `— sources: semantic-scholar` or `— sources: web, semantic-scholar`, search for published venue papers beyond arXiv:
+Do not equate a short full-text list with a complete search. Build the corpus in
+decreasing evidence priority while screening the whole retrieved set:
 
-```bash
-# Re-resolve $ARIS_REPO + $S2_FETCHER (SKILL bash blocks may run in separate shells).
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills-codex.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills-codex.txt 2>/dev/null) || true
-fi
-S2_FETCHER=""
-[ -n "${ARIS_REPO:-}" ] && [ -f "$ARIS_REPO/tools/semantic_scholar_fetch.py" ] && S2_FETCHER="$ARIS_REPO/tools/semantic_scholar_fetch.py"
-[ -z "$S2_FETCHER" ] && [ -f tools/semantic_scholar_fetch.py ] && S2_FETCHER="tools/semantic_scholar_fetch.py"
-[ -z "$S2_FETCHER" ] && [ -f ~/.codex/skills/semantic-scholar/semantic_scholar_fetch.py ] && S2_FETCHER="$HOME/.codex/skills/semantic-scholar/semantic_scholar_fetch.py"
+1. find multiple complementary, recent authoritative reviews from elite venues
+   or with strong citation influence; read them in full to construct and
+   cross-check the initial map rather than inheriting one survey taxonomy;
+2. identify high-citation candidates regardless of venue; after title/abstract
+   screening, label and read in full only the task's foundational or
+   turning-point mechanism papers as `HIGH_CITATION_BACKBONE`, to recover
+   mechanisms, causal transitions, and persistent bottlenecks;
+3. search recent elite journals/conferences systematically for current methods
+   and hotspots; when the set is large, select representative papers for full
+   text using explicit mechanism, branch, recency, and contradiction coverage,
+   while retaining the remainder at abstract level;
+4. run targeted gap, citation-chain, negative-result, and saturation follow-up.
 
-if [ -n "$S2_FETCHER" ]; then
-    if python3 "$S2_FETCHER" search "QUERY" --max 10 --fields title,authors,year,venue,citationCount,externalIds,tldr,url; then
-      echo "D2 contribution: semantic_scholar (helper invocation exit 0)" >&2
-    else
-      echo "WARN: semantic_scholar_fetch.py invocation failed; D2 aggregate continues." >&2
-    fi
-else
-    echo "Semantic Scholar unavailable: $S2_FETCHER unresolved; skipping this optional source." >&2
-fi
-```
+Every deduplicated candidate must receive a title-and-abstract inclusion or
+exclusion decision before retrieval closes. A title-only decision is permitted
+only for an obvious duplicate or clear scope mismatch. Search-result snippets
+are not abstracts. An in-scope abstract-only record must preserve the abstract
+and the reason full text was not selected. If normal enrichment has verified
+identity but cannot obtain an actual abstract, use
+`TITLE_ONLY_ABSTRACT_UNAVAILABLE`; this completes screening but is never
+scientific Evidence. Priority/admission metadata never authorizes a read by
+itself: after all current initial candidates are screened, explicitly select a
+non-empty initial-cognition subset. Prefer complementary authoritative Reviews;
+if none are usable, select the minimal foundational/representative Primary
+fallback. If Review Evidence is insufficient, add only the necessary screened
+Primary fallback to the still-live pass. Venue and citation influence reading
+priority; they never prove a scientific claim.
 
-Why use Semantic Scholar? Many IEEE/ACM journal papers are not on arXiv. S2 fills the gap for published venue-only papers with citation counts and venue metadata.
+Submit the provisional Initial Map through the same `ACTIVE_FIELD_MAP.md`
+path, without a coverage record or coverage review. It is a reliable cognition
+handoff, not a coverage verdict. Then choose the formal Primary subset from the
+same bound initial corpus, recording the scientific selection rationale for
+foundational anchors, representative branches, transitions, contradictions or
+gaps as applicable. `ACTIVE_FIELD_MAP.md` remains the sole Field Map:
+`INITIAL_PROVISIONAL` labels this current initial-cognition use, not a Map type,
+file, or independent lifecycle. Retain the existing `initial_field_map_binding`,
+`formal_primary_selection`, and map-lifecycle expression. During formal Primary
+selection, a paper with lawful canonical Evidence satisfies its reading
+requirement through the existing Evidence lifecycle; do not create duplicate
+Evidence. The subsequent revised map and later coverage updates use normal
+coverage semantics and the same canonical map path.
 
-De-duplication between arXiv and S2:
-- Match by arXiv ID first (`externalIds.ArXiv`), then normalized title.
-- If a paper appears in both and S2 has venue / DOI / citation metadata, use S2 as authoritative metadata while keeping the arXiv PDF link.
-- S2 results without `externalIds.ArXiv` are venue-only papers and should be preserved as unique value.
+For formal runs, submit Query Plan schema version 2. Each executable item has a
+unique `plan_item_id`, priority tier, year range, page, exact-title flag, target
+venues, purpose, and close condition. Repeated query text is allowed for real
+pagination. The Controller checks these fields before the provider call, so
+year/venue/page stratification must exist as executable plan items, not prose.
 
-**DeepXiv search** (only when `deepxiv` is in sources):
+When the current Active Field Map is `PARTIAL` or `INSUFFICIENT`, its
+`coverage_record.coverage_gaps` are equally controlled correction requests.
+When an independent coverage review returns `CONTINUE`, combine its concrete
+gaps with any still-live Field Map gaps. Carry every required gap into the
+smallest gap-resolving Query Plan and bind each one to at least one executable
+query item's `coverage_gaps`; the Controller rejects both an omitted required
+gap and a required gap with no bound query. A planned query is not enough:
+complete the bound search before retrieval can close. Re-enter through the
+same retrieval, screening, admission, reading, Evidence, Field Map, and review
+path. Never repair a prior classification by editing an archived corpus record
+or accepted Evidence directly.
 
-When the user explicitly requests `— sources: deepxiv` (or includes `deepxiv` in a combined source list), use the DeepXiv adapter for progressive retrieval:
+Receive only the current Field Map, coverage record, and named evidence gaps.
+Propose the smallest next batch of queries that can discriminate among:
 
-```bash
-# Re-resolve $ARIS_REPO + $DEEPXIV_FETCHER (SKILL bash blocks may run in separate shells).
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills-codex.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills-codex.txt 2>/dev/null) || true
-fi
-DEEPXIV_FETCHER=""
-[ -n "${ARIS_REPO:-}" ] && [ -f "$ARIS_REPO/tools/deepxiv_fetch.py" ] && DEEPXIV_FETCHER="$ARIS_REPO/tools/deepxiv_fetch.py"
-[ -z "$DEEPXIV_FETCHER" ] && [ -f tools/deepxiv_fetch.py ] && DEEPXIV_FETCHER="tools/deepxiv_fetch.py"
-[ -z "$DEEPXIV_FETCHER" ] && [ -f ~/.codex/skills/deepxiv/deepxiv_fetch.py ] && DEEPXIV_FETCHER="$HOME/.codex/skills/deepxiv/deepxiv_fetch.py"
+- an uncovered or unstable family boundary;
+- a missing foundational, turning-point, or current representative anchor;
+- a contradiction or suspected failure regime;
+- a missing backward/forward citation link;
+- a negative-result, reproduction, benchmark, or diagnostic blind spot;
+- an unresolved identity or nearest-prior uncertainty.
 
-if [ -n "$DEEPXIV_FETCHER" ]; then
-    if python3 "$DEEPXIV_FETCHER" search "QUERY" --max 10; then
-      echo "D2 contribution: deepxiv (helper invocation exit 0)" >&2
-      python3 "$DEEPXIV_FETCHER" paper-brief ARXIV_ID || echo "WARN: deepxiv paper-brief failed" >&2
-      python3 "$DEEPXIV_FETCHER" paper-head ARXIV_ID || echo "WARN: deepxiv paper-head failed" >&2
-      python3 "$DEEPXIV_FETCHER" paper-section ARXIV_ID "Experiments" || echo "WARN: deepxiv paper-section failed" >&2
-    else
-      echo "WARN: deepxiv_fetch.py search invocation failed; D2 aggregate continues." >&2
-    fi
-elif command -v deepxiv >/dev/null 2>&1; then
-    deepxiv search "QUERY" --limit 10 --format json
-    deepxiv paper ARXIV_ID --brief --format json
-    deepxiv paper ARXIV_ID --head --format json
-    deepxiv paper ARXIV_ID --section "Experiments" --format json
-    echo "D2 contribution: deepxiv (CLI fallback)" >&2
-else
-    echo "DeepXiv unavailable: $DEEPXIV_FETCHER unresolved and no deepxiv CLI; skipping this optional source." >&2
-fi
-```
+For each query, state its purpose and the observation that would close or
+reopen the gap. Do not execute it and do not infer saturation from the plan.
 
-If `deepxiv_fetch.py` or the `deepxiv` CLI is unavailable, skip this source gracefully and continue with the remaining requested sources.
+Design the query from the unresolved field cognition, not by mechanically
+extracting keywords. The current Map and Evidence may supply discriminating
+professional terminology—method and mechanism names, alternative labels,
+assumptions, failure regimes, benchmark or diagnostic terms, cited-paper
+identities, and backward/forward citation anchors. Use them when they help
+separate competing explanations or recover a missing branch; they are inputs
+to judgment, not a mandatory keyword-extraction pipeline.
 
-**De-duplication against other sources**:
-- Match by arXiv ID first
-- Fall back to normalized title when needed
-- Keep one canonical paper entry and record `deepxiv` as an additional source when it overlaps with web/arXiv findings
+## Role: paper reader
 
-**Exa search** (only when `exa` is in sources):
+Read only the admitted paper content supplied by the Controller. Extract an
+Evidence Card that distinguishes bibliographic identity from scientific claim
+validity and author reports from executor inference.
 
-When the user explicitly requests `— sources: exa` (or includes `exa` in a combined source list), use the Exa tool for broad AI-powered web search with content extraction:
+For each paper, determine:
 
-```bash
-# Re-resolve $ARIS_REPO + $EXA_FETCHER (SKILL bash blocks may run in separate shells).
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills-codex.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills-codex.txt 2>/dev/null) || true
-fi
-EXA_FETCHER=""
-[ -n "${ARIS_REPO:-}" ] && [ -f "$ARIS_REPO/tools/exa_search.py" ] && EXA_FETCHER="$ARIS_REPO/tools/exa_search.py"
-[ -z "$EXA_FETCHER" ] && [ -f tools/exa_search.py ] && EXA_FETCHER="tools/exa_search.py"
-[ -z "$EXA_FETCHER" ] && [ -f ~/.codex/skills/exa-search/exa_search.py ] && EXA_FETCHER="$HOME/.codex/skills/exa-search/exa_search.py"
+- the actual problem and setting;
+- the method or mechanism, not only its name;
+- the claimed contribution and inspected evidence;
+- assumptions and boundary conditions;
+- effective and failure conditions;
+- conflicts with other admitted evidence;
+- its synthesis role and supported development link;
+- an exact claim locator and epistemic status.
 
-if [ -n "$EXA_FETCHER" ]; then
-  exa_contributed=false
-  # Search for research papers with highlights.
-  if python3 "$EXA_FETCHER" search "QUERY" --max 10 --category "research paper" --content highlights; then
-    exa_contributed=true
-  else
-    echo "WARN: exa_search.py research-paper invocation failed; D2 aggregate continues." >&2
-  fi
-  # Search for broader web content (blogs, docs, news).
-  if python3 "$EXA_FETCHER" search "QUERY" --max 10 --content highlights; then
-    exa_contributed=true
-  else
-    echo "WARN: exa_search.py broad-web invocation failed; D2 aggregate continues." >&2
-  fi
-  [ "$exa_contributed" = "true" ] && echo "D2 contribution: exa (at least one invocation exit 0)" >&2
-else
-  echo "Exa unavailable: \$EXA_FETCHER unresolved; skipping this optional source." >&2
-fi
-```
+Metadata, snippets, abstracts, and unlocated notes are discovery-only. Claims
+about failure causes, negative results, assumptions, novelty, or closest-prior
+capability require inspected source content with enough local context. Preserve
+uncertainty when access or evidence is inadequate.
 
-If `exa_search.py` or the `exa-py` SDK is unavailable, skip this source gracefully and continue with the remaining requested sources.
+## Role: field synthesizer
 
-**De-duplication against other sources**:
-- Match by URL first, then normalized title
-- If Exa returns an arXiv paper already found by other sources, prefer structured metadata from arXiv/S2
-- Exa results from non-academic domains (blogs, docs, news) are unique value not covered by other sources
+Update one working Active Field Map from accepted Evidence Cards. Do not replace
+it with disconnected batch summaries.
 
-**Gemini search** (only when `gemini` is in sources):
+For an Initial Map, synthesize only the selected initial Review/fallback
+Evidence and omit `coverage_record`; it must not request coverage review or
+ordinary gap queries. After map-guided formal Primary reading, revise the same
+map with landscape Evidence only—never mix Problem, RCA, Method, or other
+phase-scoped incremental Evidence. The Controller archives each accepted
+version before the canonical map is overwritten, so an SHA used by formal
+provenance remains recoverable.
 
-When the user explicitly requests `— sources: gemini` (or includes `gemini` in a combined source list), use Gemini for AI-powered broad literature discovery.
+For `PARTIAL` or `INSUFFICIENT`, `coverage_record.coverage_gaps` must name the
+specific missing cognition that could change a family boundary, anchor,
+bottleneck, mechanism, condition, failure regime, causal transition, or
+frontier judgment. When new Evidence arrives, revise the same canonical
+`ACTIVE_FIELD_MAP.md`: correct a mistaken classification, add an omission,
+merge or split families, or reorganize the evidence-supported development
+trace as warranted. It is neither append-only nor a new map per search round;
+historical Evidence Cards remain intact even when the working taxonomy changes.
 
-**Priority 1 — Gemini MCP** (preferred): Call `mcp__gemini-cli__ask-gemini` with the search prompt:
+The synthesis target is an evidence-shaped account of `research problem ->
+method -> evidence -> bottleneck -> transition -> subsequent evolution`, from
+foundational work to the current frontier. This frame is fixed, but the
+literature determines stage count, duration, and branch topology. Allow
+parallel branches, forks, merges, long-term coexistence, and paradigm shifts;
+never create a stage from year boundaries alone.
 
-```
-mcp__gemini-cli__ask-gemini({
-  prompt: 'You are a research literature scout. Search comprehensively for papers on: "QUERY"
+### Purposes, tasks, and bottlenecks
 
-IMPORTANT CONSTRAINTS:
-1. Search from MULTIPLE angles — decompose the topic into sub-problems, aliases, neighboring tasks, and common benchmark/settings variants.
-2. Prefer papers that are genuinely relevant, not merely keyword-adjacent.
-3. Include top venues, journals, surveys, recent preprints, and papers with code when available.
-4. Focus on papers from 2022 onward unless older foundational work is necessary.
+State what the field is trying to achieve, for whom, under which constraints,
+and which trade-offs cannot be optimized simultaneously. Separate application
+scenarios from the control, inference, representation, measurement, or system
+bottlenecks that cause difficulty.
 
-For EACH paper found, provide ALL of the following:
-- Title: [exact title]
-- Authors: [full author list]
-- Year: [publication year]
-- Venue: [exact conference/journal name + year, or "arXiv preprint"]
-- arXiv ID: [format 2401.12345, or "N/A"]
-- DOI: [if available, or "N/A"]
-- Code URL: [GitHub/GitLab link if available, or "No code"]
-- Summary: [one-sentence core contribution]
+### Method families
 
-Find at least 15 papers.',
-  model: 'auto-gemini-3'
-})
-```
+Derive a small number of field-recognized broad families by triangulating
+high-quality reviews, representative-paper introductions, and the papers'
+actual mechanisms. Treat every source taxonomy as a perspective rather than
+authority. Keep a one- or two-paper direction as a branch unless evidence
+supports a distinct mechanism and boundary.
 
-**Priority 2 — Gemini CLI fallback** (if MCP unavailable): Use `gemini -p "...same prompt..." 2>/dev/null` via Bash (timeout: 120s).
+Taxonomy is an evidence-conditioned working model. Split families when their
+mechanisms, assumptions, or failure regimes are materially different; merge
+labels that describe the same causal strategy. Preserve competing plausible
+groupings when the evidence does not settle the boundary.
 
-If both MCP and CLI are unavailable, skip this source gracefully and continue with the remaining requested sources.
+### Problem × method relation
 
-**Why use Gemini?** Gemini provides AI-driven discovery that goes beyond keyword matching — it decomposes topics, explores naming variants, and surfaces papers that traditional API-based searches may miss. It fills a different retrieval niche from structured database queries.
+For every family, identify the bottleneck it addresses and the mechanism by
+which it does so. Do not infer effectiveness from popularity, venue, or citation
+count. A family that targets a bottleneck may still fail outside its assumptions.
 
-**De-duplication against other sources**:
-- Match by arXiv ID first, DOI second, normalized title third
-- If Gemini returns a paper already found by Semantic Scholar, prefer S2's citation count and venue metadata
-- If Gemini returns a paper already found by arXiv, prefer arXiv's structured metadata
-- Do not use Gemini-reported citation counts; they may be inaccurate
+### Assumption × effective-condition × failure-condition relation
 
-**OpenAlex search** (only when `openalex` is in sources):
+Connect, in the same row, the family's required assumptions, conditions where
+evidence supports it, failure or degradation conditions, and source IDs.
+Distinguish author-reported limitations, direct negative evidence, conflicts,
+and executor-inferred boundaries that remain hypotheses.
 
-When the user explicitly requests `— sources: openalex` (or includes `openalex` in a combined source list), use OpenAlex API for comprehensive academic metadata:
+### Causal development trace
 
-```bash
-# Re-resolve $ARIS_REPO + $OPENALEX_FETCHER (SKILL bash blocks may run in separate shells).
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills-codex.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills-codex.txt 2>/dev/null) || true
-fi
-OPENALEX_FETCHER=""
-[ -n "${ARIS_REPO:-}" ] && [ -f "$ARIS_REPO/tools/openalex_fetch.py" ] && OPENALEX_FETCHER="$ARIS_REPO/tools/openalex_fetch.py"
-[ -z "$OPENALEX_FETCHER" ] && [ -f tools/openalex_fetch.py ] && OPENALEX_FETCHER="tools/openalex_fetch.py"
-[ -z "$OPENALEX_FETCHER" ] && [ -f ~/.codex/skills/openalex/openalex_fetch.py ] && OPENALEX_FETCHER="$HOME/.codex/skills/openalex/openalex_fetch.py"
+Development is not chronology. A transition is supported only when evidence
+shows the previous bottleneck, progress and conditions, residual bottleneck,
+research-question shift, subsequent direction, transition status, and source
+IDs. Record a unique `transition_id`; `progress_and_conditions` must identify
+the method or mechanism, evidence-supported progress, and its conditions.
+Explain why the question migrated. Chronology and citation order alone do not
+establish the explanatory lineage. Create a trace only for a supported research-
+problem or method-paradigm change. Several papers may jointly support it; no
+single landmark paper is required. Empty traces are valid only when evidence
+supports no material transition. Keep paper-level links only for foundational,
+turning-point, and current representative work in the Evidence Registry, and
+keep the main trace at family level; cross-family traces may omit `family`.
 
-# Skip OpenAlex when the helper or its optional dependency is unavailable.
-if [ -z "$OPENALEX_FETCHER" ] || ! python3 -c "import requests" >/dev/null 2>&1; then
-  echo "OpenAlex source not available (openalex_fetch.py unresolved or 'requests' module missing); skipping." >&2
-else
-  if python3 "$OPENALEX_FETCHER" search "QUERY" --max 10 \
-      --year "2022-" \
-      --type article \
-      --sort relevance; then
-    echo "D2 contribution: openalex (helper invocation exit 0)" >&2
-  else
-    echo "WARN: openalex_fetch.py invocation failed; D2 aggregate continues with remaining sources." >&2
-  fi
-fi
-```
+### Contradictions and unresolved leads
 
-If `openalex_fetch.py` is not found or the `requests` module is missing, skip this source gracefully and continue with the remaining requested sources.
+Preserve conflicting credible evidence rather than forcing consensus. Generate
+unresolved leads from observed failures, boundary shifts, contradictions,
+untested assumptions, measurement blind spots, or unknown mechanisms. Search
+absence and author-written future work are leads, never proof. Do not design a
+method in this Skill.
 
-**Why use OpenAlex?** OpenAlex provides an open citation graph, institutional affiliations, funding data, and broad work metadata across disciplines.
+## Role: coverage reviewer
 
-**De-duplication against other sources**:
-- Match by DOI first, then arXiv ID, then normalized title
-- If OpenAlex and Semantic Scholar overlap, prefer S2 for citation counts and venue metadata
-- If OpenAlex and arXiv overlap, prefer arXiv's PDF link and metadata while retaining OpenAlex's citation and institution data
+Review the Controller-bound Query Plan, Source Policy, latest candidate Corpus,
+Search Ledger, Evidence Registry, and canonical Field Map in a fresh context,
+independently of the synthesizer's reasoning history. Look for unexecuted
+pagination/year/venue searches, candidates lacking title/abstract screening,
+unexplained abstract-only retention, reviews or high-citation backbone papers
+lacking full-text evidence, missing branches, unsupported family boundaries,
+discovery-only decisive claims, flattened contradictions, missing negative or
+diagnostic evidence, unresolved identities, and unsupported saturation.
 
-**Optional PDF download** (only when `ARXIV_DOWNLOAD = true`):
+Return an `evolution_assessment` covering `foundation_to_frontier`,
+`key_nodes_and_branches`, `transition_causality`, and
+`explanatory_coherence`, each with `status: PASS | GAP` and a non-empty
+`rationale`. The last asks whether the map explains why the field developed
+into its current form and where the present frontier sits.
 
-After all sources are searched and papers are ranked by relevance:
-```bash
-# Re-resolve $ARXIV_FETCHER (SKILL bash blocks may run in separate shells).
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills-codex.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills-codex.txt 2>/dev/null) || true
-fi
-ARXIV_FETCHER=""
-[ -n "${ARIS_REPO:-}" ] && [ -f "$ARIS_REPO/tools/arxiv_fetch.py" ] && ARXIV_FETCHER="$ARIS_REPO/tools/arxiv_fetch.py"
-[ -z "$ARXIV_FETCHER" ] && [ -f tools/arxiv_fetch.py ] && ARXIV_FETCHER="tools/arxiv_fetch.py"
-[ -z "$ARXIV_FETCHER" ] && [ -f ~/.codex/skills/arxiv/arxiv_fetch.py ] && ARXIV_FETCHER="$HOME/.codex/skills/arxiv/arxiv_fetch.py"
+For `transition_causality`, bind the review path to the Controller's
+`development_trace_count`: use `DECLARED_TRACES_REVIEWED` when traces exist;
+with no traces, use `NO_MATERIAL_TRANSITION_SUPPORTED` only when evidence
+supports no material transition, or `MATERIAL_TRANSITION_MISSING` for an
+important omitted transition. Put each `material_evolution_gaps` entry verbatim
+in top-level `gaps`; any such gap requires `CONTINUE`. Do not treat an untidy
+timeline, irregular stage count, parallel coexistence, or lack of one landmark
+paper as a gap.
 
-# Download top N most relevant arXiv papers; skip silently if helper unresolved.
-[ -n "$ARXIV_FETCHER" ] && python3 "$ARXIV_FETCHER" download ARXIV_ID --dir papers/
-```
-- Only download papers ranked in the top ARXIV_MAX_DOWNLOAD by relevance
-- Skip papers already in the local library
-- 1-second delay between downloads (rate limiting)
-- Verify each PDF > 10 KB
+Return `CONTINUE` or `CANDIDATE_SUFFICIENT` with concrete reasons and gaps. The
+decision is advisory; only the Controller's deterministic validator may accept
+the landscape or change workflow state.
 
-### Step 2: Analyze Each Paper
-For each relevant paper (from all sources), extract:
-- **Problem**: What gap does it address?
-- **Method**: Core technical contribution (1-2 sentences)
-- **Results**: Key numbers/claims
-- **Relevance**: How does it relate to our work?
-- **Source**: Where we found it (Zotero/Obsidian/local/web) — helps user know what they already have vs what's new
+Use external search only for a small number of targeted omission-falsification
+queries when the bound record creates a concrete doubt; do not browse publisher
+pages one by one. Any hit is only a lead. Return `CONTINUE` with the exact gap so
+it re-enters through formal retrieval, screening, reading, and Evidence.
 
-### Step 3: Synthesize
-- Group papers by approach/theme
-- Identify consensus vs disagreements in the field
-- Find gaps that our work could fill
-- If Obsidian notes exist, incorporate the user's own insights into the synthesis
+## Scientific saturation judgment
 
-### Step 4: Output
-Present as a structured literature table:
+`CANDIDATE_SUFFICIENT` means working saturation for the declared scope, never
+exhaustive coverage. It requires evidenced families and anchors, decision-grade
+critical claims, an unchanged follow-up cycle with targeted query refinement
+plus backward/forward citation expansion, and explicit blind spots. If a
+missing route, inaccessible full text, unresolved identity, or open branch
+could materially change the map, recommend `CONTINUE`. “Not found” never means
+nobody has done it.
 
-```
-| Paper | Venue | Method | Key Result | Relevance to Us | Source |
-|-------|-------|--------|------------|-----------------|--------|
-```
+It also requires all four evolution judgments to pass. Do not require a fixed
+stage count or a non-empty development trace; an empty trace requires explicit
+evidence-based support from the reviewer.
 
-Plus a narrative summary of the landscape (3-5 paragraphs).
+## Non-negotiable scientific discipline
 
-If Zotero BibTeX was exported, include a `references.bib` snippet for direct use in paper writing.
-
-### Step 5: Save (if requested)
-- Save paper PDFs to `literature/` or `papers/`
-- Update related work notes in project memory
-- If Obsidian is available, optionally create a literature review note in the vault
-
-If `— composed: <canonical-report-path>` is present, return/fold the table,
-landscape, and gaps into that report instead of writing a standalone literature
-summary. Standalone remains the default; `— standalone` wins and an existing
-report never activates composed mode. Keep reusable PDFs/BibTeX and traces. See
-[`output-composition.md`](../shared-references/output-composition.md).
-
-### Step 6: Update Research Wiki
-
-If the project has an active research wiki, update it after producing the literature review:
-
-1. Add or update the topic page with the final paper table, grouped themes, and open gaps.
-2. Link each paper to its canonical source and local PDF path if available.
-3. Record which sources were used: Zotero, Obsidian, local PDFs, arXiv, Semantic Scholar, DeepXiv, Exa, or broader web.
-4. Mark unresolved search gaps and papers requiring follow-up reading.
-5. Follow the wiki integration contract in [`shared-references/integration-contract.md`](../shared-references/integration-contract.md).
-6. When the wiki helper is available, rebuild `query_pack.md` after updating literature entries so `/idea-creator` can reuse the latest gaps and failed directions.
-
-If the wiki path or format is unclear, ask before writing. Do not invent a wiki location.
-
-## Key Rules
-- Always include paper citations (authors, year, venue)
-- Distinguish between peer-reviewed and preprints
-- Be honest about limitations of each paper
-- Note if a paper directly competes with or supports our approach
-- If a user-requested Zotero or Obsidian source is unavailable, stop and report the missing configuration instead of silently degrading.
-- Only unrequested optional sources may be skipped automatically.
-- Zotero/Obsidian tools may have different names depending on how the user configured the MCP server (e.g., `mcp__zotero__search` or `mcp__zotero-mcp__search_items`). Try the most common patterns and adapt.
+- Cite decisive claims to exact source locations.
+- Distinguish peer-reviewed work from preprints.
+- Separate evidence strength from venue prestige and admission eligibility.
+- Keep full registry detail out of active context; retrieve cards by source ID.
+- Preserve uncertainty, disconfirming evidence, and competing explanations.
+- Do not turn a cross-field terminology match into target-field evidence.
+- Do not certify a problem, judge novelty, or recommend a method here.

@@ -25,6 +25,10 @@ Get a multi-round critical review of research work from an external LLM with max
 
 ## Context: $ARGUMENTS
 
+Parse `stage: problem|method|project`. Default to `project` for complete work.
+When a stage is explicit, review only that stage's decision. Follow
+[`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md).
+
 ## Prerequisites
 
 - Install the base Codex-native skills first: copy `skills/skills-codex/*` into `~/.codex/skills/`.
@@ -42,7 +46,13 @@ Get a multi-round critical review of research work from an external LLM with max
 Before calling the external reviewer, compile a comprehensive briefing:
 1. Read project narrative documents (e.g., STORY.md, README.md, paper drafts)
 2. Read any memory/notes files for key findings and experiment history
-3. Identify: core claims, methodology, key results, known weaknesses
+3. For `problem`, include Evidence Map, research question, source class, scope,
+   value if yes/no, falsifier, and P3 gate record.
+4. For `method`, include the Certified Problem Contract, scientific mainline,
+   dominant method, backbone, innovation carrier, supporting-mechanism ledger,
+   integration interfaces, targeted evidence, and separate
+   scientific-delta/technical-route novelty results.
+5. For `project`, identify core claims, methods, results, and weaknesses.
 
 ### Step 2: Initial Review (Round 1)
 Send a detailed prompt with ultra reasoning:
@@ -51,14 +61,20 @@ Send a detailed prompt with ultra reasoning:
 mcp__claude-review__review_start:
   prompt: |
     [Full research context + specific questions]
-    Please act as a senior ML reviewer (NeurIPS/ICML level). Start from the
+    Please act as a senior top-venue reviewer and respect the declared stage.
+    Start from the
     assumption that the work is broken somewhere — your job is to find where.
     Be adversarial. Trust nothing the author tells you — verify everything
-    yourself. Identify:
-    1. Logical gaps or unjustified claims
-    2. Missing experiments that would strengthen the story
-    3. Narrative weaknesses
-    4. Whether the contribution is sufficient for a top venue
+    yourself.
+    For problem stage, score Reality, Importance, Unresolvedness, Precision,
+    Falsifiability, and Answerability; return CERTIFIED/HOLD/REJECT/BLOCKED.
+    For method stage, apply method-design-contract.md. Judge hypothesis quality,
+    dominant-method fit, backbone/innovation-carrier separation, dominant-only
+    closure, and each declared residual MUST gap. Require Field-Map and
+    same-field assessment before any cross-field support, plus actual integration
+    interfaces, capability-specific removal failures, targeted evidence,
+    scientific closure, and scientific delta. Combination is not the novelty verdict.
+    For project stage, review logic, evidence, narrative, and venue sufficiency.
     Please be brutally honest.
 ```
 
@@ -96,14 +112,17 @@ Key follow-up patterns:
 
 ### Step 4: Convergence
 Stop iterating when:
-- Both sides agree on the core claims and their evidence requirements
-- A concrete experiment plan is established
-- The narrative structure is settled
+- problem stage: a stable P3 verdict and decisive missing evidence are explicit
+- method stage: obligations, route verdict, weak assumptions, and decisive
+  validation are explicit
+- project stage: core claims, evidence, experiment plan, and narrative are settled
 
 ### Step 5: Document Everything
 Save the full interaction and conclusions to a review document in the project root:
 - Round-by-round summary of criticisms and responses
-- Final consensus on claims, narrative, and experiments
+- Declared stage and stage-specific verdict
+- Separate problem and method conclusions whenever both appear
+- Final consensus on claims, narrative, and experiments where applicable
 - Claims matrix (what claims are allowed under each possible outcome)
 - Prioritized TODO list with estimated compute costs
 - Paper outline if discussed
@@ -128,6 +147,7 @@ Save a trace for every `mcp__claude-review__review_start`, `mcp__claude-review__
 - Be honest about weaknesses — hiding them leads to worse feedback
 - Push back on criticisms you disagree with, but accept valid ones
 - Focus on ACTIONABLE feedback — "what experiment would fix this?"
+- Preserve stage separation: problem and method verdicts are distinct decisions.
 - Document the completed `threadId` for potential future resumption
 - The review document should be self-contained (readable without the conversation)
 

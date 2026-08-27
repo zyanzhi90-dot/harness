@@ -235,21 +235,20 @@ Custom [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skills for 
 
 > These are full pipelines — you can also use each workflow independently. Already have an idea? Skip to Workflow 1.5. Have results? Jump to Workflow 3. Got reviews? Jump to Workflow 4. Want persistent memory? Enable [Research Wiki](#-research-wiki--persistent-research-memory). See [Quick Start](#quick-start) for all commands and [Workflows](#workflows) for the full breakdown.
 
-**Basic mode** — give ARIS a research direction, it handles everything:
+**Canonical validation mode** — after the Controller has accepted the problem,
+root cause, and method, continue the approved run:
 
 ```
-/research-pipeline "factorized gap in discrete diffusion LMs"
+/research-pipeline "<canonical-run-id>"
 ```
 
-**🔥 Targeted mode** — got a paper you want to improve? Give ARIS the paper + the code:
+`/research-pipeline` is not an idea-discovery command and does not accept a
+topic, a paper, or a base repository as substitutes for the run ID. Start a new
+formal study through the canonical Controller workflow; use the pipeline only
+after its method-confirmation Gate and explicit validation handoff.
 
-```
-/research-pipeline "improve method X" — ref paper: https://arxiv.org/abs/2406.04329, base repo: https://github.com/org/project
-```
-
-ARIS reads the paper → finds its weaknesses → clones the codebase → generates ideas that specifically fix *those* weaknesses with *that* code → runs experiments → writes your paper. Like telling a research assistant: *"read this paper, use this repo, find what's missing, and fix it."*
-
-> Mix and match: `ref paper` only = "what can be improved?", `base repo` only = "what can I build with this code?", both = "improve *this* paper using *this* code."
+For exploratory or standalone work, invoke the relevant dedicated skill
+directly; do not present that work as a canonical continuation.
 
 **🔥 Rebuttal mode** — reviews just dropped? Don't panic. ARIS reads every concern, builds a strategy, and drafts a rebuttal that's grounded, structured, and under the character limit:
 
@@ -385,7 +384,7 @@ Two outputs: `PASTE_READY.txt` (exact char count, paste to venue) + `REBUTTAL_DR
 - **2026-03-14** — 📱 [Feishu/Lark integration](docs/integrations/FEISHU.md): three modes (off/push/interactive), mobile notifications for experiments, reviews, and checkpoints
 - **2026-03-13** — 🛑 Human-in-the-loop: configurable `AUTO_PROCEED` checkpoints across all workflows. Full autopilot or step-by-step approval
 - **2026-03-12** — 🔗 [Zotero](docs/integrations/ZOTERO.md) + [Obsidian](docs/integrations/OBSIDIAN.md) + local PDFs + arXiv/Scholar: multi-source literature search with cross-model novelty verification
-- **2026-03-12** — 🚀 Three end-to-end workflows complete: one prompt → top-venue-style paper. `/research-pipeline` chains idea discovery → auto review → paper writing autonomously
+- **2026-03-12** — 🚀 Legacy pre-Controller workflow announcement. It is superseded by the current canonical Controller route and its user-initiated validation handoff; `/research-pipeline` no longer starts discovery, review, or paper writing.
 - **2026-03-12** — 📝 `/paper-writing` workflow: narrative report → structured outline → figures → LaTeX → compiled PDF → 2-round auto-improvement (4/10 → 8.5/10)
 
 </details>
@@ -400,7 +399,7 @@ Two outputs: `PASTE_READY.txt` (exact char count, paste to venue) + `REBUTTAL_DR
 git clone https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep.git
 bash Auto-claude-code-research-in-sleep/tools/install_aris.sh ~/your-project   # symlinks ARIS skills into <project>/.claude/skills/
 # (prefer a global install instead? cp -r Auto-claude-code-research-in-sleep/skills/* ~/.claude/skills/)
-# (don't need all 81? --list-groups / --groups X,Y / --skills X — see "Selective install" below)
+# (don't need all 80? --list-groups / --groups X,Y / --skills X — see "Selective install" below)
 
 # 1b. Update later (when upstream changes)
 cd Auto-claude-code-research-in-sleep && git pull
@@ -432,12 +431,12 @@ claude
 > /rebuttal "paper/ + reviews" — venue: ICML    # Workflow 4: parse reviews → draft rebuttal → follow-up
 > /resubmit-pipeline "paper/" — venue: NeurIPS  # Workflow 5: port a polished paper to a new venue (text-only, no new experiments)
 > /paper-talk "paper/" — venue: ICLR            # Workflow 6: paper → Beamer + PPTX talk + speaker notes + assurance audits
-> /research-pipeline "your research direction"  # Full pipeline: Workflow 1 → 1.5 → 2 → 3 end-to-end
+> /research-pipeline "<canonical-run-id>"        # approved method → formal validation only
 > /research-wiki init                           # 📚 Enable persistent research memory (one-time)
 > /meta-optimize                                # Meta: analyze usage logs → propose skill improvements
 ```
 
-> Don't need all 81 skills? See [Selective install](#install-skills) below for group/skill-level picks.
+> Don't need all 80 skills? See [Selective install](#install-skills) below for group/skill-level picks.
 
 <details>
 <summary><b>📚 Research Wiki (optional)</b> — one-line init for persistent memory across sessions; see <a href="#-research-wiki--persistent-research-memory">full Research Wiki section</a></summary>
@@ -501,11 +500,11 @@ cd Auto-claude-code-research-in-sleep && ls skills/ | xargs -I{} rm -rf ~/.claud
 <details>
 <summary><b>Show all 16 inline parameters and 14 override examples</b> — AUTO_PROCEED / sources / arxiv download / DBLP_BIBTEX / code review / wandb / illustration / venue / base repo / gpu / compact / ref paper / effort / reviewer / difficulty (full per-skill defaults live in <a href="#customization">§ Customization</a>)</summary>
 
-All pipeline behaviors are configurable via inline overrides — append `— key: value` to any command:
+Skill-specific behaviors are configurable via inline overrides — append `— key: value` only to a skill that declares the option. `/research-pipeline` accepts only a canonical run ID and does not accept idea-selection, source, review, or writing overrides.
 
 | Parameter | Default | What it does |
 |-----------|---------|-------------|
-| `AUTO_PROCEED` | `true` | Auto-continue at idea selection gate. Set `false` to manually pick which idea to pursue before committing GPU time |
+| `AUTO_PROCEED` | `true` | Only applies where a standalone skill declares it; it never crosses a canonical human or reviewer Gate |
 | `human checkpoint` | `false` | Pause after each review round so you can read the score, give custom modification instructions, skip specific fixes, or stop early |
 | `sources` | `all` | Which literature sources to search: `zotero`, `obsidian`, `local`, `web`, `semantic-scholar`, `deepxiv`, `exa`, `gemini`, `openalex`, or `all`. Note: `semantic-scholar`, `deepxiv`, `exa`, `gemini`, and `openalex` must be explicitly listed — not included in `all` |
 | `arxiv download` | `false` | Download top relevant arXiv PDFs during literature survey. When `false`, only fetches metadata (title, abstract, authors) |
@@ -523,20 +522,9 @@ All pipeline behaviors are configurable via inline overrides — append `— key
 | `difficulty` | `medium` | Reviewer adversarial level: `medium` (default), `hard` (+ memory + debate), `nightmare` (+ GPT reads repo via `codex exec`) |
 
 ```
-/research-pipeline "your topic" — AUTO_PROCEED: false                          # pause at idea selection gate
-/research-pipeline "your topic" — human checkpoint: true                       # pause after each review round to give feedback
-/research-pipeline "your topic" — sources: zotero, web                         # only search Zotero + web (skip local PDFs)
-/research-pipeline "your topic" — sources: all, deepxiv                        # default sources plus DeepXiv progressive retrieval
-/research-pipeline "your topic" — sources: all, exa                            # default sources plus Exa AI-powered web search
-/research-pipeline "your topic" — sources: all, gemini                         # default sources plus Gemini discovery
-/research-pipeline "your topic" — sources: all, openalex                       # default sources plus OpenAlex citation graph
-/research-pipeline "your topic" — arxiv download: true                         # download top arXiv PDFs during literature survey
-/research-pipeline "your topic" — difficulty: nightmare                        # maximum adversarial review before submission
-/research-pipeline "your topic" — effort: beast                               # all knobs to maximum — top-venue sprint
-/research-pipeline "your topic" — effort: beast, reviewer: oracle-pro         # beast + GPT-5.5 Pro reviewer — ultimate mode
-/research-pipeline "your topic" — effort: lite                                # quick exploration, save tokens
-/research-pipeline "your topic" — effort: max, review_rounds: 3               # max effort but cap review at 3 rounds
-/research-pipeline "your topic" — AUTO_PROCEED: false, human checkpoint: true  # combine options
+/idea-discovery "your topic" — sources: zotero, web                            # exploratory idea discovery
+/auto-review-loop "your paper scope" — human checkpoint: true                 # review an existing result
+/research-pipeline "<canonical-run-id>"                                         # approved method → validation
 /proof-checker "paper/" — reviewer: oracle-pro                                # Pro-level proof verification
 ```
 
@@ -585,14 +573,14 @@ See [full setup guide](#setup) for details and [alternative model combinations](
 
 ## 4. ✨ Features
 
-ARIS chains **81 composable skills** across the whole research lifecycle — literature & novelty → idea discovery → GPU experiments → autonomous review loop → paper writing → peer review — with **cross-model adversarial review** (Claude executes · GPT-5.6-Sol xhigh reviews · optional **GPT-5.5 Pro** via Oracle), anti-hallucination DBLP/CrossRef citations, a persistent **Research Wiki**, flexible model backends, human-in-the-loop checkpoints, and optional Feishu / Zotero / Obsidian / GPU integrations.
+ARIS chains **80 composable skills** across the whole research lifecycle — literature & novelty → idea discovery → GPU experiments → autonomous review loop → paper writing → peer review — with **cross-model adversarial review** (Claude executes · GPT-5.6-Sol xhigh reviews · optional **GPT-5.5 Pro** via Oracle), anti-hallucination DBLP/CrossRef citations, a persistent **Research Wiki**, flexible model backends, human-in-the-loop checkpoints, and optional Feishu / Zotero / Obsidian / GPU integrations.
 
 🔥 *And it scales to any agent's **ultracode-style deep mode** — the breadth/firepower pass adapts to the runtime (Claude Code ultracode + workflows on Opus 4.8, Codex `spawn_agent`, or plain sequential), feeding three roles: **breadth · cross-model review → accuracy · research wiki → memory**. However a loop is driven, it reports to the same cross-model jury + research wiki — **it can drive, never acquit**.*
 
 <details>
 <summary><b>Full feature list</b></summary>
 
-- 📊 **81 composable skills** — mix and match, or chain into full pipelines (`/idea-discovery`, `/auto-review-loop`, `/paper-writing`, `/research-pipeline`). See [full catalog →](docs/SKILLS_CATALOG.md)
+- 📊 **80 composable skills** — mix and match, or chain into full pipelines (`/idea-discovery`, `/auto-review-loop`, `/paper-writing`, `/research-pipeline`). See [full catalog →](docs/SKILLS_CATALOG.md)
 - 🔍 **Literature & novelty** — multi-source paper search (**[Zotero](docs/integrations/ZOTERO.md)** + **[Obsidian](docs/integrations/OBSIDIAN.md)** + **local PDFs** + arXiv/Scholar) + cross-model novelty verification
 - 💡 **Idea discovery** — literature survey → brainstorm 8-12 ideas → novelty check → GPU pilot experiments → ranked report
 - 🔄 **Auto review loop** — 4-round autonomous review, 5/10 → 7.5/10 overnight with 20+ GPU experiments
@@ -625,14 +613,14 @@ ARIS chains **81 composable skills** across the whole research lifecycle — lit
 <a id="skills-catalog"></a>
 <a id="-skills-catalog"></a>
 
-ARIS ships **81+ skills** across literature, ideation, experiments, audit, writing, talks, patents, and meta-utilities — the full catalog (role / category / requirements per skill) lives in **[`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md)** to keep this README scannable.
+ARIS ships **80+ skills** across literature, ideation, experiments, audit, writing, talks, patents, and meta-utilities — the full catalog (role / category / requirements per skill) lives in **[`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md)** to keep this README scannable.
 
 <details>
 <summary><b>Start here</b> — common entry points (use case → skill)</summary>
 
 | Use case | Start here |
 |---|---|
-| End-to-end research (idea → paper) | [`/research-pipeline`](skills/research-pipeline/SKILL.md) |
+| Approved canonical method → validation | [`/research-pipeline "<canonical-run-id>"`](skills/research-pipeline/SKILL.md) |
 | Idea discovery + method refinement | [`/idea-discovery`](skills/idea-discovery/SKILL.md) |
 | Run experiments from a plan | [`/experiment-bridge`](skills/experiment-bridge/SKILL.md) |
 | Auto review → fix → re-review | [`/auto-review-loop`](skills/auto-review-loop/SKILL.md) |
@@ -646,7 +634,7 @@ ARIS ships **81+ skills** across literature, ideation, experiments, audit, writi
 
 </details>
 
-→ **[Browse all 81 skills by category in the full catalog →](docs/SKILLS_CATALOG.md)**
+→ **[Browse all 80 skills by category in the full catalog →](docs/SKILLS_CATALOG.md)**
 
 ---
 
@@ -700,18 +688,18 @@ Domain-specific skills and external projects contributed by the community. PRs w
 
 > 💡 **How to use:** Community skills are not auto-wired into core workflows. To use one, ask your executor (Claude Code / OpenClaw / etc.) to read the skill's `SKILL.md`, then plug it into the appropriate workflow stage based on the description below.
 
-🎉 **Community Skills (15):** [research-refine](skills/research-refine/SKILL.md) · [experiment-plan](skills/experiment-plan/SKILL.md) · [research-refine-pipeline](skills/research-refine-pipeline/SKILL.md) · [grant-proposal](skills/grant-proposal/SKILL.md) · [paper-poster](skills/paper-poster/SKILL.md) (deprecated → [paper-poster-html](skills/paper-poster-html/SKILL.md)) · [paper-slides](skills/paper-slides/SKILL.md) · [mermaid-diagram](skills/mermaid-diagram/SKILL.md) · [proof-writer](skills/proof-writer/SKILL.md) · [comm-lit-review](skills/comm-lit-review/SKILL.md) · [dse-loop](skills/dse-loop/SKILL.md) · [idea-discovery-robot](skills/idea-discovery-robot/SKILL.md) · [formula-derivation](skills/formula-derivation/SKILL.md) · [paper-illustration](skills/paper-illustration/SKILL.md) · [writing-systems-papers](skills/writing-systems-papers/SKILL.md) · [skills-codex](skills/skills-codex/)
+🎉 **Community Skills (14):** [research-refine](skills/research-refine/SKILL.md) · [experiment-plan](skills/experiment-plan/SKILL.md) · [research-refine-pipeline](skills/research-refine-pipeline/SKILL.md) · [grant-proposal](skills/grant-proposal/SKILL.md) · [paper-poster](skills/paper-poster/SKILL.md) (deprecated → [paper-poster-html](skills/paper-poster-html/SKILL.md)) · [paper-slides](skills/paper-slides/SKILL.md) · [mermaid-diagram](skills/mermaid-diagram/SKILL.md) · [proof-writer](skills/proof-writer/SKILL.md) · [comm-lit-review](skills/comm-lit-review/SKILL.md) · [dse-loop](skills/dse-loop/SKILL.md) · [formula-derivation](skills/formula-derivation/SKILL.md) · [paper-illustration](skills/paper-illustration/SKILL.md) · [writing-systems-papers](skills/writing-systems-papers/SKILL.md) · [skills-codex](skills/skills-codex/)
 
 🌐 **External Projects & Docs (14):** [rosetta](https://github.com/SyntaxSmith/rosetta) · [open-source-hardening-skills](https://github.com/zeyuzhangzyz/open-source-hardening-skills) · [CitationClaw](https://github.com/VisionXLab/CitationClaw) · [auto-hparam-tuning](https://github.com/zxh0916/auto-hparam-tuning) · [paper-to-course](https://github.com/KaguraTart/paper-to-course) · [deep-research-skills](https://github.com/Weizhena/deep-research-skills) · [Antigravity Adaptation Guide](docs/ANTIGRAVITY_ADAPTATION.md) · [OpenClaw Adaptation Guide](docs/OPENCLAW_ADAPTATION.md) · [Cursor Adaptation Guide](docs/CURSOR_ADAPTATION.md) · [Codex+Claude Review Bridge](docs/CODEX_CLAUDE_REVIEW_GUIDE.md) · [Trae Adaptation Guide](docs/TRAE_ARIS_RUNBOOK_EN.md) · [MiniMax-AI/cli](https://github.com/MiniMax-AI/cli) · [posterly](https://github.com/Chenruishuo/posterly) · [Claude Fleet](https://github.com/tianyilt/claude-fleet)
 
 > 🙌 Thanks to every contributor! We fold the tables below to keep the README readable — but every skill and project here is equally valued. PRs always welcome!
 
 <details>
-<summary><b>🎉 Community Skills (15)</b> — click to expand</summary>
+<summary><b>🎉 Community Skills (14)</b> — click to expand</summary>
 
 | Name | Domain | Description | Codex MCP? |
 |------|--------|-------------|-----------|
-| 🔬 [`research-refine`](skills/research-refine/SKILL.md) | General | Turn a vague idea into a problem-anchored, implementation-oriented method proposal. Best inserted between `/idea-discovery` and `/auto-review-loop` | Yes |
+| 🔬 [`research-refine`](skills/research-refine/SKILL.md) | General | Turn a Certified Problem Contract into a coherent method route with issue-based revision and a fresh blind audit; in the canonical route it follows human route selection | Yes |
 | 🧪 [`experiment-plan`](skills/experiment-plan/SKILL.md) | General | Turn a refined proposal into a claim-driven experiment roadmap with ablations, budgets, and run order | No |
 | 🧭 [`research-refine-pipeline`](skills/research-refine-pipeline/SKILL.md) | General | One-shot chain: `/research-refine` → `/experiment-plan` for method refinement plus experiment planning | Yes |
 | 📝 [`grant-proposal`](skills/grant-proposal/SKILL.md) | General | Grant proposal drafting (KAKENHI/NSF/NSFC/ERC/DFG/SNSF/ARC/NWO). Chains `/research-lit` → `/novelty-check` → `/research-review` → `/paper-illustration` | Yes |
@@ -720,7 +708,6 @@ Domain-specific skills and external projects contributed by the community. PRs w
 | 📐 [`proof-writer`](skills/proof-writer/SKILL.md) | ML Theory | Rigorous theorem/lemma proof drafting — feasibility triage, dependency maps, honest blockage reports | No |
 | 📡 [`comm-lit-review`](skills/comm-lit-review/SKILL.md) | Communications / Wireless | Domain-specific literature review — IEEE/ACM/ScienceDirect priority, venue tiering, PHY/MAC/transport/NTN taxonomy | No |
 | 🏗️ [`dse-loop`](skills/dse-loop/SKILL.md) | Architecture / EDA | Autonomous design space exploration — iteratively run, analyze, and tune parameters (gem5, Yosys, etc.) | No |
-| 🤖 [`idea-discovery-robot`](skills/idea-discovery-robot/SKILL.md) | Robotics / Embodied AI | Workflow 1 adaptation — grounds idea discovery in embodiment, benchmark, sim2real path, and real-robot safety constraints | Yes |
 | 📐 [`mermaid-diagram`](skills/mermaid-diagram/SKILL.md) | General | Mermaid diagrams (20+ types) — free alternative to `paper-illustration`, no API key needed | No |
 | 🔢 [`formula-derivation`](skills/formula-derivation/SKILL.md) | General | Research formula development — derivation, verification, and LaTeX formatting | No |
 | 🖥️ [`writing-systems-papers`](skills/writing-systems-papers/SKILL.md) | Systems | Paragraph-level blueprint for 10-12 page systems papers (OSDI/SOSP/ASPLOS/NSDI/EuroSys) — page allocation, writing patterns, self-check | Yes |
@@ -763,107 +750,52 @@ These skills compose into a full research lifecycle. Each workflow can be used i
 - **Already have results, need iterative improvement?** Workflow 2 → `/auto-review-loop`
 - **Ready to write the paper?** Workflow 3 → `/paper-writing` (or step by step: `/paper-plan` → `/paper-figure` → `/paper-write` → `/paper-compile` → `/auto-paper-improvement-loop`)
 - **Got reviews back? Need to rebuttal?** Workflow 4 → `/rebuttal` — parse reviews, draft safe rebuttal, follow-up rounds
-- **Full pipeline?** Workflow 1 → 1.5 → 2 → 3 → submit → 4 → `/research-pipeline` + `/rebuttal` — from idea through submission and rebuttal
+- **Approved canonical method, ready to validate?** `/research-pipeline "<canonical-run-id>"` — consumes only the Controller-approved handoff
 - **Want ARIS to remember and learn?** 📚 `/research-wiki init` — persistent memory across sessions. Papers, ideas, failed experiments compound over time
 - **Want ARIS to improve itself?** Workflow M → `/meta-optimize` — analyze usage logs, propose skill improvements, reviewer-gated
 
 > ⚠️ **Important:** These tools accelerate research, but they don't replace your own critical thinking. Always review generated ideas with your domain expertise, question the assumptions, and make the final call yourself. The best research comes from human insight + AI execution, not full autopilot.
 
-### Full Pipeline 🚀
+### Canonical Research Route 🚀
 
 ```
-/research-lit → /idea-creator → /novelty-check → /research-refine → /experiment-bridge → /auto-review-loop → /paper-writing → submit → /rebuttal → accept! 🎉
-  (survey)      (brainstorm)    (verify novel)   (refine method)   (implement+deploy)  (review & fix)      (write paper)   (send)   (reply to reviewers)
-  ├────────────── Workflow 1: Idea Discovery ──────────────┤ ├ Workflow 1.5 ─┤ ├── Workflow 2 ──┤ ├── Workflow 3 ──┤         ├── Workflow 4 ──┤
-
-                                     📚 research-wiki (persistent memory — papers, ideas, experiments, claims)
-                                        ↕ reads before ideation, writes after every stage, failed ideas = anti-repetition memory
-
-                                              /meta-optimize (Workflow M — runs independently, improves ARIS itself)
-                                                 ↑ reads .aris/meta/events.jsonl (accumulated from all runs above)
+/research-lit → human scope approval → problem generation → quality + novelty Gates
+  → human problem acceptance → root-cause analysis + independent Gate
+  → method routes → human route selection → method refinement + final novelty Gate
+  → human method acceptance → METHOD_CONFIRMED_AWAITING_USER_VALIDATION
+  → (only when the user starts validation) /research-pipeline <canonical-run-id>
+  → /experiment-plan → /experiment-bridge → /result-to-claim
 ```
 
-### Workflow 1: Idea Discovery & Method Refinement 🔍
+`/auto-review-loop`, `/paper-writing`, submission, and rebuttal are separate
+user-initiated workflows. They are not automatic stages of the canonical
+research route.
 
-> **"What's the state of the art? Where are the gaps? How do we solve it?"**
+### Workflow 1: Canonical Idea Discovery & Method Design 🔍
 
-Don't have a concrete idea yet? Just give a research direction — `/idea-discovery` handles the rest:
+> **"What important, unresolved problem exists here, why does it occur, and what intervention is justified by its causal mechanism?"**
 
-1. 📚 **Survey** the landscape (recent papers, open problems, recurring limitations)
-2. 🧠 **Brainstorm** 8-12 concrete ideas via GPT-5.6-Sol xhigh
-3. 🔍 **Filter** by feasibility, compute cost, and quick novelty search
-4. 🛡️ **Validate** top ideas with deep novelty check + devil's advocate review
-5. 🧪 **Pilot** top 2-3 ideas in parallel on different GPUs (30 min - 2 hr each)
-6. 🏆 **Rank** by empirical signal — ideas with positive pilot results rise to the top
-7. 🔬 **Refine** the top idea into a problem-anchored proposal via iterative GPT-5.6-Sol review
-8. 🧪 **Plan** claim-driven experiments with ablations, budgets, and run order
+Give `/idea-discovery` a research direction to start the Controller-managed,
+problem-first route. It first builds an auditable Field Map, then requires human
+scope approval; it cannot enter problem generation from an unapproved search.
+The resulting order is fixed:
 
-The output is a ranked `IDEA_REPORT.md` plus a refined proposal (`refine-logs/FINAL_PROPOSAL.md`) and experiment plan (`refine-logs/EXPERIMENT_PLAN.md`) for the top idea. Dead-end ideas are documented too, saving future exploration.
+1. identify candidate problems from evidence, then independently assess problem quality and novelty;
+2. ask the user to accept one problem and bind `RESEARCH_CONTRACT.md` plus `PROBLEM_EVIDENCE_CAPSULE.md`;
+3. analyze observed failure phenomena into causal chains and pass the independent root-cause Gate;
+4. derive method routes from the accepted causal obligations, have the user select one, refine it, and pass final method novelty plus human acceptance.
 
-<details>
-<summary><b>Show W1 flow diagram and example command sequence</b> — research-lit → idea-creator → novelty-check → research-refine → experiment-plan</summary>
+Its formal outputs include `idea-stage/ACTIVE_FIELD_MAP.md`,
+`idea-stage/SEARCH_LEDGER.jsonl`, the accepted problem and root-cause handoffs,
+`refine-logs/FINAL_PROPOSAL.md`, and the final human-facing `IDEA_REPORT.md`.
+`IDEA_REPORT.md` is not a handoff to experiments; no `EXPERIMENT_PLAN.md` is
+created and validation does not begin until the user explicitly invokes
+`/research-pipeline "<canonical-run-id>"` from the method-confirmed state.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│              Idea Discovery & Method Refinement                  │
-│                                                                  │
-│   /research-lit    /idea-creator    /novelty-check               │
-│   (find papers)    (brainstorm)     (verify novelty)             │
-│         │               │                │                       │
-│         ▼               ▼                ▼                       │
-│   ┌──────────┐    ┌──────────┐     ┌──────────┐                │
-│   │ Scan     │───▶│ Generate │────▶│ Check if │                │
-│   │ local    │    │ 8-12     │     │ idea is  │                │
-│   │ papers + │    │ ideas    │     │ novel    │                │
-│   │ search   │    │ + rank   │     │          │                │
-│   └──────────┘    └──────────┘     └──────────┘                │
-│                         │                │                       │
-│                         ▼                ▼                       │
-│                   ┌──────────┐     ┌──────────┐                │
-│                   │ Filter   │────▶│ External │                │
-│                   │ by cost, │     │ LLM      │                │
-│                   │ novelty  │     │ evaluates│                │
-│                   └──────────┘     └──────────┘                │
-│                                          │                       │
-│                   /research-refine       ▼                       │
-│                   (refine method)   ┌──────────┐                │
-│                         │          │ Freeze   │                │
-│                         ▼          │ problem  │                │
-│                   ┌──────────┐     │ anchor + │                │
-│                   │ Iterate  │◀───▶│ refine   │                │
-│                   │ until    │     │ method   │                │
-│                   │ score≥9  │     └──────────┘                │
-│                   └──────────┘          │                       │
-│                         │               ▼                       │
-│                   /experiment-plan  ┌──────────┐                │
-│                         │          │ Claim-   │                │
-│                         ▼          │ driven   │                │
-│                   ┌──────────┐     │ experiment│               │
-│                   │ Plan     │────▶│ roadmap  │                │
-│                   │ runs     │     └──────────┘                │
-│                   └──────────┘                                  │
-│                                                                  │
-│   Typical flow:                                                  │
-│   1. /research-lit "discrete diffusion models"                   │
-│   2. /idea-creator "DLLMs post training"                         │
-│   3. Review ranked ideas, pick top 2-3                           │
-│   4. /novelty-check "top idea" (deep verification)               │
-│   5. /research-review "top idea" (critical feedback)             │
-│   6. /research-refine "top idea" (problem anchor + method)       │
-│   7. /experiment-plan (claim-driven roadmap)                     │
-│   8. /run-experiment → /auto-review-loop                         │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-</details>
-
-**Skills involved:** `research-lit` + `idea-creator` + `novelty-check` + `research-review` + `research-refine-pipeline`
-
-> 💡 **One-command shortcut:** `/idea-discovery "your research direction"` runs this entire workflow automatically.
-
-> 🔄 **Human-in-the-loop:** Each phase presents results and waits for your feedback. Not happy? Tell it what's missing — it refines the prompt and regenerates. Trust the defaults? It auto-proceeds with the top-ranked option. You decide how hands-on to be.
-
-> ⚙️ Pilot experiment budgets (max hours, timeout, GPU budget) are configurable — see [Customization](#customization).
+**Canonical modules:** `research-lit` + `idea-creator` + `novelty-check` +
+`research-refine`, under Controller-issued actions and the human/reviewer Gates
+above. No timeout, automatic selection, pilot experiment, or `AUTO_PROCEED`
+setting can cross those Gates.
 
 📝 **Blog post:** [Claude Code 两月 NeurIPS 指北](http://xhslink.com/o/7IvAJQ41IBA)
 
@@ -871,7 +803,9 @@ The output is a ranked `IDEA_REPORT.md` plus a refined proposal (`refine-logs/FI
 
 > **"I have a plan. Now implement it, deploy it, and get me initial results."**
 
-Already have an experiment plan (from Workflow 1 or your own)? `/experiment-bridge` turns it into running code:
+Already have a bound plan from `/experiment-plan` after a validation handoff, or
+an explicitly non-canonical plan of your own? `/experiment-bridge` turns it into
+running code:
 
 1. 📋 **Parse** the experiment plan (`refine-logs/EXPERIMENT_PLAN.md`)
 2. 💻 **Implement** experiment scripts (reuse existing code, add proper argparse/logging/seeds)
@@ -905,7 +839,7 @@ Already have an experiment plan (from Workflow 1 or your own)? `/experiment-brid
 │   └──────────┘     └──────────┘     └──────────┘               │
 │         │                                                        │
 │         ▼                                                        │
-│   Ready for /auto-review-loop                                    │
+│   Results available for a user-chosen next workflow               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -913,7 +847,9 @@ Already have an experiment plan (from Workflow 1 or your own)? `/experiment-brid
 
 **Skills involved:** `experiment-bridge` + `run-experiment` + `monitor-experiment`
 
-> 💡 **One-command shortcut:** `/experiment-bridge` reads `refine-logs/EXPERIMENT_PLAN.md` automatically. Or point it to any plan: `/experiment-bridge "my_plan.md"`.
+> 💡 **Canonical use:** start `/research-pipeline "<canonical-run-id>"` first; its
+> bound `/experiment-plan` output is then passed to `/experiment-bridge`. A plan
+> supplied directly to the bridge remains explicitly non-canonical.
 
 > ⚙️ `CODE_REVIEW`, `AUTO_DEPLOY`, `SANITY_FIRST`, `MAX_PARALLEL_RUNS` are configurable — see [Customization](#customization).
 
@@ -1562,7 +1498,7 @@ bash tools/smart_update.sh --apply  # apply: updates safe ones; NEW upstream ski
 
 ```
 # Workflow 1: Idea Discovery
-> /idea-discovery "your research direction"          # full pipeline
+> /idea-discovery "your research direction"          # canonical discovery; stops at human Gates
 > /research-lit "topic"                              # just literature survey (all sources)
 > /research-lit "topic" — sources: zotero, web        # mix and match sources
 > /research-lit "topic" — sources: deepxiv            # DeepXiv-only progressive retrieval
@@ -1580,8 +1516,8 @@ bash tools/smart_update.sh --apply  # apply: updates safe ones; NEW upstream ski
 > /paper-plan "NARRATIVE_REPORT.md"                  # just outline
 > /paper-compile "paper/"                            # just compile
 
-# Full Pipeline
-> /research-pipeline "your research direction"       # Workflow 1 → 2 → 3 end-to-end
+# Canonical Validation Continuation
+> /research-pipeline "<canonical-run-id>"             # approved method → experiment validation
 
 # Supporting Skills
 > /run-experiment train.py --lr 1e-4 --epochs 100

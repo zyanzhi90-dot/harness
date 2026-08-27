@@ -156,7 +156,8 @@ class DenyToolsTest(unittest.TestCase):
 class SampleEvalFileTest(unittest.TestCase):
     def test_sample_file_is_valid_and_well_formed(self):
         data = json.loads(
-            (REPO / "tools" / "meta_opt" / "trigger_evals.sample.json").read_text())
+            (REPO / "tools" / "meta_opt" / "trigger_evals.sample.json").read_text(
+                encoding="utf-8"))
         skills = {k: v for k, v in data.items() if not k.startswith("_")}
         self.assertTrue(skills)
         for name, queries in skills.items():

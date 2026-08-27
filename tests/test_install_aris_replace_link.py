@@ -96,7 +96,7 @@ class ReplaceLinkTest(unittest.TestCase):
         )
         manifest = self.project / ".aris" / "installed-skills.txt"
         self.assertTrue(manifest.is_file(), "successful install must write the manifest")
-        self.assertIn(CONFLICT_NAME, manifest.read_text(),
+        self.assertIn(CONFLICT_NAME, manifest.read_text(encoding="utf-8"),
                       "replaced entry must be recorded as managed")
 
     def test_replace_link_ignores_real_path_conflict(self):

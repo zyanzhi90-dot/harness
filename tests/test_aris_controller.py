@@ -1,0 +1,7158 @@
+from __future__ import annotations
+
+import hashlib
+import inspect
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 support
+    import tomli as tomllib
+
+from arisctl import ARISController, ControllerError
+from arisctl import approvals, reviews
+from arisctl.__main__ import build_parser, main
+from arisctl.project_setup import install_project_codex_layer
+from arisctl.gateways import (
+    HumanSearchRequired,
+    ProviderUnavailable,
+    SearchOutcome,
+    append_jsonl,
+)
+from arisctl.validators import (
+    ValidationError,
+    render_field_map,
+    sha256_file,
+    validate_candidate_verdict_artifact,
+    validate_coverage_review,
+    validate_evidence_card,
+    validate_field_map,
+    validate_method_routes,
+    validate_query_plan,
+    validate_root_cause_analysis,
+    validate_root_cause_verdict,
+    validate_source_admission_policy,
+)
+from arisctl.workflow import load_workflow
+from tools.literature_coverage_audit import audit_landscape
+from tools import run_state
+
+
+REPO = Path(__file__).resolve().parents[1]
+WORKFLOW = REPO / "skills" / "shared-references" / "idea-workflow.yaml"
+
+
+@pytest.fixture(autouse=True)
+def isolated_approval_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(approvals, "_approval_root", lambda: tmp_path / "ui-receipts")
+    monkeypatch.setenv("ARIS_REVIEW_ATTESTATION_ROOT", str(tmp_path / "review-attestations"))
+    # Formal authorization uses Codex's inherited task cwd. The ordinary
+    # fixtures model a correctly rooted formal project unless a test changes it.
+    monkeypatch.chdir(tmp_path)
+
+
+def test_scientific_core_plan_is_extensible_but_must_follow_dependencies(
+    tmp_path: Path,
+) -> None:
+    workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+    future_phase = {
+        "phase": "future_causal_revision",
+        "depends_on": ["root_cause_analysis"],
+        "required_inputs": ["@artifact:root_cause_analysis"],
+        "produced_artifacts": [],
+        "gate_id": "future_causal_revision_completeness",
+        "gate_owner": "future-research-module",
+        "formal_gate": False,
+        "human_checkpoint": False,
+    }
+    declared_index = next(
+        index
+        for index, item in enumerate(workflow["phases"])
+        if item["phase"] == "root_cause_gate"
+    )
+    workflow["phases"].insert(declared_index, future_phase)
+    core_index = workflow["scientific_core"]["phases"].index("root_cause_gate")
+    workflow["scientific_core"]["phases"].insert(
+        core_index, "future_causal_revision"
+    )
+    workflow["scientific_core"]["allowed_agents"]["future_causal_revision"] = [
+        "main_research_agent"
+    ]
+    root_gate = next(
+        item for item in workflow["phases"] if item["phase"] == "root_cause_gate"
+    )
+    root_gate["depends_on"] = ["future_causal_revision"]
+
+    extensible = tmp_path / "extensible-workflow.json"
+    extensible.write_text(json.dumps(workflow), encoding="utf-8")
+    loaded = load_workflow(extensible)
+    assert "future_causal_revision" in loaded["scientific_core"]["phases"]
+
+    invalid = json.loads(json.dumps(workflow))
+    phases = invalid["scientific_core"]["phases"]
+    analysis_index = phases.index("root_cause_analysis")
+    extension_index = phases.index("future_causal_revision")
+    phases[analysis_index], phases[extension_index] = (
+        phases[extension_index],
+        phases[analysis_index],
+    )
+    invalid_path = tmp_path / "invalid-workflow.json"
+    invalid_path.write_text(json.dumps(invalid), encoding="utf-8")
+    with pytest.raises(ValueError, match="topologically compatible"):
+        load_workflow(invalid_path)
+
+
+def write_policy(root: Path) -> None:
+    path = root / "idea-stage" / "SOURCE_ADMISSION_POLICY.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(policy_payload(), sort_keys=False), encoding="utf-8"
+    )
+
+
+def policy_payload() -> dict:
+    return {
+        "schema_version": 2,
+        "approved_elite_venues": [
+            {"canonical_name": "Test Elite Venue", "aliases": ["TEV"]}
+        ],
+        "high_citation_rule": {
+            "thresholds": [
+                {
+                    "publication_year_max": 2030,
+                    "citation_count_strictly_greater_than": 100,
+                }
+            ]
+        },
+        "source_tracks": {
+            "user_supplied_material": {"decision": "USER_SUPPLIED_READ"}
+        },
+        "notes": "citation and elite gate; user supplied track",
+    }
+
+
+def test_source_admission_policy_rejects_overlapping_citation_year_ranges() -> None:
+    policy = policy_payload()
+    policy["high_citation_rule"]["thresholds"] = [
+        {"publication_year_max": 2017, "citation_count_strictly_greater_than": 100},
+        {
+            "publication_year_min": 2017,
+            "publication_year_max": 2020,
+            "citation_count_strictly_greater_than": 60,
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="overlaps"):
+        validate_source_admission_policy(policy)
+
+
+def test_method_route_index_rejects_duplicate_route_ids() -> None:
+    binding = {
+        "problem_id": "P-1",
+        "problem_version": 1,
+        "problem_contract_sha256": "a" * 64,
+        "evidence_capsule_sha256": "b" * 64,
+        "root_cause_analysis_id": "RCA-1",
+        "root_cause_analysis_sha256": "c" * 64,
+    }
+    obligation_set = {
+        "schema_version": 2,
+        "record_type": "design_obligation_set",
+        "design_obligation_set_id": "DOS-1",
+        **binding,
+        "causal_chain_ids": ["CHAIN-1"],
+        "design_obligations": [
+            {
+                "obligation_id": "OBL-1", "derived_from_causal_chain_ids": ["CHAIN-1"],
+                "required_capability": "target the cause", "why_current_methods_fail": "they do not target it",
+                "measurable_acceptance_condition": "cause decreases", "priority": "MUST",
+            }
+        ],
+    }
+    route = {
+        "schema_version": 2,
+        "record_type": "method_route",
+        "route_id": "R-1",
+        **binding,
+        "design_obligation_set_id": "DOS-1",
+        "causal_chain_ids": ["CHAIN-1"],
+        "obligation_coverage": {"covered_obligation_ids": ["OBL-1"], "residual_obligation_ids": []},
+        "dominant_solution": "direct targeted mechanism",
+        "dominant_solution_origin": "first_principles",
+        "dominant_only_closure": {"satisfied_obligation_ids": ["OBL-1"], "residual_must_obligation_ids": []},
+        "supporting_mechanisms": [],
+    }
+    duplicate = dict(route)
+    with pytest.raises(ValidationError, match="route IDs"):
+        validate_method_routes(
+            "\n".join(json.dumps(item) for item in (obligation_set, route, duplicate)),
+            problem_version={
+                "problem_id": "P-1", "version": 1,
+                "contract_sha256": "a" * 64, "evidence_capsule_sha256": "b" * 64,
+            },
+            root_cause_analysis_id="RCA-1",
+            root_cause_analysis_sha256="c" * 64,
+            primary_causal_chain_ids={"CHAIN-1"},
+        )
+
+
+def test_method_routes_share_one_canonical_obligation_set_but_can_assess_coverage_differently() -> None:
+    binding = {
+        "problem_id": "P-1", "problem_version": 1,
+        "problem_contract_sha256": "a" * 64, "evidence_capsule_sha256": "b" * 64,
+        "root_cause_analysis_id": "RCA-1", "root_cause_analysis_sha256": "c" * 64,
+    }
+    obligation_set = {
+        "schema_version": 2, "record_type": "design_obligation_set",
+        "design_obligation_set_id": "DOS-1", **binding, "causal_chain_ids": ["CHAIN-1"],
+        "design_obligations": [
+            {"obligation_id": "OBL-MUST", "derived_from_causal_chain_ids": ["CHAIN-1"],
+             "required_capability": "remove the cause", "why_current_methods_fail": "they miss it",
+             "measurable_acceptance_condition": "cause decreases", "priority": "MUST"},
+            {"obligation_id": "OBL-SHOULD", "derived_from_causal_chain_ids": ["CHAIN-1"],
+             "required_capability": "report uncertainty", "why_current_methods_fail": "they hide it",
+             "measurable_acceptance_condition": "uncertainty is calibrated", "priority": "SHOULD"},
+        ],
+    }
+
+    def route(route_id: str, covered: list[str], residual: list[str]) -> dict:
+        return {
+            "schema_version": 2, "record_type": "method_route", "route_id": route_id,
+            "design_obligation_set_id": "DOS-1", **binding, "causal_chain_ids": ["CHAIN-1"],
+            "obligation_coverage": {"covered_obligation_ids": covered, "residual_obligation_ids": residual},
+            "dominant_solution": f"mechanism {route_id}", "dominant_solution_origin": "first_principles",
+            "dominant_only_closure": {
+                "satisfied_obligation_ids": ["OBL-MUST"], "residual_must_obligation_ids": [],
+            },
+            "supporting_mechanisms": [],
+        }
+
+    routes = validate_method_routes(
+        "\n".join(json.dumps(item) for item in (
+            obligation_set,
+            route("R-A", ["OBL-MUST", "OBL-SHOULD"], []),
+            route("R-B", ["OBL-MUST"], ["OBL-SHOULD"]),
+        )),
+        problem_version={"problem_id": "P-1", "version": 1, "contract_sha256": "a" * 64, "evidence_capsule_sha256": "b" * 64},
+        root_cause_analysis_id="RCA-1", root_cause_analysis_sha256="c" * 64,
+        primary_causal_chain_ids={"CHAIN-1"},
+    )
+    assert set(routes) == {"R-A", "R-B"}
+    assert {route["design_obligation_set_id"] for route in routes.values()} == {"DOS-1"}
+
+
+@pytest.mark.parametrize("field, replacement", [
+    ("required_capability", "route-tailored capability"),
+    ("measurable_acceptance_condition", "route-tailored acceptance condition"),
+    ("priority", "SHOULD"),
+])
+def test_method_route_cannot_redefine_canonical_obligation_semantics(field: str, replacement: str) -> None:
+    binding = {
+        "problem_id": "P-1", "problem_version": 1,
+        "problem_contract_sha256": "a" * 64, "evidence_capsule_sha256": "b" * 64,
+        "root_cause_analysis_id": "RCA-1", "root_cause_analysis_sha256": "c" * 64,
+    }
+    obligation = {
+        "obligation_id": "OBL-1", "derived_from_causal_chain_ids": ["CHAIN-1"],
+        "required_capability": "target the cause", "why_current_methods_fail": "they miss it",
+        "measurable_acceptance_condition": "cause decreases", "priority": "MUST",
+    }
+    route_obligation = dict(obligation)
+    route_obligation[field] = replacement
+    records = [
+        {"schema_version": 2, "record_type": "design_obligation_set", "design_obligation_set_id": "DOS-1", **binding,
+         "causal_chain_ids": ["CHAIN-1"], "design_obligations": [obligation]},
+        {"schema_version": 2, "record_type": "method_route", "route_id": "R-1", "design_obligation_set_id": "DOS-1", **binding,
+         "causal_chain_ids": ["CHAIN-1"], "design_obligations": [route_obligation],
+         "obligation_coverage": {"covered_obligation_ids": ["OBL-1"], "residual_obligation_ids": []},
+         "dominant_solution": "direct mechanism", "dominant_solution_origin": "first_principles",
+         "dominant_only_closure": {"satisfied_obligation_ids": ["OBL-1"], "residual_must_obligation_ids": []},
+         "supporting_mechanisms": []},
+    ]
+    with pytest.raises(ValidationError, match="must not redefine"):
+        validate_method_routes(
+            "\n".join(json.dumps(item) for item in records),
+            problem_version={"problem_id": "P-1", "version": 1, "contract_sha256": "a" * 64, "evidence_capsule_sha256": "b" * 64},
+            root_cause_analysis_id="RCA-1", root_cause_analysis_sha256="c" * 64,
+            primary_causal_chain_ids={"CHAIN-1"},
+        )
+
+
+def test_diagnosis_ready_requires_every_root_cause_rubric_to_pass() -> None:
+    verdict = {
+        "schema_version": 1, "run_id": "run-1", "verdict_id": "RCA-V-1",
+        "reviewer": "independent-reviewer", "analysis_id": "RCA-1",
+        "reviewed_analysis_sha256": "a" * 64,
+        "problem_contract_sha256": "b" * 64,
+        "evidence_capsule_sha256": "c" * 64,
+        "decision": "DIAGNOSIS_READY", "reasons": ["adequate for method design"],
+        "issues": [], "observation_fidelity": "PASS", "grouping_adequacy": "PASS",
+        "causal_depth": "PASS", "explanatory_coverage": "PASS",
+        "evidence_calibration": "PASS", "intervention_relevance": "PASS",
+        "falsifiability": "UNCERTAIN",
+    }
+    with pytest.raises(ValidationError, match="all seven"):
+        validate_root_cause_verdict(
+            verdict, run_id="run-1", analysis_id="RCA-1", reviewed_analysis_sha256="a" * 64,
+            problem_contract_sha256="b" * 64, evidence_capsule_sha256="c" * 64,
+        )
+
+
+def approve(controller: ARISController, gate: str, *, selected_id: str | None = None) -> dict:
+    request = controller.validate_human_gate_request(gate)
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        gate,
+        request["id"],
+        "approve",
+        selected_id=selected_id,
+        artifact_bindings=request["artifact_bindings"],
+    )
+    return controller.human_approve(gate, "approve", selected_id=selected_id)
+
+
+def request_human_gate_revision(
+    controller: ARISController,
+    gate: str,
+    *,
+    selected_id: str | None = None,
+    human_feedback: str = "Correct the selected problem's stated scope.",
+) -> dict:
+    if gate == "problem_acceptance" and selected_id is None:
+        selected_id = "P-1"
+    feedback = human_feedback if gate == "problem_acceptance" else None
+    request = controller.validate_human_gate_decision(
+        gate, "request_revision", selected_id=selected_id, human_feedback=feedback
+    )
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        gate,
+        request["id"],
+        "request_revision",
+        selected_id=selected_id,
+        human_feedback=feedback,
+        artifact_bindings=request["artifact_bindings"],
+    )
+    return controller.human_approve(
+        gate, "request_revision", selected_id=selected_id, human_feedback=feedback
+    )
+
+
+def reject_problem_candidate(
+    controller: ARISController,
+    *,
+    selected_id: str = "P-1",
+    human_feedback: str = "The selected problem premise does not hold.",
+) -> dict:
+    request = controller.validate_human_gate_decision(
+        "problem_acceptance",
+        "reject",
+        selected_id=selected_id,
+        human_feedback=human_feedback,
+    )
+    receipt_path = approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "problem_acceptance",
+        request["id"],
+        "reject",
+        selected_id=selected_id,
+        human_feedback=human_feedback,
+        artifact_bindings=request["artifact_bindings"],
+    )
+    return controller.human_approve(
+        "problem_acceptance",
+        "reject",
+        selected_id=selected_id,
+        human_feedback=human_feedback,
+    )
+
+
+def request_source_policy_revision(controller: ARISController) -> dict:
+    request = controller.validate_human_gate_request("source_policy_approval")
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "source_policy_approval",
+        request["id"],
+        "request_revision",
+        artifact_bindings=request["artifact_bindings"],
+    )
+    return controller.request_source_policy_revision()
+
+
+def revise_problem(controller: ARISController, reason: str) -> dict:
+    request = controller.request_problem_revision(reason)
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "problem_revision",
+        request["id"],
+        "approve",
+        artifact_bindings=request["artifact_bindings"],
+    )
+    return controller.revise_problem(reason)
+
+
+def attest(
+    controller: ARISController,
+    role: str,
+    payload: dict,
+    *,
+    isolated_import: bool = False,
+) -> None:
+    hook = REPO / ".codex" / "hooks" / "subagent_attestation.py"
+    command = [sys.executable]
+    if isolated_import:
+        command.extend(
+            [
+                "-I",
+                "-S",
+                "-c",
+                (
+                    "import runpy, sys, types; "
+                    "sys.modules['yaml'] = types.ModuleType('yaml'); "
+                    "runpy.run_path(sys.argv[1], run_name='__main__')"
+                ),
+                str(hook),
+            ]
+        )
+    else:
+        command.append(str(hook))
+    result = subprocess.run(
+        command,
+        input=json.dumps(
+            {
+                "hook_event_name": "SubagentStop",
+                "cwd": str(controller.root),
+                "turn_id": "turn-test",
+                "agent_id": f"agent-{role}-test",
+                "agent_type": role,
+                "last_assistant_message": json.dumps(payload),
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0 and result.stdout == ""
+
+
+def test_subagent_attestation_is_ascii_safe_for_unicode_project_path(tmp_path: Path) -> None:
+    root = tmp_path / "科研项目"
+    root.mkdir()
+    hook = REPO / ".codex" / "hooks" / "subagent_attestation.py"
+    payload = {"read_event_id": "unicode-read", "claim": "阻抗控制—evidence"}
+    result = subprocess.run(
+        [sys.executable, str(hook)],
+        input=json.dumps(
+            {
+                "hook_event_name": "SubagentStop",
+                "cwd": str(root),
+                "turn_id": "turn-unicode",
+                "agent_id": "agent-paper-reader",
+                "agent_type": "paper_reader",
+                "last_assistant_message": json.dumps(payload, ensure_ascii=False),
+            },
+            ensure_ascii=False,
+        ).encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0 and result.stdout == b""
+    receipt = root / ".aris" / "agent-attestations" / "paper_reader" / "unicode-read.json"
+    raw = receipt.read_bytes()
+    raw.decode("ascii")
+    assert json.loads(raw)["project_root"] == str(root.resolve())
+
+
+def test_natural_subagent_stop_uses_transcript_role_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {
+                    "id": "thread-paper-reader",
+                    "thread_source": "subagent",
+                    "agent_role": "paper_reader",
+                    "source": {
+                        "subagent": {
+                            "thread_spawn": {"agent_role": "paper_reader"}
+                        }
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    payload = {"read_event_id": "natural-stop-read", "claim": "evidence"}
+    hook = REPO / ".codex" / "hooks" / "subagent_attestation.py"
+    event = {
+        "hook_event_name": "Stop",
+        "cwd": str(root),
+        "turn_id": "turn-natural-stop",
+        "transcript_path": str(transcript),
+        "last_assistant_message": json.dumps(payload),
+    }
+    first = subprocess.run(
+        [sys.executable, str(hook)],
+        input=json.dumps(event),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    second = subprocess.run(
+        [sys.executable, str(hook)],
+        input=json.dumps(event),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert first.returncode == 0 and first.stdout == ""
+    assert second.returncode == 0 and second.stdout == ""
+    receipt = (
+        root
+        / ".aris"
+        / "agent-attestations"
+        / "paper_reader"
+        / "natural-stop-read.json"
+    )
+    attestation = json.loads(receipt.read_text(encoding="utf-8"))
+    assert attestation["agent_type"] == "paper_reader"
+    assert attestation["agent_id"] == "thread-paper-reader"
+
+
+def _native_generic_compat_event(
+    root: Path,
+    *,
+    binding: dict,
+    payload: dict,
+    role: str,
+    tool_name: str | None = None,
+    child_id: str = "native-generic-child",
+) -> dict:
+    contract = tomllib.loads(
+        (root / ".codex" / "agents" / f"{role}.toml").read_text(encoding="utf-8")
+    )["developer_instructions"]
+    binding = {
+        **binding,
+        "dispatch_mode": "native_generic_compat",
+        "formal_role": role,
+        "role_contract_sha256": hashlib.sha256(contract.encode("utf-8")).hexdigest(),
+    }
+    task = f"ARIS_NATIVE_GENERIC_COMPAT:{json.dumps(binding, sort_keys=True)}\n{contract}"
+    records = [
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": child_id,
+                "thread_source": "subagent",
+                "source": {"subagent": {"thread_spawn": {"task_name": "aris-compat"}}},
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": task}],
+            },
+        },
+    ]
+    if tool_name:
+        records.append(
+            {"type": "response_item", "payload": {"type": "function_call", "name": tool_name}}
+        )
+    transcript = root / f"{role}-native-generic.jsonl"
+    transcript.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+    return {
+        "hook_event_name": "Stop",
+        "cwd": str(root),
+        "turn_id": "native-turn",
+        "agent_id": child_id,
+        "transcript_path": str(transcript),
+        "last_assistant_message": json.dumps(payload),
+    }
+
+
+def _run_attestation_hook(event: dict) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(REPO / ".codex" / "hooks" / "subagent_attestation.py")],
+        input=json.dumps(event),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_configured_paper_reader_attestation_path_is_unchanged(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    receipt = json.loads(
+        (tmp_path / ".aris" / "agent-attestations" / "paper_reader" / f"{read['read_event_id']}.json").read_text(encoding="utf-8")
+    )
+    assert receipt["agent_type"] == "paper_reader"
+    assert "dispatch_mode" not in receipt
+
+
+def test_native_generic_paper_reader_attestation_binds_task_and_has_no_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    install_project_codex_layer(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    event = _native_generic_compat_event(
+        tmp_path,
+        role="paper_reader",
+        payload=evidence,
+        binding={"paper_id": "P1", "read_event_id": read["read_event_id"], "content_sha256": read["content_sha256"]},
+    )
+    result = _run_attestation_hook(event)
+    assert result.returncode == 0 and result.stdout == ""
+    receipt_path = tmp_path / ".aris" / "agent-attestations" / "paper_reader" / f"{read['read_event_id']}.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["dispatch_mode"] == "native_generic_compat"
+    assert receipt["agent_id"] == receipt["child_session_identity"] == "native-generic-child"
+    assert receipt["observed_tool_calls"] == []
+    controller.submit_evidence_card("P1", evidence)
+    assert receipt_path.with_suffix(".consumed.json").is_file()
+    assert _run_attestation_hook(event).stdout == ""
+    assert not receipt_path.exists()
+
+
+def test_native_reader_authorization_rejects_wrong_root_before_child_or_formal_evidence_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    install_project_codex_layer(tmp_path)
+    reach_reading(controller)
+    state_before = controller.status()
+
+    monkeypatch.chdir(tmp_path.parent)
+    with pytest.raises(ControllerError, match="runtime project root"):
+        controller.read_full_text("P1", "fake-paper", lambda _: "must not run")
+
+    assert controller.status() == state_before
+    assert not (tmp_path / ".aris" / "agent-attestations").exists()
+    assert not (
+        tmp_path / ".aris" / "canonical" / controller.run_id / "evidence-P1.json"
+    ).exists()
+
+
+def test_coverage_request_authorization_rejects_wrong_root_without_state_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_synthesis(controller)
+    state_before = controller.status()
+
+    monkeypatch.chdir(tmp_path.parent)
+    with pytest.raises(ControllerError, match="runtime project root"):
+        controller.submit_field_map(field_map())
+
+    assert controller.status() == state_before
+
+
+def test_all_core_reviewer_request_authorizations_reject_wrong_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    state_before = controller.status()
+    formal_specs = [
+        spec
+        for spec in controller.workflow["phases"]
+        if spec.get("formal_gate") and isinstance(spec.get("reviewer_role"), str)
+    ]
+    assert formal_specs
+
+    monkeypatch.chdir(tmp_path.parent)
+    for spec in formal_specs:
+        with pytest.raises(ControllerError, match="runtime project root"):
+            controller._new_core_review_request({}, {"phase": spec["phase"]}, spec)
+    assert controller.status() == state_before
+
+
+def test_validation_reviewer_request_authorization_rejects_wrong_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    state_before = controller.status()
+
+    monkeypatch.chdir(tmp_path.parent)
+    with pytest.raises(ControllerError, match="runtime project root"):
+        controller.validation_handoff()
+
+    assert controller.status() == state_before
+
+
+def test_non_native_main_phase_is_not_subject_to_runtime_root_invariant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+
+    monkeypatch.chdir(tmp_path.parent)
+    controller.start_current_phase()
+    phase = run_state._find_phase(controller.status(), "problem_generation")
+    assert phase["status"] == "running"
+
+
+@pytest.mark.parametrize("binding_change", [{"read_event_id": "wrong-read"}, {"paper_id": "wrong-paper"}, {"content_sha256": "0" * 64}])
+def test_native_generic_paper_reader_rejects_task_or_payload_binding_mismatch(
+    tmp_path: Path, binding_change: dict[str, str]
+) -> None:
+    install_project_codex_layer(tmp_path)
+    evidence = {"source_id": "P1", "read_event_id": "read-1", "content_sha256": "a" * 64}
+    event = _native_generic_compat_event(
+        tmp_path,
+        role="paper_reader",
+        payload=evidence,
+        binding={"paper_id": "P1", "read_event_id": "read-1", "content_sha256": "a" * 64, **binding_change},
+    )
+    result = _run_attestation_hook(event)
+    assert json.loads(result.stdout)["decision"] == "block"
+    assert not (tmp_path / ".aris" / "agent-attestations" / "paper_reader" / "read-1.json").exists()
+
+
+def test_native_generic_paper_reader_rejects_any_tool_call(tmp_path: Path) -> None:
+    install_project_codex_layer(tmp_path)
+    evidence = {"source_id": "P1", "read_event_id": "read-1", "content_sha256": "a" * 64}
+    event = _native_generic_compat_event(
+        tmp_path, role="paper_reader", payload=evidence,
+        binding={"paper_id": "P1", "read_event_id": "read-1", "content_sha256": "a" * 64}, tool_name="Read",
+    )
+    assert json.loads(_run_attestation_hook(event).stdout)["decision"] == "block"
+
+
+def test_native_generic_coverage_reviewer_accepts_only_contract_capabilities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    install_project_codex_layer(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    binding = {"run_id": controller.run_id, "review_request_id": request_id, "reviewed_artifact_hashes": dict(digest.bindings)}
+    event = _native_generic_compat_event(tmp_path, role="coverage_reviewer", payload=review, binding=binding, tool_name="WebSearch")
+    result = _run_attestation_hook(event)
+    assert result.returncode == 0 and result.stdout == ""
+    receipt = reviews.review_attestation_path(tmp_path, controller.run_id, "coverage_reviewer", request_id)
+    assert json.loads(receipt.read_text(encoding="utf-8"))["dispatch_mode"] == "native_generic_compat"
+    controller.submit_coverage_review(review)
+    assert receipt.with_suffix(".consumed.json").is_file()
+
+    bad_review = coverage_review(digest, "bad-request")
+    bad_event = _native_generic_compat_event(
+        tmp_path, role="coverage_reviewer", payload=bad_review,
+        binding={"run_id": controller.run_id, "review_request_id": "bad-request", "reviewed_artifact_hashes": dict(digest.bindings)}, tool_name="Bash",
+    )
+    assert json.loads(_run_attestation_hook(bad_event).stdout)["decision"] == "block"
+
+
+def test_root_or_unbound_generic_stop_cannot_create_aris_attestation(tmp_path: Path) -> None:
+    install_project_codex_layer(tmp_path)
+    root_stop = {
+        "hook_event_name": "Stop", "cwd": str(tmp_path), "turn_id": "root-turn",
+        "agent_id": "root", "last_assistant_message": json.dumps({"read_event_id": "read-1"}),
+    }
+    generic_transcript = tmp_path / "ordinary-generic.jsonl"
+    generic_transcript.write_text(
+        json.dumps({"type": "session_meta", "payload": {"id": "ordinary", "thread_source": "subagent", "source": {"subagent": {"thread_spawn": {}}}}}) + "\n",
+        encoding="utf-8",
+    )
+    generic_stop = {**root_stop, "agent_id": "ordinary", "transcript_path": str(generic_transcript)}
+    assert _run_attestation_hook(root_stop).stdout == ""
+    assert _run_attestation_hook(generic_stop).stdout == ""
+    assert not (tmp_path / ".aris" / "agent-attestations").exists()
+
+
+def test_reviewer_hook_resolves_the_checkout_without_an_editable_install(
+    tmp_path: Path,
+) -> None:
+    controller = ARISController.start(tmp_path, "hook-import", executor="codex")
+    payload = {
+        "run_id": controller.run_id,
+        "review_request_id": "request-1",
+        "reviewer": "claude-sonnet-4",
+        "verdict_id": "verdict-1",
+        "decision": "CERTIFIED",
+        "reviewed_artifact_hashes": {"idea-stage/PROBLEM_CANDIDATES.md": "a" * 64},
+        "verdict_records": [{"record_type": "phase_verdict"}],
+    }
+
+    attest(
+        controller,
+        "independent_problem_reviewer",
+        payload,
+        isolated_import=True,
+    )
+
+    path = reviews.review_attestation_path(
+        controller.root,
+        controller.run_id,
+        "independent_problem_reviewer",
+        payload["review_request_id"],
+    )
+    recorded = json.loads(path.read_text(encoding="utf-8"))
+    assert recorded["agent_type"] == "independent_problem_reviewer"
+    assert recorded["artifact_bindings"] == payload["reviewed_artifact_hashes"]
+
+
+def test_novelty_hook_keeps_final_method_compact_verdict_contract(tmp_path: Path) -> None:
+    controller = ARISController.start(tmp_path, "final-novelty-hook", executor="codex")
+    payload = {
+        "run_id": controller.run_id,
+        "review_request_id": "final-method-request",
+        "reviewer": "claude-sonnet-4",
+        "verdict_id": "final-method-verdict",
+        "decision": "NOVEL",
+        "reviewed_artifact_hashes": {"refine-logs/FINAL_PROPOSAL.md": "a" * 64},
+    }
+    attest(controller, "independent_novelty_reviewer", payload)
+    receipt = reviews.load_review_attestation(
+        controller.root,
+        controller.run_id,
+        role="independent_novelty_reviewer",
+        request_id="final-method-request",
+        artifact_bindings=payload["reviewed_artifact_hashes"],
+    )
+    assert receipt["verdict_payload"] == payload
+
+
+def attest_current_review(
+    controller: ARISController, verdict_id: str, reviewer: str, *, decision: str | None = None
+) -> None:
+    phase = controller.status()["scientific_core"]
+    current = run_state._find_phase(controller.status(), phase["current_phase"])
+    request = current["review_request"]
+    decision = decision or current.get("gate_verdict") or request["accepted_verdicts"][0]
+    if request["required_reviewer_role"] == "independent_root_cause_reviewer":
+        payload = json.loads(
+            (controller.root / "idea-stage" / "ROOT_CAUSE_VERDICT.json").read_text(encoding="utf-8")
+        )
+        payload.update(
+            {
+                "run_id": controller.run_id,
+                "review_request_id": request["id"],
+                "reviewer": reviewer,
+                "verdict_id": verdict_id,
+                "decision": decision,
+                "reviewed_artifact_hashes": request["artifact_bindings"],
+            }
+        )
+    elif request["required_reviewer_role"] in {
+        "independent_problem_reviewer", "independent_novelty_reviewer",
+    }:
+        output = controller.root / (
+            "idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl"
+            if current["phase"] == "problem_quality_gate"
+            else "idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl"
+        )
+        payload = {
+            "run_id": controller.run_id,
+            "review_request_id": request["id"],
+            "reviewer": reviewer,
+            "verdict_id": verdict_id,
+            "decision": decision,
+            "reviewed_artifact_hashes": request["artifact_bindings"],
+            "verdict_records": [
+                json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ],
+        }
+    else:
+        payload = {
+            "run_id": controller.run_id,
+            "review_request_id": request["id"],
+            "reviewer": reviewer,
+            "verdict_id": verdict_id,
+            "decision": decision,
+            "reviewed_artifact_hashes": request["artifact_bindings"],
+        }
+    attest(controller, request["required_reviewer_role"], payload)
+    return None
+
+
+def accept_formal(controller: ARISController, verdict_id: str, reviewer: str) -> dict:
+    attest_current_review(controller, verdict_id, reviewer)
+    return controller.accept_current_phase(verdict_id, reviewer)
+
+
+def formal_verdict_artifact(
+    controller: ARISController,
+    *,
+    verdict_id: str,
+    candidate_id: str = "P-1",
+    reviewer: str = "claude-sonnet-4",
+    decision: str | None = None,
+) -> str:
+    """Build the declared on-disk verdict from the live Controller request."""
+
+    core = controller.status()["scientific_core"]
+    phase = run_state._find_phase(controller.status(), core["current_phase"])
+    request = phase["review_request"]
+    bindings = dict(request["artifact_bindings"])
+    if phase["phase"] == "method_refinement":
+        proposal = controller.root / "refine-logs" / "FINAL_PROPOSAL.md"
+        bindings["refine-logs/FINAL_PROPOSAL.md"] = sha256_file(proposal)
+    decision = decision or request["accepted_verdicts"][0]
+    metadata = {
+        "schema_version": 1,
+        "review_request_id": request["id"],
+        "reviewer": reviewer,
+        "verdict_id": verdict_id,
+        "decision": decision,
+        "reviewed_artifact_hashes": bindings,
+    }
+    if phase["phase"] in {"problem_quality_gate", "problem_novelty_gate"}:
+        if phase["phase"] == "problem_quality_gate":
+            assessment = {
+                "quality_assessment": {
+                    dimension: {
+                        "judgment": "PASS",
+                        "rationale": f"{dimension} is assessed against the bound evidence.",
+                        "evidence_ids": ["P1"],
+                        "issue_ids": [],
+                    }
+                    for dimension in (
+                        "Reality", "Importance", "Unresolvedness", "Precision",
+                        "Falsifiability", "Answerability",
+                    )
+                }
+            }
+        else:
+            coverage_paths = [
+                path for path in bindings
+                if path.replace("\\", "/")
+                in {"idea-stage/LITERATURE_CORPUS.jsonl", "idea-stage/SEARCH_LEDGER.jsonl"}
+            ]
+            assessment = {
+                "novelty_assessment": {
+                    "closest_priors": [{
+                        "paper_id": "P1",
+                        "evidence_id": "P1",
+                        "verification_status": "decision_grade",
+                        "potentially_decisive": True,
+                        "overlap": "nearest known framing",
+                        "residual_delta": "The scoped question remains unresolved.",
+                    }],
+                    "search_coverage": {
+                        "summary": "Reviewed the Controller-bound corpus and query ledger.",
+                        "artifact_paths": coverage_paths,
+                    },
+                    "residual_unresolved_delta": "The candidate's scoped question remains open.",
+                    "evidence_ids": ["P1"],
+                    "issue_ids": [],
+                }
+            }
+            if decision == "NOT_NOVEL":
+                assessment["novelty_assessment"]["revision_guidance"] = {
+                    "closest_prior_ids": ["P1"],
+                    "key_overlap": "The closest framing already asks the same question.",
+                    "residual_delta": "No material delta remains at the current scope.",
+                    "recommended_reframing": ["Narrow to a condition not covered by the closest prior."],
+                }
+            elif decision == "UNCERTAIN":
+                assessment["novelty_assessment"]["revision_guidance"] = {
+                    "missing_evidence": ["Verify the potentially decisive closest prior."],
+                    "required_checks": ["Read and compare the closest prior at decision grade."],
+                    "search_targets": ["the candidate's precise boundary condition"],
+                }
+        candidate = {
+            **metadata,
+            "record_type": "candidate_verdict",
+            "candidate_id": candidate_id,
+            **assessment,
+        }
+        summary = {
+            **metadata,
+            "record_type": "phase_verdict",
+            "survivor_ids": [candidate_id],
+            **(
+                {
+                    "return_guidance": {
+                        "missing_evidence": ["targeted decision-grade evidence"],
+                        "decision_target": "Resolve the candidate's blocking evidence gap.",
+                        "required_check": ["run the targeted evidence check"],
+                    }
+                }
+                if decision in {"HOLD", "UNCERTAIN"}
+                else {}
+            ),
+        }
+        return "\n".join(json.dumps(row) for row in (candidate, summary)) + "\n"
+    return "# Formal review\n\n```json\n" + json.dumps(metadata) + "\n```\n"
+
+
+def start_controller(
+    root: Path,
+    *,
+    queries: list[str] | None = None,
+    run_id: str = "run-1",
+    executor: str = "codex-gpt-5.6-sol",
+) -> ARISController:
+    write_policy(root)
+    controller = ARISController.start(root, run_id, executor=executor)
+    approve(controller, "source_policy_approval")
+    query_texts = queries or ["test field"]
+    controller.submit_query_plan(
+        {
+            "coverage_gaps": ["anchor"],
+            "queries": [
+                {"query": query, "purpose": "close explicit gap"}
+                for query in query_texts
+            ],
+        }
+    )
+    return controller
+
+
+def confirmed_validation_controller(root: Path) -> ARISController:
+    """Construct a Controller-registered final handoff for validation tests."""
+
+    controller = start_controller(root)
+    artifacts = {
+        "idea-stage/RESEARCH_CONTRACT.md": "# Contract\n",
+        "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md": "# Evidence\n",
+        "idea-stage/ROOT_CAUSE_ANALYSIS.json": "{}\n",
+        "idea-stage/ROOT_CAUSE_VERDICT.json": "{}\n",
+        "idea-stage/METHOD_ROUTES.jsonl": "\n".join(
+            json.dumps(record)
+            for record in (
+                {
+                    "schema_version": 2,
+                    "record_type": "design_obligation_set",
+                    "design_obligation_set_id": "DOS-1",
+                    "causal_chain_ids": ["CHAIN-1"],
+                    "design_obligations": [
+                        {"obligation_id": "OBL-1", "priority": "MUST"}
+                    ],
+                },
+                {
+                    "schema_version": 2,
+                    "record_type": "method_route",
+                    "route_id": "R-1",
+                    "design_obligation_set_id": "DOS-1",
+                    "causal_chain_ids": ["CHAIN-1"],
+                },
+            )
+        ) + "\n",
+        "idea-stage/SELECTED_ROUTE.yaml": "route_id: R-1\ncausal_chain_ids: [CHAIN-1]\nobligation_ids: [OBL-1]\n",
+        "refine-logs/FINAL_PROPOSAL.md": "# Final proposal\n",
+        "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "# Novelty\n",
+        "idea-stage/IDEA_REPORT.md": "# Accepted\n",
+    }
+    for raw_path, content in artifacts.items():
+        path = root / raw_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    phase_statuses = {
+        "problem_human_acceptance": "human_accepted",
+        "root_cause_analysis": "done",
+        "root_cause_gate": "accepted",
+        "method_design": "done",
+        "route_human_selection": "human_accepted",
+        "method_refinement": "accepted",
+        "final_method_novelty_gate": "accepted",
+        "final_method_human_acceptance": "human_accepted",
+    }
+    producers = {
+        "idea-stage/RESEARCH_CONTRACT.md": "problem_human_acceptance",
+        "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md": "problem_human_acceptance",
+        "idea-stage/ROOT_CAUSE_ANALYSIS.json": "root_cause_analysis",
+        "idea-stage/ROOT_CAUSE_VERDICT.json": "root_cause_gate",
+        "idea-stage/METHOD_ROUTES.jsonl": "method_design",
+        "idea-stage/SELECTED_ROUTE.yaml": "route_human_selection",
+        "refine-logs/FINAL_PROPOSAL.md": "method_refinement",
+        "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "final_method_novelty_gate",
+        "idea-stage/IDEA_REPORT.md": "final_method_human_acceptance",
+    }
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        for phase_name, status in phase_statuses.items():
+            run_state._find_phase(state, phase_name)["status"] = status
+        accepted = {}
+        for raw_path, producer in producers.items():
+            accepted[raw_path] = controller._artifact_record(
+                raw_path,
+                producer_phase=producer,
+                provenance={"controller": "ARISController", "run_id": controller.run_id},
+                upstream_snapshot={},
+            )
+        problem_binding = {
+            "problem_id": "P-1",
+            "version": 1,
+            "contract_sha256": accepted["idea-stage/RESEARCH_CONTRACT.md"]["sha256"],
+            "evidence_capsule_sha256": accepted["idea-stage/PROBLEM_EVIDENCE_CAPSULE.md"]["sha256"],
+        }
+        accepted["refine-logs/FINAL_PROPOSAL.md"]["problem_version_binding"] = dict(problem_binding)
+        core["accepted_artifacts"] = accepted
+        core["active_problem_version"] = {
+            **problem_binding,
+            "status": "accepted",
+            "contract_path": "idea-stage/RESEARCH_CONTRACT.md",
+            "evidence_capsule_path": "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+        }
+        core["status"] = "METHOD_CONFIRMED_AWAITING_USER_VALIDATION"
+        core["current_phase"] = None
+        core["validation_entry"] = {
+            "status": "AWAITING_USER_INITIATION",
+            "entry_policy": "human_initiated_only",
+            "accepted_method_artifacts": {
+                raw_path: dict(accepted[raw_path])
+                for raw_path in (
+                    "refine-logs/FINAL_PROPOSAL.md",
+                    "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+                    "idea-stage/IDEA_REPORT.md",
+                )
+            },
+        }
+    return controller
+
+
+def validation_result(
+    controller: ARISController,
+    *,
+    decision: str,
+    handoff_sha256: str | None = None,
+    issue_handoff: bool = True,
+) -> dict:
+    evidence = controller.root / "results" / "validation.json"
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    evidence.write_text('{"metric": 1}\n', encoding="utf-8")
+    handoff = (
+        controller.validation_handoff()
+        if issue_handoff
+        else controller._build_validation_handoff(controller.status())
+    )
+    review_request = handoff.get("validation_review_request") or {}
+    result = {
+        "schema_version": 1,
+        "run_id": controller.run_id,
+        "workflow_sha256": handoff["workflow_sha256"],
+        "handoff_sha256": handoff_sha256 or handoff["handoff_sha256"],
+        "review_request_id": review_request.get("id", "unissued-validation-request"),
+        "reviewed_artifact_hashes": dict(review_request.get("artifact_bindings") or {}),
+        "reviewer": "gpt-5.6-sol",
+        "verdict_id": "validation-verdict-1",
+        "decision": decision,
+        "rationale": "Controlled validation result.",
+        "evidence_artifacts": [
+            {"path": "results/validation.json", "sha256": sha256_file(evidence)}
+        ],
+    }
+    if decision == "VALIDATED":
+        result["mechanism_evidence_closure"] = [{
+            "causal_chain_id": "CHAIN-1",
+            "must_obligation_ids": ["OBL-1"],
+            "predicted_mechanism_change": "The targeted mechanism changes.",
+            "observed_mechanism_change": "The mechanism changed as predicted.",
+            "explanation_status": "EXPLANATION_SUPPORTED",
+            "mechanism_match": "MATCHES_PREDICTION",
+            "discriminating_evidence": {
+                "method": "controlled_intervention",
+                "artifact_paths": ["results/validation.json"],
+            },
+            "performance_consequence": "The original failure improves under intervention.",
+        }]
+    return result
+
+
+def attest_validation_verdict(controller: ARISController, verdict: dict) -> None:
+    attest(controller, "result_to_claim_reviewer", verdict)
+
+
+def problem_candidate(problem_id: str = "P-1") -> str:
+    return json.dumps(
+        {
+            "problem_id": problem_id,
+            "source_class": "self_discovered",
+            "research_question": "Why does the measured capability fail in the stated setting?",
+            "observed_phenomenon": "The capability fails under the stated condition.",
+            "scope_and_conditions": "The declared benchmark setting and boundary.",
+            "evidence_refs": ["P1"],
+            "why_it_matters": "The result changes a material scientific decision.",
+            "value_if_yes": "It identifies a reproducible boundary.",
+            "value_if_no": "It rules out the proposed boundary.",
+            "plausible_explanations": [
+                {"explanation": "mechanism A", "epistemic_status": "preliminary"},
+                {"explanation": "mechanism B", "epistemic_status": "speculative"},
+            ],
+            "measurement_validity": "The measure operationalizes the capability.",
+            "artifact_or_confound_alternatives": ["measurement artifact"],
+            "independent_support": ["independent replication"],
+            "phenomenon_prevalence_or_effect_scale": "Material in the scoped setting.",
+            "decision_owner_and_threshold": "Benchmark owner changes a release decision at the threshold.",
+            "falsifier": "A stable result under the claimed failure condition falsifies it.",
+            "feasible_discriminating_probe": "A controlled comparison separates the explanations.",
+            "closest_prior_answer": "Nearest work leaves this condition unresolved.",
+            "uncertainties": ["external validity"],
+            "dedup_key": "capability-failure|declared-setting",
+            "provenance": {"lens": "failure_boundary", "source": "field_map"},
+        }
+    ) + "\n"
+
+
+def write_problem_handoffs(controller: ARISController, problem_id: str = "P-1") -> None:
+    """Write the minimum mechanically closed problem-acceptance pair."""
+
+    root = controller.root
+    candidate_path = "idea-stage/PROBLEM_CANDIDATES.jsonl"
+    quality_path = "idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl"
+    novelty_path = "idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl"
+    candidate_hash = sha256_file(root / candidate_path)
+    quality_hash = sha256_file(root / quality_path)
+    novelty_hash = sha256_file(root / novelty_path)
+    quality = run_state._find_phase(controller.status(), "problem_quality_gate")
+    novelty = run_state._find_phase(controller.status(), "problem_novelty_gate")
+    novelty_rows = [
+        json.loads(line)
+        for line in (root / novelty_path).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    novelty_decision = next(
+        row["decision"] for row in novelty_rows
+        if row.get("record_type") == "candidate_verdict"
+        and row.get("candidate_id") == problem_id
+    )
+    contract_path = root / "idea-stage" / "RESEARCH_CONTRACT.md"
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(
+        "\n".join(
+            [
+                "# Contract",
+                f"- **Problem ID**: {problem_id}",
+                f"- **Candidate registry path**: {candidate_path}",
+                f"- **Candidate registry SHA-256**: {candidate_hash}",
+                f"- **Quality verdict path**: {quality_path}",
+                f"- **Quality verdict SHA-256**: {quality_hash}",
+                f"- **Quality verdict ID**: {quality['verdict_id']}",
+                f"- **Novelty verdict path**: {novelty_path}",
+                f"- **Novelty verdict SHA-256**: {novelty_hash}",
+                f"- **Novelty verdict ID**: {novelty['verdict_id']}",
+                f"- **Problem ID / source class**: {problem_id} / self_discovered",
+                "- **Research question**: Why does the capability fail?",
+                "- **Observed phenomenon**: The capability fails in the scoped setting.",
+                "- **Evidence-backed phenomenon**: P1 reports the scoped observation.",
+                "- **Evidence status**: supported",
+                "- **Decisive evidence tier**: P1 decision_grade with locator",
+                "- **Measurement validity**: The measure operationalizes the capability.",
+                "- **Artifact/confound alternatives**: measurement artifact",
+                "- **Independent support**: independent replication",
+                "- **Prevalence/effect scale**: material in scope",
+                "- **Scope and boundary**: declared benchmark setting only",
+                "- **Why it matters**: it changes a material decision",
+                "- **Value if yes / value if no**: identifies or rules out a boundary",
+                "- **Decision owner / threshold**: benchmark owner / declared threshold",
+                "- **Plausible explanations**: mechanism A; mechanism B",
+                "- **Decisive probe or falsifier**: stable result under condition",
+                "- **Feasible discriminating probe**: controlled comparison",
+                "- **Closest prior / residual delta**: P1 leaves the condition unresolved",
+                "- **Uncertainties**: external validity",
+                "- **Problem quality verdict**: CERTIFIED with six dimensions",
+                f"- **Problem novelty verdict**: {novelty_decision}",
+                "- **Acceptance status**: provisional",
+                "- **Verdict ID / acceptance authority**: human receipt / human",
+                "- **Evidence snapshot / novelty cutoff date**: registry snapshot / 2026-01-01",
+                "- **Source**: candidate, quality, and novelty artifacts",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    capsule_path = root / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md"
+    capsule_path.write_text(
+        "\n".join(
+            [
+                "# Evidence",
+                f"- **Problem ID**: {problem_id}",
+                "- **Linked Contract path**: idea-stage/RESEARCH_CONTRACT.md",
+                f"- **Linked Contract SHA-256**: {sha256_file(contract_path)}",
+                "- **Included evidence IDs**: P1",
+                "- **Excluded uncertainty / boundary IDs**: none",
+                "- **Snapshot source**: Evidence Registry and accepted verdict artifacts",
+                "- **Known gaps and contested evidence**: external validity remains bounded",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def method_route_handoff(controller: ARISController, route_id: str = "R-1") -> dict[str, str]:
+    """Build the smallest P10-closed route, selection, and proposal fixtures."""
+
+    active = controller.status()["scientific_core"]["active_problem_version"]
+    analysis_path = controller.root / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json"
+    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    analysis_hash = sha256_file(analysis_path)
+    binding = {
+        "problem_id": active["problem_id"],
+        "problem_version": active["version"],
+        "problem_contract_sha256": active["contract_sha256"],
+        "evidence_capsule_sha256": active["evidence_capsule_sha256"],
+        "root_cause_analysis_id": analysis["analysis_id"],
+        "root_cause_analysis_sha256": analysis_hash,
+    }
+    obligation_set = {
+        "schema_version": 2,
+        "record_type": "design_obligation_set",
+        "design_obligation_set_id": "DOS-1",
+        **binding,
+        "causal_chain_ids": ["CHAIN-1"],
+        "design_obligations": [
+            {
+                "obligation_id": "OBL-1",
+                "derived_from_causal_chain_ids": ["CHAIN-1"],
+                "required_capability": "target the cause",
+                "why_current_methods_fail": "they do not target it",
+                "measurable_acceptance_condition": "cause decreases",
+                "priority": "MUST",
+            }
+        ],
+    }
+    route = {
+        "schema_version": 2,
+        "record_type": "method_route",
+        "route_id": route_id,
+        **binding,
+        "design_obligation_set_id": "DOS-1",
+        "causal_chain_ids": ["CHAIN-1"],
+        "obligation_coverage": {"covered_obligation_ids": ["OBL-1"], "residual_obligation_ids": []},
+        "dominant_solution": "direct targeted mechanism",
+        "dominant_solution_origin": "first_principles",
+        "dominant_only_closure": {
+            "satisfied_obligation_ids": ["OBL-1"],
+            "residual_must_obligation_ids": [],
+        },
+        "supporting_mechanisms": [],
+    }
+    selection = {
+        "schema_version": 1,
+        "route_id": route_id,
+        **binding,
+        "design_obligation_set_id": "DOS-1",
+        "causal_chain_ids": ["CHAIN-1"],
+        "obligation_ids": ["OBL-1"],
+    }
+    route_view = "\n".join(
+        [
+            "# Method routes",
+            *[f"{key}: {value}" for key, value in binding.items()],
+            f"route_id: {route_id}",
+            "design_obligation_set_id: DOS-1",
+            "causal_chain_id: CHAIN-1",
+            "obligation_id: OBL-1",
+        ]
+    )
+    proposal = "\n".join(
+        [
+            "# Final proposal",
+            f"- **Problem ID**: {binding['problem_id']}",
+            f"- **Problem version**: {binding['problem_version']}",
+            f"- **Problem-contract SHA-256**: {binding['problem_contract_sha256']}",
+            f"- **Problem-evidence-capsule SHA-256**: {binding['evidence_capsule_sha256']}",
+            f"- **Root-cause analysis ID**: {binding['root_cause_analysis_id']}",
+            f"- **Root-cause analysis SHA-256**: {binding['root_cause_analysis_sha256']}",
+            f"- **Selected route ID**: {route_id}",
+            "- **Design-obligation set ID**: DOS-1",
+            "- **Causal-chain IDs**: CHAIN-1",
+            "- **MUST design-obligation IDs**: OBL-1",
+            "- **Design-obligation IDs**: OBL-1",
+            "- **SHOULD obligation dispositions**: none",
+        ]
+    )
+    return {
+        "idea-stage/METHOD_ROUTES.md": route_view,
+        "idea-stage/METHOD_ROUTES.jsonl": "\n".join(
+            json.dumps(record) for record in (obligation_set, route)
+        ) + "\n",
+        "idea-stage/SELECTED_ROUTE.yaml": yaml.safe_dump(selection, sort_keys=False),
+        "refine-logs/FINAL_PROPOSAL.md": proposal,
+    }
+
+
+def root_cause_payload(
+    *,
+    problem_id: str = "P-1",
+    evidence_source_type: str = "literature",
+    evidence_ref: str = "LIT-1",
+) -> dict:
+    return {
+        "schema_version": 1,
+        "run_id": "run-1",
+        "analysis_id": "RCA-1",
+        "problem_id": problem_id,
+        "problem_contract_sha256": "a" * 64,
+        "evidence_capsule_sha256": "b" * 64,
+        "failure_observations": [{
+            "observation_id": "O-1", "phenomenon": "failure", "conditions": "shift",
+            "abnormal_variables": ["error"], "evidence_source_type": evidence_source_type,
+            "evidence_refs": [evidence_ref], "epistemic_status": "supported",
+        }],
+        "phenomenon_clusters": [{
+            "cluster_id": "C-1", "observation_ids": ["O-1"],
+            "grouping_rationale": "shared observed failure",
+        }],
+        "causal_depth_traces": [{
+            "trace_id": "T-1", "cluster_id": "C-1", "why_steps": [{
+                "step_id": "W-1", "effect": "failure", "candidate_cause": "miscalibration",
+                "evidence_refs": [evidence_ref], "epistemic_status": "supported",
+                "discriminating_observation": "calibration remains stable",
+            }],
+        }],
+        "causal_chains": [{
+            "chain_id": "CHAIN-1", "cluster_ids": ["C-1"],
+            "conditions_or_input_change": "shift", "mechanism_failure": "miscalibration",
+            "intermediate_state_abnormality": "underestimated uncertainty",
+            "final_failure_phenomenon": "failure", "evidence_refs": [evidence_ref],
+            "alternative_explanations": [{
+                "explanation_id": "ALT-1", "mechanism": "noise",
+                "epistemic_status": "preliminary", "discriminating_evidence": "clean data",
+            }],
+            "intervention_target": "calibration", "falsifier": "correction has no effect",
+            "epistemic_status": "supported",
+        }],
+        "primary_causal_chain_ids": ["CHAIN-1"],
+        "unresolved_questions": [],
+        "analysis_provenance": {
+            "author_role": "main_research_agent", "created_at": "2026-08-10T00:00:00Z",
+            "source_artifact_ids": [evidence_ref],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("source_type", "reference"),
+    [
+        ("literature", "LIT-1"),
+        ("existing_experiment", "EXP-1"),
+        ("dataset", "DATA-1"),
+        ("real_world", "REAL-1"),
+        ("diagnostic_pilot", "PILOT-1"),
+    ],
+)
+def test_root_cause_analysis_closes_current_problem_and_formal_evidence_references(
+    source_type: str, reference: str,
+) -> None:
+    sources = {
+        "LIT-1": "literature",
+        "EXP-1": "existing_experiment",
+        "DATA-1": "dataset",
+        "REAL-1": "real_world",
+        "PILOT-1": "diagnostic_pilot",
+    }
+    analysis = root_cause_payload(
+        evidence_source_type=source_type, evidence_ref=reference
+    )
+    validate_root_cause_analysis(
+        analysis,
+        run_id="run-1",
+        problem_contract_sha256="a" * 64,
+        evidence_capsule_sha256="b" * 64,
+        active_problem_id="P-1",
+        formal_evidence_sources=sources,
+    )
+
+    analysis["problem_id"] = "P-other"
+    with pytest.raises(ValidationError, match="active accepted problem"):
+        validate_root_cause_analysis(
+            analysis,
+            run_id="run-1",
+            problem_contract_sha256="a" * 64,
+            evidence_capsule_sha256="b" * 64,
+            active_problem_id="P-1",
+            formal_evidence_sources=sources,
+        )
+    analysis["problem_id"] = "P-1"
+    analysis["failure_observations"][0]["evidence_refs"] = ["foreign-evidence"]
+    with pytest.raises(ValidationError, match="outside the active problem"):
+        validate_root_cause_analysis(
+            analysis,
+            run_id="run-1",
+            problem_contract_sha256="a" * 64,
+            evidence_capsule_sha256="b" * 64,
+            active_problem_id="P-1",
+            formal_evidence_sources=sources,
+        )
+    analysis["failure_observations"][0]["evidence_refs"] = ["EXP-1"]
+    analysis["failure_observations"][0]["evidence_source_type"] = "existing_experiment"
+    analysis["analysis_provenance"]["source_artifact_ids"] = ["EXP-1"]
+    analysis["analysis_provenance"]["new_diagnostic_pilot_artifacts"] = [{
+        "artifact_id": "EXP-1",
+        "path": "idea-stage/experiment.json",
+        "sha256": "c" * 64,
+        "evidence_source_type": "existing_experiment",
+    }]
+    with pytest.raises(ValidationError, match="must be diagnostic_pilot"):
+        validate_root_cause_analysis(
+            analysis,
+            run_id="run-1",
+            problem_contract_sha256="a" * 64,
+            evidence_capsule_sha256="b" * 64,
+            active_problem_id="P-1",
+            formal_evidence_sources=sources,
+        )
+
+
+def metadata(paper_id: str = "P1", *, venue: str = "Test Elite Venue") -> dict:
+    return {
+        "paper_id": paper_id,
+        "title": "Test paper",
+        "authors": ["A. Author"],
+        "year": 2025,
+        "venue": venue,
+        "doi_or_stable_url": "https://doi.org/10.1/test",
+        "citation_count": 0,
+        "identity_status": "verified",
+        "abstract": "This paper studies a test mechanism in the declared field.",
+        "abstract_source": "test_fixture",
+    }
+
+
+def card(read: dict, paper_id: str = "P1") -> dict:
+    return {
+        "source_id": paper_id,
+        "read_event_id": read["read_event_id"],
+        "content_sha256": read["content_sha256"],
+        "claim": "Mechanism M addresses B under A.",
+        "claim_locator": "Section 3, p.4",
+        "access_level": "full_text",
+        "decision_grade": "decision_grade",
+        "epistemic_status": "supported",
+        "problem_and_setting": "problem",
+        "method_or_mechanism": "mechanism",
+        "content_summary": "summary",
+        "synthesis_role": "turning point",
+        "development_link": "extends P0",
+        "evidence": "experiment",
+        "evidence_kind": "controlled experiment",
+        "boundary_conditions": "bounded setting",
+        "assumptions": ["A"],
+        "reported_or_inferred_failures": {"reported": ["F"], "inferred": []},
+        "conflicts_with": [],
+        "verification_status": "verified",
+    }
+
+
+def development_trace(
+    transition_id: str = "T1",
+    *,
+    family: str | None = "M",
+    evidence_ids: list[str] | None = None,
+) -> dict:
+    trace = {
+        "transition_id": transition_id,
+        "previous_problem_or_bottleneck": "B remained unresolved under condition A",
+        "progress_and_conditions": "Mechanism M improved E under condition A",
+        "residual_or_new_bottleneck": "F remained outside condition A",
+        "research_question_shift": "The field shifted from improving E to resolving F",
+        "subsequent_direction": "Methods targeting F under relaxed assumptions",
+        "transition_problem_status": "partially_addressed",
+        "evidence_ids": evidence_ids or ["P1"],
+    }
+    if family is not None:
+        trace["family"] = family
+    return trace
+
+
+def field_map(status: str = "SUFFICIENT") -> dict:
+    return {
+        "field_core_purposes": ["purpose"],
+        "typical_tasks_and_scenarios": ["task"],
+        "core_bottlenecks": [{"id": "B", "text": "bottleneck"}],
+        "method_families": [{"id": "M", "mechanism": "mechanism"}],
+        "family_development_traces": [development_trace()],
+        "problem_method_matrix": [{"problem": "B", "method": "M", "mechanism": "mechanism"}],
+        "assumption_effectiveness_failure_matrix": [
+            {
+                "family": "M",
+                "assumptions": ["A"],
+                "effective": ["E"],
+                "failure": ["F"],
+                "source_ids": ["P1"],
+            }
+        ],
+        "consensus": ["supported consensus"],
+        "unresolved_contradictions": ["contradiction"],
+        "coverage_record": {
+            "coverage_status": status,
+            "research_effort_budget": {"queries": 1, "fulltext": 1},
+            "stopping_reason": "follow-up cycle stable",
+            "coverage_gaps": (
+                []
+                if status == "SUFFICIENT"
+                else ["The evidence boundary for the reported failure regime is unresolved."]
+            ),
+        },
+        "unresolved_problem_leads": ["lead"],
+    }
+
+
+def reach_reading(controller: ARISController) -> None:
+    controller.execute_query(
+        "test field",
+        "fake-search",
+        lambda _: [metadata()],
+        plan_item_id="QP-1",
+        query_options={
+            "year_from": 2000,
+            "year_to": 2026,
+            "exact_title": False,
+            "page": 1,
+        },
+    )
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="directly addresses the declared mechanism",
+        reading_priority="RECENT_ELITE_FRONTIER",
+    ) == "ADMIT_FOR_READING"
+    controller.select_reading_subset(
+        ["P1"],
+        rationale="the screened corpus requires this minimal initial cognition source",
+        initial=True,
+    )
+    controller.finish_retrieval()
+
+
+def reach_synthesis(controller: ARISController) -> None:
+    old_cwd = Path.cwd()
+    os.chdir(controller.root)
+    try:
+        reach_reading(controller)
+        read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+        evidence = card(read)
+        controller.submit_evidence_card("P1", evidence)
+        controller.finish_reading()
+        provisional = field_map()
+        provisional.pop("coverage_record")
+        controller.submit_field_map(provisional)
+        controller.select_formal_primary_subset(
+            ["P1"],
+            rationale="the Initial Map identifies this screened paper as a formal Primary anchor",
+        )
+        controller.finish_reading()
+    finally:
+        os.chdir(old_cwd)
+
+
+class CoverageDigest(str):
+    def __new__(
+        cls,
+        value: str,
+        bindings: dict[str, str],
+        development_trace_count: int = 1,
+    ):
+        instance = str.__new__(cls, value)
+        instance.bindings = dict(bindings)
+        instance.development_trace_count = development_trace_count
+        return instance
+
+
+def reach_coverage(controller: ARISController) -> tuple[str, str]:
+    old_cwd = Path.cwd()
+    os.chdir(controller.root)
+    try:
+        reach_synthesis(controller)
+        controller.submit_field_map(field_map())
+        research = controller.status()["research_lit"]
+        request = research["coverage_review_request"]
+        return (
+            CoverageDigest(
+                research["accepted_artifacts"]["active_field_map"]["sha256"],
+                request["artifact_bindings"],
+                request["development_trace_count"],
+            ),
+            request["id"],
+        )
+    finally:
+        os.chdir(old_cwd)
+
+
+def coverage_review(
+    digest: str,
+    request_id: str,
+    decision: str = "CANDIDATE_SUFFICIENT",
+    *,
+    run_id: str = "run-1",
+    bindings: dict[str, str] | None = None,
+    development_trace_count: int | None = None,
+) -> dict:
+    trace_count = (
+        development_trace_count
+        if development_trace_count is not None
+        else getattr(digest, "development_trace_count", 1)
+    )
+    transition_basis = (
+        "DECLARED_TRACES_REVIEWED"
+        if trace_count > 0
+        else "NO_MATERIAL_TRANSITION_SUPPORTED"
+    )
+    return {
+        "decision": decision,
+        "reasons": ["stable after follow-up"],
+        "gaps": [],
+        "reviewer_run_id": "independent-review-1",
+        "review_request_id": request_id,
+        "reviewed_artifact_sha256": digest,
+        "run_id": run_id,
+        "reviewer": "claude-sonnet-4",
+        "verdict_id": "coverage-verdict-1",
+        "evolution_assessment": {
+            "foundation_to_frontier": {
+                "status": "PASS",
+                "rationale": "Foundational work and the current frontier are evidenced.",
+            },
+            "key_nodes_and_branches": {
+                "status": "PASS",
+                "rationale": "The material nodes and parallel branches are represented.",
+            },
+            "transition_causality": {
+                "status": "PASS",
+                "rationale": (
+                    "Declared traces explain the evidence-supported transitions."
+                    if trace_count > 0
+                    else "The evidence supports continuous progress without a material transition."
+                ),
+                "basis": transition_basis,
+            },
+            "explanatory_coherence": {
+                "status": "PASS",
+                "rationale": "The map explains the field's present form and frontier position.",
+            },
+            "material_evolution_gaps": [],
+        },
+        "reviewed_artifact_hashes": bindings
+        or getattr(digest, "bindings", None)
+        or {"idea-stage\\ACTIVE_FIELD_MAP.md": digest},
+    }
+
+
+def complete_landscape_from_metadata(controller: ARISController) -> dict:
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="directly addresses the declared mechanism",
+        reading_priority="RECENT_ELITE_FRONTIER",
+    ) == "ADMIT_FOR_READING"
+    controller.select_reading_subset(
+        ["P1"],
+        rationale="the screened corpus requires this minimal initial cognition source",
+        initial=True,
+    )
+    controller.finish_retrieval()
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P1", evidence)
+    controller.finish_reading()
+    provisional = field_map()
+    provisional.pop("coverage_record")
+    controller.submit_field_map(provisional)
+    controller.select_formal_primary_subset(
+        ["P1"],
+        rationale="the Initial Map confirms this Primary as the formal anchor",
+    )
+    controller.finish_reading()
+    controller.submit_field_map(field_map())
+    research = controller.status()["research_lit"]
+    request = research["coverage_review_request"]
+    review = coverage_review(
+        CoverageDigest(
+            research["accepted_artifacts"]["active_field_map"]["sha256"],
+            request["artifact_bindings"],
+        ),
+        request["id"],
+    )
+    attest(controller, "coverage_reviewer", review)
+    return controller.submit_coverage_review(review)
+
+
+def _reach_problem_quality_gate(
+    controller: ARISController,
+    *,
+    reviewer: str = "claude-sonnet-4",
+    decision: str | None = None,
+    verdict_id: str = "quality-recovery-verdict",
+) -> None:
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+
+    def complete(files: dict[str, object]) -> None:
+        controller.start_current_phase()
+        for relative, content in files.items():
+            path = controller.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content() if callable(content) else str(content), encoding="utf-8")
+        controller.complete_current_phase()
+
+    complete(
+        {
+            "idea-stage/PROBLEM_CANDIDATES.md": "# Problems\nP-1",
+            "idea-stage/PROBLEM_CANDIDATES.jsonl": problem_candidate(),
+        }
+    )
+    complete(
+        {
+            "idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl": lambda: formal_verdict_artifact(
+                controller,
+                verdict_id=verdict_id,
+                reviewer=reviewer,
+                decision=decision,
+            )
+        }
+    )
+
+
+def reach_problem_quality_gate(
+    controller: ARISController,
+    *,
+    reviewer: str = "claude-sonnet-4",
+    decision: str | None = None,
+    verdict_id: str = "quality-recovery-verdict",
+) -> None:
+    """Run formal reviewer fixtures from the Controller-managed project root."""
+
+    old_cwd = Path.cwd()
+    os.chdir(controller.root)
+    try:
+        _reach_problem_quality_gate(
+            controller,
+            reviewer=reviewer,
+            decision=decision,
+            verdict_id=verdict_id,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+
+def _reach_problem_human_acceptance(controller: ARISController) -> None:
+    reach_problem_quality_gate(controller)
+    accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+    controller.start_current_phase()
+    novelty_verdict = controller.root / "idea-stage" / "PROBLEM_NOVELTY_VERDICTS.jsonl"
+    novelty_verdict.write_text(
+        formal_verdict_artifact(controller, verdict_id="novelty-recovery-verdict"),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, "novelty-recovery-verdict", "claude-sonnet-4")
+    write_problem_handoffs(controller)
+    assert controller.current_stage() == "PROBLEM_HUMAN_ACCEPTANCE"
+
+
+def reach_problem_human_acceptance(controller: ARISController) -> None:
+    """Reach the formal problem checkpoint from its managed project root."""
+
+    old_cwd = Path.cwd()
+    os.chdir(controller.root)
+    try:
+        _reach_problem_human_acceptance(controller)
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_problem_acceptance_registers_one_independent_contract_and_capsule(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+
+    approve(controller, "problem_acceptance", selected_id="P-1")
+
+    core = controller.status()["scientific_core"]
+    active = core["active_problem_version"]
+    contract_path = "idea-stage/RESEARCH_CONTRACT.md"
+    capsule_path = "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md"
+    assert active["contract_path"] == contract_path
+    assert active["evidence_capsule_path"] == capsule_path
+    assert active["contract_sha256"] != active["evidence_capsule_sha256"]
+    assert core["accepted_artifacts"][contract_path]["sha256"] == active["contract_sha256"]
+    assert core["accepted_artifacts"][capsule_path]["sha256"] == active["evidence_capsule_sha256"]
+    decision = run_state._find_phase(
+        controller.status(), "problem_human_acceptance"
+    )["human_decision"]
+    assert decision["artifact_bindings"][contract_path] == active["contract_sha256"]
+    assert decision["artifact_bindings"][capsule_path] == active["evidence_capsule_sha256"]
+
+    root_cause = next(
+        item for item in controller.workflow["phases"]
+        if item["phase"] == "root_cause_analysis"
+    )
+    method = next(
+        item for item in controller.workflow["phases"]
+        if item["phase"] == "method_design"
+    )
+    assert root_cause["required_inputs"][:2] == [contract_path, capsule_path]
+    assert method["required_inputs"] == [
+        "idea-stage/ACTIVE_FIELD_MAP.md", contract_path, capsule_path,
+        "@artifact:root_cause_analysis", "@artifact:root_cause_verdict",
+    ]
+
+
+def test_root_cause_registers_nonliterature_evidence_and_binds_it_to_review(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    approve(controller, "problem_acceptance", selected_id="P-1")
+
+    pilot = tmp_path / "idea-stage" / "diagnostic-pilot.json"
+    pilot.write_text('{"observation": "shift failure"}\n', encoding="utf-8")
+    analysis = root_cause_payload(
+        evidence_source_type="diagnostic_pilot", evidence_ref="PILOT-1"
+    )
+    analysis["problem_contract_sha256"] = sha256_file(
+        tmp_path / "idea-stage" / "RESEARCH_CONTRACT.md"
+    )
+    analysis["evidence_capsule_sha256"] = sha256_file(
+        tmp_path / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md"
+    )
+    analysis["analysis_provenance"]["source_artifact_ids"] = ["PILOT-1"]
+    analysis["analysis_provenance"]["new_diagnostic_pilot_artifacts"] = [{
+        "artifact_id": "PILOT-1",
+        "path": "idea-stage/diagnostic-pilot.json",
+        "sha256": sha256_file(pilot),
+        "evidence_source_type": "diagnostic_pilot",
+    }]
+
+    controller.start_current_phase()
+    (tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json").write_text(
+        json.dumps(analysis), encoding="utf-8"
+    )
+    (tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.md").write_text(
+        "# Root cause\n"
+        f"RCA-1; P-1; CHAIN-1; {analysis['problem_contract_sha256']}; "
+        f"{analysis['evidence_capsule_sha256']}",
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+
+    source_record = controller.status()["scientific_core"]["accepted_artifacts"][
+        "idea-stage/diagnostic-pilot.json"
+    ]
+    assert source_record["artifact_id"] == "PILOT-1"
+    assert source_record["evidence_source_type"] == "diagnostic_pilot"
+    assert source_record["problem_version_binding"]["problem_id"] == "P-1"
+
+    controller.start_current_phase()
+    request = run_state._find_phase(controller.status(), "root_cause_gate")["review_request"]
+    assert request["artifact_bindings"]["idea-stage/diagnostic-pilot.json"] == source_record["sha256"]
+    pilot.write_text('{"observation": "tampered"}\n', encoding="utf-8")
+    with pytest.raises(ControllerError, match="diagnostic pilot changed"):
+        controller.complete_current_phase()
+
+
+def test_root_cause_reuses_only_capsule_bound_existing_nonliterature_evidence(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    experiment = tmp_path / "idea-stage" / "accepted-experiment.json"
+    experiment.write_text('{"result": "observed failure"}\n', encoding="utf-8")
+    capsule = tmp_path / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md"
+    capsule.write_text(
+        capsule.read_text(encoding="utf-8").replace(
+            "**Included evidence IDs**: P1",
+            "**Included evidence IDs**: P1, EXP-1\n\n"
+            "## Registered Non-Literature Artifacts\n\n```json\n"
+            + json.dumps(
+                [{
+                    "artifact_id": "EXP-1",
+                    "path": "idea-stage/accepted-experiment.json",
+                    "sha256": sha256_file(experiment),
+                    "evidence_source_type": "existing_experiment",
+                }]
+            )
+            + "\n```",
+        ),
+        encoding="utf-8",
+    )
+    approve(controller, "problem_acceptance", selected_id="P-1")
+    registered = controller.status()["scientific_core"]["accepted_artifacts"]
+    assert registered["idea-stage/accepted-experiment.json"]["artifact_id"] == "EXP-1"
+
+    analysis = root_cause_payload(
+        evidence_source_type="existing_experiment", evidence_ref="EXP-1"
+    )
+    analysis["problem_contract_sha256"] = sha256_file(
+        tmp_path / "idea-stage" / "RESEARCH_CONTRACT.md"
+    )
+    analysis["evidence_capsule_sha256"] = sha256_file(capsule)
+    controller.start_current_phase()
+    (tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json").write_text(
+        json.dumps(analysis), encoding="utf-8"
+    )
+    (tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.md").write_text(
+        "# Root cause\n"
+        f"RCA-1; P-1; CHAIN-1; {analysis['problem_contract_sha256']}; "
+        f"{analysis['evidence_capsule_sha256']}",
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+
+
+def test_problem_chain_rejects_unknown_selection_and_mismatched_capsule(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+
+    request = controller.validate_human_gate_request("problem_acceptance")
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "problem_acceptance",
+        request["id"],
+        "approve",
+        selected_id="P-404",
+        artifact_bindings=request["artifact_bindings"],
+    )
+    with pytest.raises(ControllerError, match="quality-certified and covered"):
+        controller.human_approve("problem_acceptance", "approve", selected_id="P-404")
+
+
+def test_problem_contract_must_bind_the_selected_candidate_novelty_decision(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    contract = controller.root / "idea-stage" / "RESEARCH_CONTRACT.md"
+    capsule = controller.root / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md"
+    original_hash = sha256_file(contract)
+    contract.write_text(
+        contract.read_text(encoding="utf-8").replace(
+            "- **Problem novelty verdict**: NOVEL",
+            "- **Problem novelty verdict**: NOT_NOVEL",
+        ),
+        encoding="utf-8",
+    )
+    capsule.write_text(
+        capsule.read_text(encoding="utf-8").replace(
+            original_hash, sha256_file(contract)
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ControllerError, match="Problem novelty verdict"):
+        approve(controller, "problem_acceptance", selected_id="P-1")
+
+    controller = start_controller(tmp_path / "capsule")
+    reach_problem_human_acceptance(controller)
+    capsule = controller.root / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md"
+    capsule.write_text(
+        capsule.read_text(encoding="utf-8").replace("**Problem ID**: P-1", "**Problem ID**: P-404"),
+        encoding="utf-8",
+    )
+    request = controller.validate_human_gate_request("problem_acceptance")
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "problem_acceptance",
+        request["id"],
+        "approve",
+        selected_id="P-1",
+        artifact_bindings=request["artifact_bindings"],
+    )
+    with pytest.raises(ControllerError, match="Problem ID does not match"):
+        controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
+
+
+def test_problem_acceptance_rejects_incomplete_contract_or_unresolved_capsule_evidence(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    contract = controller.root / "idea-stage" / "RESEARCH_CONTRACT.md"
+    contract.write_text(
+        contract.read_text(encoding="utf-8").replace(
+            "- **Feasible discriminating probe**: controlled comparison\n", ""
+        ),
+        encoding="utf-8",
+    )
+    request = controller.validate_human_gate_request("problem_acceptance")
+    approvals.issue_ui_approval_receipt(
+        controller.root, controller.run_id, "problem_acceptance", request["id"], "approve",
+        selected_id="P-1", artifact_bindings=request["artifact_bindings"],
+    )
+    with pytest.raises(ControllerError, match="Feasible discriminating probe"):
+        controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
+
+    controller = start_controller(tmp_path / "unknown-evidence")
+    reach_problem_human_acceptance(controller)
+    capsule = controller.root / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md"
+    capsule.write_text(
+        capsule.read_text(encoding="utf-8").replace("**Included evidence IDs**: P1", "**Included evidence IDs**: P404"),
+        encoding="utf-8",
+    )
+    request = controller.validate_human_gate_request("problem_acceptance")
+    approvals.issue_ui_approval_receipt(
+        controller.root, controller.run_id, "problem_acceptance", request["id"], "approve",
+        selected_id="P-1", artifact_bindings=request["artifact_bindings"],
+    )
+    with pytest.raises(ControllerError, match="do not resolve"):
+        controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
+
+
+def test_problem_quality_verdict_must_cover_the_registered_candidate_set(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    verdict = controller.root / "idea-stage" / "PROBLEM_QUALITY_VERDICTS.jsonl"
+    verdict.write_text(
+        formal_verdict_artifact(controller, verdict_id="wrong-candidate", candidate_id="P-404"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ControllerError, match="expected candidate set"):
+        controller.accept_current_phase("wrong-candidate", "claude-sonnet-4")
+
+
+def test_coverage_canonical_payload_cannot_rewrite_attested_gaps(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    tampered = dict(review)
+    tampered["gaps"] = ["a different downstream search direction"]
+    with pytest.raises(ControllerError, match="differs from the attested reviewer payload"):
+        controller.submit_coverage_review(tampered)
+
+
+def test_problem_gate_canonical_records_must_match_attested_reviewer_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    attest_current_review(controller, "quality-recovery-verdict", "claude-sonnet-4")
+    quality = controller.root / "idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl"
+    rows = [json.loads(line) for line in quality.read_text(encoding="utf-8").splitlines()]
+    rows[0]["quality_assessment"]["Reality"]["rationale"] = "rewritten after review"
+    quality.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    with pytest.raises(ControllerError, match="differs from the attested reviewer payload"):
+        controller.accept_current_phase("quality-recovery-verdict", "claude-sonnet-4")
+
+    novelty_root = tmp_path / "novelty"
+    novelty_root.mkdir()
+    monkeypatch.chdir(novelty_root)
+    controller = start_controller(novelty_root)
+    reach_problem_quality_gate(controller)
+    accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+    controller.start_current_phase()
+    novelty = controller.root / "idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl"
+    novelty.write_text(formal_verdict_artifact(controller, verdict_id="novelty-payload"), encoding="utf-8")
+    controller.complete_current_phase()
+    attest_current_review(controller, "novelty-payload", "claude-sonnet-4")
+    rows = [json.loads(line) for line in novelty.read_text(encoding="utf-8").splitlines()]
+    rows[1]["survivor_ids"] = []
+    novelty.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    with pytest.raises(ControllerError, match="survivor_ids"):
+        controller.accept_current_phase("novelty-payload", "claude-sonnet-4")
+
+
+def test_problem_generation_rejects_incomplete_p2_candidate_contract(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+    controller.start_current_phase()
+    candidate = controller.root / "idea-stage" / "PROBLEM_CANDIDATES.jsonl"
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text(json.dumps({"problem_id": "P-1", "source_class": "self_discovered"}) + "\n", encoding="utf-8")
+    (controller.root / "idea-stage" / "PROBLEM_CANDIDATES.md").write_text("# Problems\nP-1", encoding="utf-8")
+    with pytest.raises(ControllerError, match="missing required fields"):
+        controller.complete_current_phase()
+
+
+def test_problem_quality_requires_judgments_but_allows_structural_dimensions_without_evidence(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    rows = [
+        json.loads(line)
+        for line in formal_verdict_artifact(controller, verdict_id="structural-quality").splitlines()
+    ]
+    for dimension in ("Precision", "Falsifiability", "Answerability"):
+        rows[0]["quality_assessment"][dimension]["evidence_ids"] = []
+    phase = run_state._find_phase(controller.status(), "problem_quality_gate")
+    request = phase["review_request"]
+    kwargs = {
+        "label": "quality verdict",
+        "request_id": request["id"],
+        "artifact_bindings": request["artifact_bindings"],
+        "phase_decisions": {"CERTIFIED", "HOLD", "REJECT", "BLOCKED"},
+        "candidate_decisions": {"CERTIFIED", "HOLD", "REJECT", "BLOCKED"},
+        "expected_candidate_ids": {"P-1"},
+        "review_kind": "quality",
+        "formal_evidence_paths": run_state._current_formal_evidence_paths(
+            str(controller.root), controller.status()
+        ),
+        "formal_evidence_source_ids": run_state._current_decision_grade_evidence_card_source_ids(
+            str(controller.root), controller.status()
+        ),
+    }
+    validate_candidate_verdict_artifact(
+        "\n".join(json.dumps(row) for row in rows),
+        **kwargs,
+    )
+
+    del rows[0]["quality_assessment"]["Reality"]["judgment"]
+    with pytest.raises(ValidationError, match="missing required fields"):
+        validate_candidate_verdict_artifact(
+            "\n".join(json.dumps(row) for row in rows),
+            **kwargs,
+        )
+
+
+def test_problem_novelty_cannot_mark_unverified_decisive_prior_novel(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+    controller.start_current_phase()
+    verdict = controller.root / "idea-stage" / "PROBLEM_NOVELTY_VERDICTS.jsonl"
+    rows = [json.loads(line) for line in formal_verdict_artifact(controller, verdict_id="unverified-prior").splitlines()]
+    rows[0]["novelty_assessment"]["closest_priors"][0].update(
+        {"evidence_id": None, "verification_status": "unverified_or_unavailable"}
+    )
+    verdict.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    with pytest.raises(ControllerError, match="cannot return NOVEL"):
+        controller.complete_current_phase()
+
+
+def test_problem_novelty_rejects_decision_grade_evidence_for_different_prior(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+    controller.start_current_phase()
+    verdict = controller.root / "idea-stage" / "PROBLEM_NOVELTY_VERDICTS.jsonl"
+    rows = [
+        json.loads(line)
+        for line in formal_verdict_artifact(controller, verdict_id="mismatched-prior").splitlines()
+    ]
+    rows[0]["novelty_assessment"]["closest_priors"][0]["paper_id"] = "DIFFERENT-PAPER"
+    verdict.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    with pytest.raises(ControllerError, match="paper_id must match"):
+        controller.complete_current_phase()
+
+
+def test_problem_novelty_cannot_block_consumable_candidate_audits(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+    controller.start_current_phase()
+    rows = [
+        json.loads(line)
+        for line in formal_verdict_artifact(controller, verdict_id="mixed-novelty").splitlines()
+    ]
+    blocked = json.loads(json.dumps(rows[0]))
+    blocked["candidate_id"] = "P-2"
+    blocked["decision"] = "BLOCKED"
+    rows[1]["decision"] = "BLOCKED"
+    rows[1]["survivor_ids"] = ["P-2"]
+    phase = run_state._find_phase(controller.status(), "problem_novelty_gate")
+    request = phase["review_request"]
+    kwargs = {
+        "label": "novelty verdict",
+        "request_id": request["id"],
+        "artifact_bindings": request["artifact_bindings"],
+        "phase_decisions": {"NOVEL", "UNCERTAIN", "NOT_NOVEL", "BLOCKED"},
+        "candidate_decisions": {"NOVEL", "UNCERTAIN", "NOT_NOVEL", "BLOCKED"},
+        "expected_candidate_ids": {"P-1", "P-2"},
+        "review_kind": "novelty",
+        "formal_evidence_paths": run_state._current_formal_evidence_paths(
+            str(controller.root), controller.status()
+        ),
+        "formal_evidence_source_ids": run_state._current_decision_grade_evidence_card_source_ids(
+            str(controller.root), controller.status()
+        ),
+    }
+    with pytest.raises(ValidationError, match="only when every candidate novelty audit is BLOCKED"):
+        validate_candidate_verdict_artifact(
+            "\n".join(json.dumps(row) for row in [rows[0], blocked, rows[1]]),
+            **kwargs,
+        )
+
+
+def test_problem_novelty_uncertain_candidate_requires_uncertain_phase(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+    controller.start_current_phase()
+    rows = [
+        json.loads(line)
+        for line in formal_verdict_artifact(controller, verdict_id="mixed-uncertain").splitlines()
+    ]
+    uncertain = json.loads(json.dumps(rows[0]))
+    uncertain["candidate_id"] = "P-2"
+    uncertain["decision"] = "UNCERTAIN"
+    phase = run_state._find_phase(controller.status(), "problem_novelty_gate")
+    request = phase["review_request"]
+    kwargs = {
+        "label": "novelty verdict",
+        "request_id": request["id"],
+        "artifact_bindings": request["artifact_bindings"],
+        "phase_decisions": {"NOVEL", "UNCERTAIN", "NOT_NOVEL", "BLOCKED"},
+        "candidate_decisions": {"NOVEL", "UNCERTAIN", "NOT_NOVEL", "BLOCKED"},
+        "expected_candidate_ids": {"P-1", "P-2"},
+        "review_kind": "novelty",
+        "formal_evidence_paths": run_state._current_formal_evidence_paths(
+            str(controller.root), controller.status()
+        ),
+        "formal_evidence_source_ids": run_state._current_decision_grade_evidence_card_source_ids(
+            str(controller.root), controller.status()
+        ),
+    }
+    with pytest.raises(ValidationError, match="must be UNCERTAIN"):
+        validate_candidate_verdict_artifact(
+            "\n".join(json.dumps(row) for row in [rows[0], uncertain, rows[1]]),
+            **kwargs,
+        )
+
+
+def test_scientific_core_incremental_literature_reuses_gateway_and_binds_evidence(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    with pytest.raises(ControllerError, match="allowed only before an eligible phase"):
+        controller.submit_query_plan(
+            {"coverage_gaps": ["bypass"], "queries": [{"query": "bypass", "purpose": "bypass"}]}
+        )
+    accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+
+    assert controller.current_stage() == "PROBLEM_NOVELTY_GATE"
+    assert controller.allowed_actions() == ["submit_query_plan", "start_phase"]
+    controller.submit_query_plan(
+        {
+            "coverage_gaps": ["closest problem framing"],
+            "queries": [{"query": "novel problem framing", "purpose": "test closest prior claim"}],
+        }
+    )
+    assert controller.status()["research_lit"]["current_stage"] == "METADATA_RETRIEVAL"
+    assert controller.allowed_actions() == [
+        "execute_query", "register_user_source", "decide_admission",
+        "select_reading_subset", "finish_retrieval",
+    ]
+    with pytest.raises(ControllerError, match="complete the active incremental literature"):
+        controller.start_current_phase()
+
+    controller.execute_query("novel problem framing", "gateway", lambda _: [metadata("P2")])
+    assert controller.decide_admission(
+        "P2",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="the closest-prior claim requires an inspected source",
+        reading_priority="RECENT_ELITE_FRONTIER",
+        fulltext_selected=True,
+    ) == "ADMIT_FOR_READING"
+    controller.finish_retrieval()
+    read = controller.read_full_text("P2", "gateway-fulltext", lambda _: "incremental paper")
+    evidence = card(read, paper_id="P2")
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P2", evidence)
+    controller.finish_reading()
+
+    state = controller.status()
+    research = state["research_lit"]
+    incremental = research["incremental_evidence_by_phase"]["problem_novelty_gate"]
+    evidence_path = incremental["evidence:P2"]["path"]
+    evidence_hash = incremental["evidence:P2"]["sha256"]
+    assert research["current_stage"] == "LANDSCAPE_ACCEPTED"
+    assert research["coverage_review_request"] is None
+    assert '"action": "query"' in (tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl").read_text(encoding="utf-8")
+    assert '"action": "fulltext"' in (tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl").read_text(encoding="utf-8")
+    assert '"source_id": "P2"' in (tmp_path / "idea-stage" / "EVIDENCE_REGISTRY.jsonl").read_text(encoding="utf-8")
+
+    controller.start_current_phase()
+    request = run_state._find_phase(controller.status(), "problem_novelty_gate")["review_request"]
+    assert request["artifact_bindings"][evidence_path] == evidence_hash
+    assert "idea-stage/ACTIVE_FIELD_MAP.md" in request["artifact_bindings"]
+    assert "idea-stage/PROBLEM_CANDIDATES.jsonl" in request["artifact_bindings"]
+    assert "idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl" in request["artifact_bindings"]
+    assert any(path.replace("\\", "/").endswith("LITERATURE_CORPUS.jsonl") for path in request["artifact_bindings"])
+    assert any(path.replace("\\", "/").endswith("SEARCH_LEDGER.jsonl") for path in request["artifact_bindings"])
+    verdict = tmp_path / "idea-stage" / "PROBLEM_NOVELTY_VERDICTS.jsonl"
+    verdict.write_text(
+        formal_verdict_artifact(controller, verdict_id="incremental-novelty-verdict"),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    output = controller.status()["scientific_core"]["accepted_artifacts"][
+        "idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl"
+    ]
+    assert output["upstream_snapshot"][evidence_path] == evidence_hash
+
+
+def test_root_cause_running_may_reenter_literature_gateway_and_keeps_prior_evidence(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    with controller._store.mutate() as mutable:
+        mutable["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
+    state = controller.status()
+    root_phase = {"phase": "root_cause_analysis", "status": "running"}
+    other_running_phase = {"phase": "method_design", "status": "running"}
+    assert controller._incremental_literature_phase_allowed(state, root_phase)
+    assert controller._incremental_literature_phase_allowed(state, other_running_phase)
+
+    first = tmp_path / "idea-stage" / "EVIDENCE_CARD_RCA-FIRST.json"
+    second = tmp_path / "idea-stage" / "EVIDENCE_CARD_RCA-SECOND.json"
+    first.write_text('{"card":"first"}\n', encoding="utf-8")
+    second.write_text('{"card":"second"}\n', encoding="utf-8")
+    with controller._store.mutate() as mutable:
+        mutable["research_lit"]["incremental_evidence_by_phase"]["root_cause_analysis"] = {
+            "evidence:RCA-FIRST": {
+                "path": "idea-stage/EVIDENCE_CARD_RCA-FIRST.json",
+                "sha256": sha256_file(first),
+            }
+        }
+        mutable["research_lit"]["current_stage"] = "PAPER_READING"
+        mutable["research_lit"]["incremental_literature_active"] = {
+            "phase": "root_cause_analysis",
+            "paper_ids": [],
+            "evidence_artifacts": {
+                "evidence:RCA-SECOND": {
+                "path": "idea-stage/EVIDENCE_CARD_RCA-SECOND.json",
+                "sha256": sha256_file(second),
+                }
+            },
+        }
+
+    controller.finish_reading()
+
+    bindings = controller._incremental_evidence_bindings(
+        controller.status(), "root_cause_analysis"
+    )
+    assert bindings == {
+        "idea-stage/EVIDENCE_CARD_RCA-FIRST.json": sha256_file(first),
+        "idea-stage/EVIDENCE_CARD_RCA-SECOND.json": sha256_file(second),
+    }
+
+
+def test_method_design_search_waits_for_a_residual_gap_and_reuses_the_gateway(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+
+    analysis_path = tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json"
+    analysis_path.write_text(
+        json.dumps({"analysis_id": "RCA-METHOD", "primary_causal_chain_ids": ["CHAIN-1"]}),
+        encoding="utf-8",
+    )
+    contract_path = tmp_path / "idea-stage" / "RESEARCH_CONTRACT.md"
+    capsule_path = tmp_path / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md"
+    contract_path.write_text("accepted problem contract\n", encoding="utf-8")
+    capsule_path.write_text("accepted problem evidence\n", encoding="utf-8")
+    with controller._store.mutate() as state:
+        state["scientific_core"]["current_phase"] = "method_design"
+        method_phase = run_state._find_phase(state, "method_design")
+        method_phase["status"] = "pending"
+        state["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
+        contract_hash = sha256_file(contract_path)
+        capsule_hash = sha256_file(capsule_path)
+        state["scientific_core"]["accepted_artifacts"].update({
+            "idea-stage/RESEARCH_CONTRACT.md": {
+                "path": "idea-stage/RESEARCH_CONTRACT.md", "sha256": contract_hash,
+                "producer_phase": "problem_human_acceptance",
+            },
+            "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md": {
+                "path": "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md", "sha256": capsule_hash,
+                "producer_phase": "problem_human_acceptance",
+            },
+        })
+        state["scientific_core"]["active_problem_version"] = {
+            "problem_id": "P-METHOD", "version": 1,
+            "contract_path": "idea-stage/RESEARCH_CONTRACT.md", "contract_sha256": contract_hash,
+            "evidence_capsule_path": "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+            "evidence_capsule_sha256": capsule_hash,
+        }
+
+    assert controller.allowed_actions() == ["start_phase", "revise_problem"]
+    with controller._store.mutate() as state:
+        run_state._find_phase(state, "method_design")["status"] = "running"
+
+    # Existing Field-Map cognition can be sufficient: running design can finish
+    # without opening a new literature session.
+    assert controller.allowed_actions() == ["submit_query_plan", "reopen_root_cause", "complete_phase"]
+
+    field_map_hash = controller.status()["research_lit"]["accepted_artifacts"]["active_field_map"]["sha256"]
+    analysis_hash = sha256_file(analysis_path)
+    dominant_search_plan = {
+        "coverage_gaps": [],
+        "method_design_context": {
+            "root_cause_analysis_id": "RCA-METHOD",
+            "root_cause_analysis_sha256": analysis_hash,
+            "active_field_map_sha256": field_map_hash,
+            "search_mode": "DOMINANT_SOLUTION_SEARCH",
+            "design_obligation_set_id": "DOS-METHOD",
+            "problem_id": "P-METHOD",
+            "problem_version": 1,
+            "problem_contract_sha256": sha256_file(contract_path),
+            "evidence_capsule_sha256": sha256_file(capsule_path),
+            "causal_chain_ids": ["CHAIN-1"],
+            "design_obligations": [
+                {
+                    "obligation_id": "OBL-CORE",
+                    "derived_from_causal_chain_ids": ["CHAIN-1"],
+                    "required_capability": "correct the primary calibration failure",
+                    "why_current_methods_fail": "existing calibration is static",
+                    "measurable_acceptance_condition": "calibration error decreases",
+                    "priority": "MUST",
+                },
+                {
+                    "obligation_id": "OBL-UNCERTAINTY",
+                    "derived_from_causal_chain_ids": ["CHAIN-1"],
+                    "required_capability": "remain reliable under unobserved uncertainty",
+                    "why_current_methods_fail": "existing calibration ignores uncertainty",
+                    "measurable_acceptance_condition": "failure remains bounded",
+                    "priority": "MUST",
+                },
+            ],
+        },
+        "queries": [
+            {
+                "query": "calibration mechanism dominant carrier",
+                "purpose": "identify a credible dominant carrier",
+                "design_obligation_ids": ["OBL-CORE", "OBL-UNCERTAINTY"],
+                "causal_chain_ids": ["CHAIN-1"],
+            }
+        ],
+    }
+    controller.submit_query_plan(dominant_search_plan)
+    controller.execute_query(
+        "calibration mechanism dominant carrier", "gateway", lambda _: [metadata("P3")]
+    )
+    assert controller.decide_admission(
+        "P3",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="the dominant-carrier decision requires an inspected source",
+        reading_priority="TARGETED_GAP_FOLLOWUP",
+        fulltext_selected=True,
+    ) == "ADMIT_FOR_READING"
+    controller.finish_retrieval()
+    dominant_read = controller.read_full_text("P3", "gateway-fulltext", lambda _: "dominant paper")
+    dominant_evidence = card(dominant_read, paper_id="P3")
+    attest(controller, "paper_reader", dominant_evidence)
+    controller.submit_evidence_card("P3", dominant_evidence)
+    controller.finish_reading()
+    dominant_card = json.loads(
+        (tmp_path / controller.status()["research_lit"]["incremental_evidence_by_phase"]
+         ["method_design"]["evidence:P3"]["path"]).read_text(encoding="utf-8")
+    )
+    dominant_context = dominant_card["method_design_search_context"]
+    assert dominant_context["root_cause_analysis_id"] == "RCA-METHOD"
+    assert dominant_context["root_cause_analysis_sha256"] == analysis_hash
+    assert dominant_context["active_field_map_sha256"] == field_map_hash
+    assert dominant_context["search_mode"] == "DOMINANT_SOLUTION_SEARCH"
+    assert dominant_context["design_obligation_set_id"] == "DOS-METHOD"
+    assert dominant_context["actual_hit_query_ids"] == controller.status()["research_lit"]["papers"]["P3"]["found_by_query_ids"]
+    assert dominant_context["design_obligation_ids"] == ["OBL-CORE", "OBL-UNCERTAINTY"]
+    assert dominant_context["causal_chain_ids"] == ["CHAIN-1"]
+    dominant_plan_path = tmp_path / dominant_context["query_plan_path"]
+    dominant_plan_sha256 = dominant_context["query_plan_sha256"]
+    assert sha256_file(dominant_plan_path) == dominant_plan_sha256
+    targeted_plan = {
+        "coverage_gaps": ["OBL-UNCERTAINTY"],
+        "method_design_context": {
+            "root_cause_analysis_id": "RCA-METHOD",
+            "root_cause_analysis_sha256": analysis_hash,
+            "active_field_map_sha256": field_map_hash,
+            "search_mode": "RESIDUAL_MUST_GAP_SEARCH",
+            "design_obligation_set_id": "DOS-METHOD",
+            "problem_id": "P-METHOD",
+            "problem_version": 1,
+            "problem_contract_sha256": sha256_file(contract_path),
+            "evidence_capsule_sha256": sha256_file(capsule_path),
+            "causal_chain_ids": ["CHAIN-1"],
+            "dominant_solution": "minimal calibration-aware controller",
+            "design_obligations": [
+                {
+                    "obligation_id": "OBL-CORE",
+                    "derived_from_causal_chain_ids": ["CHAIN-1"],
+                    "required_capability": "correct the primary calibration failure",
+                    "why_current_methods_fail": "existing calibration is static",
+                    "measurable_acceptance_condition": "calibration error decreases",
+                    "priority": "MUST",
+                },
+                {
+                    "obligation_id": "OBL-UNCERTAINTY",
+                    "derived_from_causal_chain_ids": ["CHAIN-1"],
+                    "required_capability": "remain reliable under unobserved uncertainty",
+                    "why_current_methods_fail": "existing calibration ignores uncertainty",
+                    "measurable_acceptance_condition": "failure remains bounded",
+                    "priority": "MUST",
+                },
+            ],
+            "dominant_only_closure": {
+                "satisfied_obligation_ids": ["OBL-CORE"],
+                "residual_must_obligation_ids": ["OBL-UNCERTAINTY"],
+            },
+        },
+        "queries": [
+            {
+                "query": "calibration controller uncertainty mechanism",
+                "purpose": "find a mechanism for the remaining reliability obligation",
+                "decision_target": "choose support only if it closes OBL-UNCERTAINTY",
+                "residual_must_obligation_ids": ["OBL-UNCERTAINTY"],
+            }
+        ],
+    }
+    invalid = dict(targeted_plan)
+    invalid.pop("method_design_context")
+    with pytest.raises(ControllerError, match="method_design_context"):
+        controller.submit_query_plan(invalid)
+
+    controller.submit_query_plan(targeted_plan)
+    assert sha256_file(dominant_plan_path) == dominant_plan_sha256
+    assert (
+        controller.status()["research_lit"]["incremental_literature_active"]["query_plan_path"]
+        != dominant_context["query_plan_path"]
+    )
+    controller.execute_query(
+        "calibration controller uncertainty mechanism", "gateway", lambda _: [metadata("P2")]
+    )
+    assert controller.decide_admission(
+        "P2",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="the residual mechanism requires an inspected source",
+        reading_priority="TARGETED_GAP_FOLLOWUP",
+        fulltext_selected=True,
+    ) == "ADMIT_FOR_READING"
+    controller.finish_retrieval()
+    read = controller.read_full_text("P2", "gateway-fulltext", lambda _: "incremental paper")
+    evidence = card(read, paper_id="P2")
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P2", evidence)
+    controller.finish_reading()
+
+    state = controller.status()
+    evidence_record = state["research_lit"]["incremental_evidence_by_phase"]["method_design"]["evidence:P2"]
+    accepted_card = json.loads((tmp_path / evidence_record["path"]).read_text(encoding="utf-8"))
+    search_context = accepted_card["method_design_search_context"]
+    assert search_context["active_field_map_sha256"] == field_map_hash
+    assert search_context["search_mode"] == "RESIDUAL_MUST_GAP_SEARCH"
+    assert search_context["design_obligation_set_id"] == "DOS-METHOD"
+    assert search_context["dominant_only_closure"]["residual_must_obligation_ids"] == ["OBL-UNCERTAINTY"]
+    assert controller._upstream_snapshot(state, "method_design")["idea-stage/ACTIVE_FIELD_MAP.md"] == field_map_hash
+    assert controller._upstream_snapshot(state, "method_design")[evidence_record["path"]] == evidence_record["sha256"]
+    assert controller.allowed_actions() == ["readopt_evidence", "submit_query_plan", "reopen_root_cause", "complete_phase"]
+    changed_set = json.loads(json.dumps(targeted_plan))
+    changed_set["method_design_context"]["design_obligations"][0]["why_current_methods_fail"] = (
+        "a newly redefined reason"
+    )
+    with pytest.raises(ControllerError, match="derive a new design_obligation_set_id"):
+        controller.submit_query_plan(changed_set)
+
+    rederived_plan = json.loads(json.dumps(targeted_plan))
+    rederived_plan["method_design_context"]["design_obligation_set_id"] = "DOS-RE-DERIVED"
+    rederived_plan["method_design_context"]["design_obligations"][0]["why_current_methods_fail"] = (
+        "a changed diagnosis-derived limitation"
+    )
+    controller.submit_query_plan(rederived_plan)
+    controller.execute_query(
+        "calibration controller uncertainty mechanism", "gateway", lambda _: []
+    )
+    controller.finish_retrieval()
+    controller.finish_reading()
+
+    historical_reuse = json.loads(json.dumps(targeted_plan))
+    historical_reuse["method_design_context"]["design_obligations"][0]["why_current_methods_fail"] = (
+        "a second incompatible definition"
+    )
+    with pytest.raises(ControllerError, match="derive a new design_obligation_set_id"):
+        controller.submit_query_plan(historical_reuse)
+
+
+def test_method_design_incremental_plan_rejects_missing_or_generic_residual_context() -> None:
+    context = {
+        "root_cause_analysis_id": "RCA-1",
+        "root_cause_analysis_sha256": "b" * 64,
+        "active_field_map_sha256": "a" * 64,
+        "primary_causal_chain_ids": {"CHAIN-1"},
+        "problem_version": {
+            "problem_id": "P-1", "version": 1,
+            "contract_sha256": "c" * 64, "evidence_capsule_sha256": "d" * 64,
+        },
+    }
+    plan = {
+        "coverage_gaps": ["OBL-1"],
+        "method_design_context": {
+            "root_cause_analysis_id": "RCA-1",
+            "root_cause_analysis_sha256": "b" * 64,
+            "active_field_map_sha256": "a" * 64,
+            "search_mode": "RESIDUAL_MUST_GAP_SEARCH",
+            "design_obligation_set_id": "DOS-1",
+            "problem_id": "P-1", "problem_version": 1,
+            "problem_contract_sha256": "c" * 64,
+            "evidence_capsule_sha256": "d" * 64,
+            "causal_chain_ids": ["CHAIN-1"],
+            "dominant_solution": "dominant",
+            "design_obligations": [{
+                "obligation_id": "OBL-1", "derived_from_causal_chain_ids": ["CHAIN-1"],
+                "required_capability": "capability", "why_current_methods_fail": "existing methods fail",
+                "measurable_acceptance_condition": "condition holds", "priority": "MUST",
+            }],
+            "dominant_only_closure": {
+                "satisfied_obligation_ids": ["OBL-1"],
+                "residual_must_obligation_ids": [],
+            },
+        },
+        "queries": [{"query": "generic related papers", "purpose": "search more"}],
+    }
+    with pytest.raises(ValidationError, match="residual MUST gap"):
+        validate_query_plan(plan, method_design_context=context)
+
+
+def test_method_design_dominant_solution_search_binds_obligations_before_routes() -> None:
+    context = {
+        "root_cause_analysis_id": "RCA-1",
+        "root_cause_analysis_sha256": "b" * 64,
+        "active_field_map_sha256": "a" * 64,
+        "primary_causal_chain_ids": {"CHAIN-1", "CHAIN-2"},
+        "problem_version": {
+            "problem_id": "P-1", "version": 1,
+            "contract_sha256": "c" * 64, "evidence_capsule_sha256": "d" * 64,
+        },
+    }
+    plan = {
+        "coverage_gaps": [],
+        "method_design_context": {
+            "root_cause_analysis_id": "RCA-1",
+            "root_cause_analysis_sha256": "b" * 64,
+            "active_field_map_sha256": "a" * 64,
+            "search_mode": "DOMINANT_SOLUTION_SEARCH",
+            "design_obligation_set_id": "DOS-A",
+            "problem_id": "P-1", "problem_version": 1,
+            "problem_contract_sha256": "c" * 64,
+            "evidence_capsule_sha256": "d" * 64,
+            "causal_chain_ids": ["CHAIN-1", "CHAIN-2"],
+            "design_obligations": [
+                {
+                    "obligation_id": "OBL-A",
+                    "derived_from_causal_chain_ids": ["CHAIN-1", "CHAIN-2"],
+                    "required_capability": "intervene on both coupled mechanisms",
+                    "why_current_methods_fail": "they handle only one mechanism",
+                    "measurable_acceptance_condition": "both failure signals decrease",
+                    "priority": "MUST",
+                }
+            ],
+        },
+        "queries": [
+            {
+                "query": "coupled intervention mechanism",
+                "purpose": "identify a credible dominant carrier",
+                "design_obligation_ids": ["OBL-A"],
+                "causal_chain_ids": ["CHAIN-1", "CHAIN-2"],
+            }
+        ],
+    }
+    validate_query_plan(plan, method_design_context=context)
+    assert "dominant_solution" not in plan["method_design_context"]
+    assert "dominant_only_closure" not in plan["method_design_context"]
+
+    plan["queries"][0]["causal_chain_ids"] = ["CHAIN-1"]
+    with pytest.raises(ValidationError, match="causal chains do not match"):
+        validate_query_plan(plan, method_design_context=context)
+
+
+@pytest.mark.parametrize(
+    ("phase", "decision", "verdict_id", "verdict_path"),
+    [
+        (
+            "problem_quality_gate",
+            "HOLD",
+            "quality-return-verdict",
+            "idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl",
+        ),
+        (
+            "problem_novelty_gate",
+            "BLOCKED",
+            "novelty-return-verdict",
+            "idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl",
+        ),
+    ],
+)
+def test_negative_problem_reviewer_verdicts_return_to_problem_generation(
+    tmp_path: Path,
+    phase: str,
+    decision: str,
+    verdict_id: str,
+    verdict_path: str,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(
+        controller,
+        decision=decision if phase == "problem_quality_gate" else None,
+        verdict_id=verdict_id if phase == "problem_quality_gate" else "quality-recovery-verdict",
+    )
+    if phase == "problem_novelty_gate":
+        accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+        controller.start_current_phase()
+        novelty_path = tmp_path / verdict_path
+        novelty_path.parent.mkdir(parents=True, exist_ok=True)
+        novelty_path.write_text(
+            formal_verdict_artifact(
+                controller,
+                verdict_id=verdict_id,
+                decision=decision,
+            ),
+            encoding="utf-8",
+        )
+        controller.complete_current_phase()
+    request = run_state._find_phase(controller.status(), phase)["review_request"]
+    assert decision in request["allowed_review_verdicts"]
+    assert controller.allowed_actions() == ["return_phase"]
+    with pytest.raises(ControllerError, match="does not authorize acceptance"):
+        controller.accept_current_phase(verdict_id, "claude-sonnet-4")
+    attest_current_review(controller, verdict_id, "claude-sonnet-4", decision=decision)
+    returned = controller.return_current_phase(verdict_id, "claude-sonnet-4")
+    core = returned["scientific_core"]
+    assert controller.current_stage() == "PROBLEM_GENERATION"
+    assert core["return_history"][-1]["return_target"] == "problem_generation"
+    if decision == "HOLD":
+        assert core["return_history"][-1]["return_guidance"]["missing_evidence"] == [
+            "targeted decision-grade evidence"
+        ]
+        assert "lesson_id" not in core["return_history"][-1]
+    assert verdict_path in {
+        Path(path).as_posix()
+        for path in core["return_history"][-1]["invalidated_artifact_paths"]
+    }
+    assert core["active_problem_version"] is None
+    assert core["pending_problem_revision"] is None
+    assert not (tmp_path / verdict_path).exists()
+
+
+@pytest.mark.parametrize("decision", ["NOT_NOVEL", "UNCERTAIN"])
+def test_completed_non_novel_problem_audits_advance_to_human_gate(
+    tmp_path: Path, decision: str
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+    controller.start_current_phase()
+    verdict_path = controller.root / "idea-stage" / "PROBLEM_NOVELTY_VERDICTS.jsonl"
+    verdict_path.write_text(
+        formal_verdict_artifact(
+            controller, verdict_id=f"novelty-{decision.lower()}", decision=decision
+        ),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    assert controller.allowed_actions() == ["accept_phase"]
+    accept_formal(controller, f"novelty-{decision.lower()}", "claude-sonnet-4")
+    assert controller.current_stage() == "PROBLEM_HUMAN_ACCEPTANCE"
+
+
+def test_problem_human_selection_requires_quality_and_completed_novelty_audit(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    with controller._store.mutate() as state:
+        novelty = run_state._find_phase(state, "problem_novelty_gate")
+        novelty["candidate_ids"] = ["P-1"]
+        novelty["survivor_ids"] = []
+
+    approve(controller, "problem_acceptance", selected_id="P-1")
+    assert controller.status()["scientific_core"]["active_problem_version"]["problem_id"] == "P-1"
+
+
+def test_problem_human_revision_preserves_selected_uncertain_novelty_audit(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_quality_gate(controller)
+    accept_formal(controller, "quality-recovery-verdict", "claude-sonnet-4")
+    controller.start_current_phase()
+    verdict_path = controller.root / "idea-stage" / "PROBLEM_NOVELTY_VERDICTS.jsonl"
+    verdict_path.write_text(
+        formal_verdict_artifact(
+            controller, verdict_id="novelty-uncertain", decision="UNCERTAIN"
+        ),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, "novelty-uncertain", "claude-sonnet-4")
+    write_problem_handoffs(controller)
+
+    returned = request_human_gate_revision(controller, "problem_acceptance")
+    audit = returned["scientific_core"]["return_history"][-1]["novelty_audit"]
+    assert audit["candidate_id"] == "P-1"
+    assert audit["candidate_verdict"] == "UNCERTAIN"
+    assert audit["verdict_id"] == "novelty-uncertain"
+    assert audit["artifact"]["path"] == "idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl"
+    assert audit["novelty_assessment"]["revision_guidance"]["missing_evidence"] == [
+        "Verify the potentially decisive closest prior."
+    ]
+    novelty = run_state._find_phase(returned, "problem_novelty_gate")
+    assert novelty["return_guidance"] is None
+
+
+def test_problem_human_revision_binds_only_the_selected_candidate_novelty_audit(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+
+    controller.start_current_phase()
+    candidate_path = controller.root / "idea-stage/PROBLEM_CANDIDATES.jsonl"
+    candidate_path.write_text(
+        problem_candidate("P-1") + problem_candidate("P-2"), encoding="utf-8"
+    )
+    (controller.root / "idea-stage/PROBLEM_CANDIDATES.md").write_text(
+        "# Problems\nP-1\nP-2", encoding="utf-8"
+    )
+    controller.complete_current_phase()
+    controller.start_current_phase()
+    quality_path = controller.root / "idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl"
+    quality_rows = [
+        json.loads(line)
+        for line in formal_verdict_artifact(controller, verdict_id="quality-mixed").splitlines()
+    ]
+    quality_second = json.loads(json.dumps(quality_rows[0]))
+    quality_second["candidate_id"] = "P-2"
+    quality_rows[1]["survivor_ids"] = ["P-1", "P-2"]
+    quality_path.write_text(
+        "\n".join(json.dumps(row) for row in (quality_rows[0], quality_second, quality_rows[1])) + "\n",
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, "quality-mixed", "claude-sonnet-4")
+
+    controller.start_current_phase()
+    novelty_path = controller.root / "idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl"
+    novelty_rows = [
+        json.loads(line)
+        for line in formal_verdict_artifact(controller, verdict_id="novelty-mixed").splitlines()
+    ]
+    not_novel = json.loads(json.dumps(novelty_rows[0]))
+    not_novel["candidate_id"] = "P-2"
+    not_novel["decision"] = "NOT_NOVEL"
+    not_novel["novelty_assessment"]["closest_priors"][0]["overlap"] = "P-2 overlap only"
+    not_novel["novelty_assessment"]["revision_guidance"] = {
+        "closest_prior_ids": ["P1"],
+        "key_overlap": "P-2 duplicates the closest prior's framing.",
+        "residual_delta": "P-2 has no remaining delta.",
+        "recommended_reframing": ["Test a different operating condition."],
+    }
+    novelty_path.write_text(
+        "\n".join(json.dumps(row) for row in (novelty_rows[0], not_novel, novelty_rows[1])) + "\n",
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, "novelty-mixed", "claude-sonnet-4")
+    write_problem_handoffs(controller)
+
+    returned = request_human_gate_revision(
+        controller, "problem_acceptance", selected_id="P-2"
+    )
+    record = returned["scientific_core"]["return_history"][-1]
+    audit = record["novelty_audit"]
+    assert controller.current_stage() == "PROBLEM_GENERATION"
+    assert record["selected_id"] == "P-2"
+    assert audit["candidate_id"] == "P-2"
+    assert audit["candidate_verdict"] == "NOT_NOVEL"
+    assert audit["novelty_assessment"]["closest_priors"][0]["overlap"] == "P-2 overlap only"
+    assert audit["novelty_assessment"]["revision_guidance"]["recommended_reframing"] == [
+        "Test a different operating condition."
+    ]
+    assert "P-1" not in json.dumps(audit["novelty_assessment"])
+
+
+def test_problem_human_revision_of_novel_candidate_has_no_other_candidate_guidance(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+
+    returned = request_human_gate_revision(controller, "problem_acceptance", selected_id="P-1")
+    audit = returned["scientific_core"]["return_history"][-1]["novelty_audit"]
+    assert audit["candidate_id"] == "P-1"
+    assert audit["candidate_verdict"] == "NOVEL"
+    assert "revision_guidance" not in audit["novelty_assessment"]
+
+
+def test_human_gate_requires_one_time_codex_ui_receipt(tmp_path: Path) -> None:
+    write_policy(tmp_path)
+    controller = ARISController.start(tmp_path, "run-human", executor="codex")
+    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
+        controller.human_approve("source_policy_approval", "approve")
+    assert controller.current_stage() == "WAITING_FOR_HUMAN"
+    approve(controller, "source_policy_approval")
+    assert controller.current_stage() == "QUERY_PLANNING"
+    with pytest.raises(ControllerError):
+        controller.human_approve("source_policy_approval", "approve")
+
+
+def test_scope_and_problem_human_gate_revision_return_through_declared_targets(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+
+    request_human_gate_revision(controller, "scope_human_approval")
+    assert controller.current_stage() == "QUERY_PLANNING"
+    scope = run_state._find_phase(controller.status(), "scope_human_approval")
+    assert scope["status"] == "pending"
+    assert controller.status()["research_lit"]["approvals"][-1]["decision"] == "request_revision"
+
+    controller = start_controller(tmp_path / "problem")
+    reach_problem_human_acceptance(controller)
+    (controller.root / "idea-stage" / "RESEARCH_CONTRACT.md").unlink()
+    request = controller.validate_human_gate_decision(
+        "problem_acceptance",
+        "request_revision",
+        selected_id="P-1",
+        human_feedback="Correct the selected problem's stated scope.",
+    )
+    receipt_path = approvals._receipt_path(controller.root, controller.run_id, request["id"])
+    returned = request_human_gate_revision(controller, "problem_acceptance")
+    assert controller.current_stage() == "PROBLEM_GENERATION"
+    core = returned["scientific_core"]
+    record = core["return_history"][-1]
+    assert record["return_target"] == "problem_generation"
+    assert record["decision"] == "request_revision"
+    assert record["approval_request_id"] == request["id"]
+    assert not receipt_path.exists()
+    assert receipt_path.with_suffix(".consumed.json").is_file()
+    assert not (controller.root / "idea-stage" / "RESEARCH_CONTRACT.md").exists()
+    assert not (controller.root / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md").exists()
+    assert core["active_problem_version"] is None
+    assert controller.allowed_actions() == ["start_phase"]
+
+
+def test_problem_human_return_readopts_only_prior_problem_generation_evidence(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    request_human_gate_revision(controller, "problem_acceptance")
+    controller.start_current_phase()
+
+    card_path = tmp_path / ".aris" / "canonical" / "run-1" / "evidence-P2.json"
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_card = {"source_id": "P2", "read_event_id": "R-P2"}
+    card_path.write_text(json.dumps(evidence_card), encoding="utf-8")
+    registry = tmp_path / "idea-stage" / "EVIDENCE_REGISTRY.jsonl"
+    with registry.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(evidence_card) + "\n")
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        record = {
+            "path": str(card_path.relative_to(tmp_path)),
+            "sha256": sha256_file(card_path),
+            "read_event_id": "R-P2",
+            "validator_result": "PASS",
+        }
+        research["accepted_artifacts"]["evidence:P2"] = record
+        research["read_events"]["R-P2"] = {"paper_id": "P2", "status": "complete"}
+        research["papers"]["P2"] = {
+            "source_origin": "user_supplied",
+            "found_by_query_ids": [],
+        }
+        old_anchor = {
+            "phase": "problem_generation",
+            "required_inputs": {
+                "idea-stage/ACTIVE_FIELD_MAP.md": controller._binding_artifact_identity(
+                    controller._registered_artifact_by_path(state, "idea-stage/ACTIVE_FIELD_MAP.md")
+                )
+            },
+            "lifecycle_return_event_id": None,
+        }
+        research.setdefault("incremental_evidence_by_phase", {}).setdefault(
+            "problem_generation", {}
+        )["evidence:P2"] = {
+            **record,
+            "evidence_key": "evidence:P2",
+            "phase_binding_anchor": old_anchor,
+        }
+
+    assert "P2" not in controller._current_phase_evidence_ids(
+        controller.status(), "problem_generation"
+    )
+    assert "readopt_evidence" in controller.allowed_actions()
+    assert controller.readopt_incremental_evidence("P2") == {
+        "status": "RE_ADOPTED", "evidence_id": "P2", "phase": "problem_generation"
+    }
+    assert "P2" in controller._current_phase_evidence_ids(
+        controller.status(), "problem_generation"
+    )
+    with pytest.raises(ControllerError, match="prior binding in problem_generation"):
+        controller.readopt_incremental_evidence("P1")
+
+
+def test_problem_human_returns_require_feedback_and_bind_the_exact_receipt(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    for decision in ("request_revision", "reject"):
+        with pytest.raises(ControllerError, match="non-empty human_feedback"):
+            controller.validate_human_gate_decision(
+                "problem_acceptance", decision, selected_id="P-1"
+            )
+        with pytest.raises(ControllerError, match="explicit selected_id"):
+            controller.validate_human_gate_decision(
+                "problem_acceptance", decision, human_feedback="Human reason."
+            )
+
+    feedback = "Limit the claim to the measured contact regime."
+    request = controller.validate_human_gate_decision(
+        "problem_acceptance",
+        "request_revision",
+        selected_id="P-1",
+        human_feedback=feedback,
+    )
+    receipt_path = approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "problem_acceptance",
+        request["id"],
+        "request_revision",
+        selected_id="P-1",
+        human_feedback=feedback,
+        artifact_bindings=request["artifact_bindings"],
+    )
+    tampered = json.loads(receipt_path.read_text(encoding="utf-8"))
+    tampered["human_feedback"] = "Different feedback."
+    receipt_path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(ControllerError, match="does not match the pending Gate"):
+        controller.human_approve(
+            "problem_acceptance",
+            "request_revision",
+            selected_id="P-1",
+            human_feedback=feedback,
+        )
+    assert controller.current_stage() == "PROBLEM_HUMAN_ACCEPTANCE"
+
+    missing = start_controller(tmp_path / "missing-feedback")
+    reach_problem_human_acceptance(missing)
+    request = missing.validate_human_gate_decision(
+        "problem_acceptance",
+        "request_revision",
+        selected_id="P-1",
+        human_feedback=feedback,
+    )
+    approvals.issue_ui_approval_receipt(
+        missing.root,
+        missing.run_id,
+        "problem_acceptance",
+        request["id"],
+        "request_revision",
+        selected_id="P-1",
+        artifact_bindings=request["artifact_bindings"],
+    )
+    with pytest.raises(ControllerError, match="does not match the pending Gate"):
+        missing.human_approve(
+            "problem_acceptance",
+            "request_revision",
+            selected_id="P-1",
+            human_feedback=feedback,
+        )
+
+
+def test_problem_human_request_revision_preserves_the_selected_candidate_baseline(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    candidate_path = "idea-stage/PROBLEM_CANDIDATES.jsonl"
+    candidate_sha256 = controller.status()["scientific_core"]["accepted_artifacts"][
+        candidate_path
+    ]["sha256"]
+
+    returned = request_human_gate_revision(
+        controller,
+        "problem_acceptance",
+        selected_id="P-1",
+        human_feedback="Correct the claimed operating regime only.",
+    )
+    core = returned["scientific_core"]
+    record = core["return_history"][-1]
+    baseline = record["candidate_baseline"]
+    assert record["decision"] == "request_revision"
+    assert record["human_feedback"] == "Correct the claimed operating regime only."
+    assert baseline["selected_id"] == "P-1"
+    assert baseline["candidate_artifact"] == {
+        "path": candidate_path,
+        "sha256": candidate_sha256,
+        "archive_path": (
+            Path(record["archive_root"]).as_posix() + "/artifacts/" + candidate_path
+        ),
+    }
+    assert (controller.root / baseline["candidate_artifact"]["archive_path"]).is_file()
+    assert core["active_problem_version"] is None
+    assert core["pending_problem_revision"] is None
+    assert [
+        run_state._find_phase(returned, phase)["status"]
+        for phase in (
+            "problem_generation",
+            "problem_quality_gate",
+            "problem_novelty_gate",
+            "problem_human_acceptance",
+        )
+    ] == ["pending", "pending", "pending", "pending"]
+    assert returned["research_lit"]["incremental_literature_active"] is None
+
+
+def test_problem_human_reject_reopens_without_a_candidate_inheritance_constraint(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    (controller.root / "idea-stage" / "RESEARCH_CONTRACT.md").unlink()
+    (controller.root / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md").unlink()
+
+    returned = reject_problem_candidate(
+        controller,
+        human_feedback="The selected candidate's central premise is not established.",
+    )
+    core = returned["scientific_core"]
+    record = core["return_history"][-1]
+    assert controller.current_stage() == "PROBLEM_GENERATION"
+    assert record["decision"] == "reject"
+    assert record["selected_id"] == "P-1"
+    assert record["human_feedback"] == "The selected candidate's central premise is not established."
+    assert "candidate_baseline" not in record
+    assert core["active_problem_version"] is None
+    assert core["pending_problem_revision"] is None
+    assert returned["research_lit"]["incremental_literature_active"] is None
+
+
+def test_reject_is_not_a_decision_of_other_human_gates(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    with pytest.raises(ControllerError, match="not declared"):
+        controller.validate_human_gate_decision("scope_human_approval", "reject")
+
+
+def test_scope_revision_remains_available_when_new_audit_finds_coverage_gap(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    append_jsonl(
+        tmp_path / "idea-stage" / "LITERATURE_CORPUS.jsonl",
+        {
+            **metadata("UNSCREENED"),
+            "source_id": "UNSCREENED",
+            "admission_status": "DISCOVERY_METADATA_ONLY",
+        },
+    )
+
+    request_human_gate_revision(controller, "scope_human_approval")
+
+    assert controller.current_stage() == "QUERY_PLANNING"
+
+
+def test_human_receipt_with_wrong_artifact_binding_cannot_approve(tmp_path: Path) -> None:
+    write_policy(tmp_path)
+    controller = ARISController.start(tmp_path, "run-bound-human", executor="codex")
+    request = controller.validate_human_gate_request("source_policy_approval")
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "source_policy_approval",
+        request["id"],
+        "approve",
+        artifact_bindings={"idea-stage\\SOURCE_ADMISSION_POLICY.yaml": "0" * 64},
+    )
+    with pytest.raises(ControllerError, match="does not match the pending Gate"):
+        controller.human_approve("source_policy_approval", "approve")
+    assert controller.current_stage() == "WAITING_FOR_HUMAN"
+
+
+def test_human_receipt_is_restored_when_bound_outputs_disappear_after_consumption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    request = controller.validate_human_gate_request("problem_acceptance")
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "problem_acceptance",
+        request["id"],
+        "approve",
+        selected_id="P-1",
+        artifact_bindings=request["artifact_bindings"],
+    )
+    receipt_path = approvals._receipt_path(controller.root, controller.run_id, request["id"])
+    contract = controller.root / "idea-stage" / "RESEARCH_CONTRACT.md"
+    contract_text = contract.read_text(encoding="utf-8")
+    consume = approvals.consume_ui_approval_receipt
+
+    def consume_then_remove_output(*args: object, **kwargs: object) -> dict:
+        receipt = consume(*args, **kwargs)
+        contract.unlink()
+        return receipt
+
+    monkeypatch.setattr(approvals, "consume_ui_approval_receipt", consume_then_remove_output)
+    with pytest.raises(ControllerError, match="missing required"):
+        controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
+    assert receipt_path.is_file()
+    assert not receipt_path.with_suffix(".consumed.json").exists()
+
+    monkeypatch.setattr(approvals, "consume_ui_approval_receipt", consume)
+    contract.write_text(contract_text, encoding="utf-8")
+    controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
+    assert not receipt_path.exists()
+    assert receipt_path.with_suffix(".consumed.json").is_file()
+
+
+def test_state_save_failure_restores_receipt_and_successful_retry_consumes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_policy(tmp_path)
+    controller = ARISController.start(tmp_path, "save-recovery", executor="codex")
+    request = controller.validate_human_gate_request("source_policy_approval")
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "source_policy_approval",
+        request["id"],
+        "approve",
+        artifact_bindings=request["artifact_bindings"],
+    )
+    receipt_path = approvals._receipt_path(controller.root, controller.run_id, request["id"])
+    save = run_state._save
+    failed = False
+
+    def fail_once(*args: object, **kwargs: object) -> None:
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("simulated state save failure")
+        save(*args, **kwargs)
+
+    monkeypatch.setattr(run_state, "_save", fail_once)
+    with pytest.raises(OSError, match="simulated state save failure"):
+        controller.human_approve("source_policy_approval", "approve")
+    assert receipt_path.is_file()
+    assert controller.current_stage() == "WAITING_FOR_HUMAN"
+
+    controller.human_approve("source_policy_approval", "approve")
+    assert not receipt_path.exists()
+    assert receipt_path.with_suffix(".consumed.json").is_file()
+    with pytest.raises(ValueError, match="no Codex UI approval receipt"):
+        approvals.consume_ui_approval_receipt(
+            controller.root,
+            controller.run_id,
+            "source_policy_approval",
+            request["id"],
+            "approve",
+            artifact_bindings=request["artifact_bindings"],
+        )
+
+
+def test_same_family_reviewer_attestation_is_accepted(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reviewer = "codex-gpt-5.6-sol"
+    reach_problem_quality_gate(controller, reviewer=reviewer)
+    core = controller.status()["scientific_core"]
+    phase = run_state._find_phase(controller.status(), core["current_phase"])
+    request = phase["review_request"]
+    attest_current_review(
+        controller,
+        "quality-recovery-verdict",
+        reviewer,
+    )
+    path = reviews.review_attestation_path(
+        controller.root,
+        controller.run_id,
+        request["required_reviewer_role"],
+        request["id"],
+    )
+    state = controller.accept_current_phase("quality-recovery-verdict", reviewer)
+    assert not path.is_file()
+    assert path.with_suffix(".consumed.json").is_file()
+    accepted = run_state._find_phase(state, "problem_quality_gate")
+    assert accepted["status"] == "accepted"
+    assert accepted["review_independence"] == "independent-context"
+
+
+def test_problem_quality_codex_cli_reviewer_payload_passes_existing_gate_pipeline(
+    tmp_path: Path,
+) -> None:
+    """A direct Codex reviewer payload keeps the artifact/attestation flow intact."""
+
+    reviewer = "codex-gpt-5.6-sol"
+    controller = start_controller(tmp_path, executor="gemini-3.1-pro")
+    reach_problem_quality_gate(controller, reviewer=reviewer, verdict_id="codex-quality-1")
+
+    phase = run_state._find_phase(controller.status(), "problem_quality_gate")
+    request = phase["review_request"]
+    attest_current_review(controller, "codex-quality-1", reviewer)
+    state = controller.accept_current_phase("codex-quality-1", reviewer)
+
+    assert phase["status"] == "done"
+    assert state["scientific_core"]["current_phase"] == "problem_novelty_gate"
+    accepted = run_state._find_phase(state, "problem_quality_gate")
+    assert accepted["status"] == "accepted"
+    assert accepted["reviewer"] == reviewer
+    assert accepted["review_independence"] == "cross-family"
+    receipt = reviews.review_attestation_path(
+        controller.root,
+        controller.run_id,
+        "independent_problem_reviewer",
+        request["id"],
+    )
+    assert receipt.with_suffix(".consumed.json").is_file()
+
+
+def test_fresh_project_drafts_validates_and_human_approves_policy_before_query(
+    tmp_path: Path,
+) -> None:
+    controller = ARISController.start(tmp_path, "fresh-policy", executor="codex")
+    policy_path = tmp_path / "idea-stage" / "SOURCE_ADMISSION_POLICY.yaml"
+
+    assert controller.current_stage() == "SOURCE_POLICY_DRAFTING"
+    assert controller.allowed_actions() == ["submit_source_admission_policy"]
+    assert controller.allowed_agents() == ["main_research_agent"]
+    assert not policy_path.exists()
+    assert controller.status()["research_lit"]["approval_request"] is None
+    with pytest.raises(ControllerError, match="WAITING_FOR_HUMAN"):
+        controller.pending_human_approval()
+
+    invalid = policy_payload()
+    invalid.pop("high_citation_rule")
+    with pytest.raises(ControllerError, match="citation threshold"):
+        controller.submit_source_admission_policy(invalid)
+    assert controller.current_stage() == "SOURCE_POLICY_DRAFTING"
+    assert not policy_path.exists()
+
+    controller.submit_source_admission_policy(policy_payload())
+    research = controller.status()["research_lit"]
+    assert controller.current_stage() == "WAITING_FOR_HUMAN"
+    assert controller.allowed_actions() == ["human_approve", "request_source_policy_revision"]
+    assert controller.allowed_agents() == []
+    assert research["waiting_for"] == "source_policy_approval"
+    assert research["pending_source_policy"]["validator_result"] == "PASS"
+    assert research["pending_source_policy"]["author_role"] == "main_research_agent"
+    assert "source_admission_policy" not in research["accepted_artifacts"]
+    assert research["approval_request"]["artifact_sha256"] == research[
+        "pending_source_policy"
+    ]["sha256"]
+
+    calls: list[str] = []
+    with pytest.raises(ControllerError, match="METADATA_RETRIEVAL"):
+        controller.execute_query(
+            "test field", "fake", lambda value: calls.append(value) or []
+        )
+    assert calls == []
+    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
+        controller.human_approve("source_policy_approval", "approve")
+    assert controller.current_stage() == "WAITING_FOR_HUMAN"
+
+    approve(controller, "source_policy_approval")
+    approved = controller.status()["research_lit"]
+    assert controller.current_stage() == "QUERY_PLANNING"
+    assert approved["accepted_artifacts"]["source_admission_policy"][
+        "approved_by"
+    ] == "codex_ui_user"
+    assert approved["pending_source_policy"] is None
+
+    controller.submit_query_plan(
+        {
+            "coverage_gaps": ["anchor"],
+            "queries": [{"query": "test field", "purpose": "close explicit gap"}],
+        }
+    )
+    controller.execute_query(
+        "test field", "fake", lambda value: calls.append(value) or []
+    )
+    assert calls == ["test field"]
+
+
+def test_existing_valid_policy_can_be_revised_only_through_human_gate(tmp_path: Path) -> None:
+    write_policy(tmp_path)
+    controller = ARISController.start(tmp_path, "policy-revision", executor="codex")
+    original = controller.status()["research_lit"]
+    original_hash = original["pending_source_policy"]["sha256"]
+
+    assert controller.current_stage() == "WAITING_FOR_HUMAN"
+    assert controller.allowed_actions() == ["human_approve", "request_source_policy_revision"]
+    assert controller.allowed_agents() == []
+    with pytest.raises(ControllerError, match="SOURCE_POLICY_DRAFTING"):
+        controller.submit_source_admission_policy(policy_payload())
+    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
+        controller.request_source_policy_revision()
+
+    with controller._store.mutate() as state:
+        state["research_lit"]["human_fulltext_request"] = {"papers": [{"paper_id": "stale"}]}
+
+    request_source_policy_revision(controller)
+    revised = controller.status()["research_lit"]
+    assert controller.current_stage() == "SOURCE_POLICY_DRAFTING"
+    assert controller.allowed_actions() == ["submit_source_admission_policy"]
+    assert controller.allowed_agents() == ["main_research_agent"]
+    assert revised["waiting_for"] is None
+    assert revised["approval_request"] is None
+    assert revised["pending_source_policy"] is None
+    assert revised["human_fulltext_request"] is None
+    assert revised["approvals"][-1]["decision"] == "request_revision"
+    assert revised["approvals"][-1]["artifact_sha256"] == original_hash
+
+    updated_policy = policy_payload()
+    updated_policy["high_citation_rule"]["thresholds"][0][
+        "citation_count_strictly_greater_than"
+    ] = 101
+    controller.submit_source_admission_policy(updated_policy)
+    revalidated = controller.status()["research_lit"]
+    new_hash = revalidated["pending_source_policy"]["sha256"]
+    assert new_hash != original_hash
+    assert revalidated["pending_source_policy"]["validator_result"] == "PASS"
+    assert revalidated["approval_request"]["artifact_sha256"] == new_hash
+    assert controller.current_stage() == "WAITING_FOR_HUMAN"
+
+    with controller._store.mutate() as state:
+        state["research_lit"]["human_fulltext_request"] = {"papers": [{"paper_id": "stale"}]}
+
+    approve(controller, "source_policy_approval")
+    accepted = controller.status()["research_lit"]
+    assert controller.current_stage() == "QUERY_PLANNING"
+    assert accepted["accepted_artifacts"]["source_admission_policy"]["sha256"] == new_hash
+    assert accepted["human_fulltext_request"] is None
+
+
+def test_default_budget_blocks_81st_query_before_tool_call(tmp_path: Path) -> None:
+    queries = [f"q{index}" for index in range(1, 82)]
+    controller = start_controller(tmp_path, queries=queries, run_id="run-80")
+    calls: list[str] = []
+    for query in queries[:80]:
+        controller.execute_query(query, "fake", lambda value: calls.append(value) or [])
+    with pytest.raises(ControllerError, match="80/80"):
+        controller.execute_query(queries[80], "fake", lambda value: calls.append(value) or [])
+    assert len(calls) == 80
+
+
+def test_source_policy_cannot_define_a_second_runtime_budget(tmp_path: Path) -> None:
+    write_policy(tmp_path)
+    policy = yaml.safe_load(
+        (tmp_path / "idea-stage" / "SOURCE_ADMISSION_POLICY.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    policy["research_effort_budget"] = {"max_queries": 40}
+    with pytest.raises(ValidationError, match="canonical workflow"):
+        validate_source_admission_policy(policy)
+
+
+def test_unplanned_query_is_rejected_before_gateway(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    calls: list[str] = []
+    with pytest.raises(ControllerError, match="not accepted"):
+        controller.execute_query("invented query", "fake", lambda value: calls.append(value) or [])
+    assert not calls
+
+
+def test_rediscovery_does_not_rollback_verified_admission(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path, queries=["first query", "second query"])
+    controller.execute_query("first query", "fake", lambda _: [metadata()])
+    assert controller.decide_admission("P1", screening_in_scope=True) == "ADMIT_FOR_READING"
+
+    rediscovered = metadata()
+    rediscovered.update(
+        {
+            "title": "test paper",
+            "citation_count": 42,
+            "identity_status": "verify_pending",
+        }
+    )
+    controller.execute_query("second query", "fake", lambda _: [rediscovered])
+
+    paper = controller.status()["research_lit"]["papers"]["P1"]
+    assert paper["admission_status"] == "ADMIT_FOR_READING"
+    assert paper["identity_status"] == "verified"
+    assert paper["title"] == "Test paper"
+    assert paper["citation_count"] == 42
+    assert paper["found_by_query_ids"] == ["Q0001", "Q0002"]
+
+
+def test_finish_retrieval_repairs_pre_fix_accepted_evidence_rollback(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_synthesis(controller)
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        research["current_stage"] = "METADATA_RETRIEVAL"
+        research["papers"]["P1"] = {
+            **metadata(),
+            "source_id": "P1",
+            "identity_status": "verify_pending",
+            "admission_status": "DISCOVERY_METADATA_ONLY",
+            "found_by_query_ids": ["Q0001", "Q0002"],
+        }
+
+    controller.finish_retrieval()
+
+    paper = controller.status()["research_lit"]["papers"]["P1"]
+    assert paper["identity_status"] == "verified"
+    assert paper["admission_status"] == "ADMIT_DECISION_GRADE"
+    assert paper["found_by_query_ids"] == ["Q0001", "Q0002"]
+    assert "record_sha256" not in paper
+    assert "previous_record_sha256" not in paper
+    ledger = (tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert '"action": "rediscovery_reconciliation"' in ledger
+
+
+def test_accepted_user_source_does_not_require_gateway_identity_for_reconciliation(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    source = tmp_path / "source-materials" / "user-paper.txt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("user supplied paper", encoding="utf-8")
+    supplied = metadata("USER1")
+    supplied["source_path"] = "source-materials/user-paper.txt"
+    controller.register_user_source(supplied)
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        research["papers"]["USER1"]["admission_status"] = "ADMIT_DECISION_GRADE"
+        research["accepted_artifacts"]["evidence:USER1"] = {"path": "evidence.json"}
+        restored = controller._reconcile_accepted_evidence_papers(research)
+
+    assert restored == []
+    assert controller.status()["research_lit"]["papers"]["USER1"]["source_origin"] == (
+        "user_supplied"
+    )
+
+
+def test_evidence_artifact_name_safely_encodes_external_paper_ids(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    ordinary = controller._evidence_artifact_name("P1")
+    external = controller._evidence_artifact_name("scholar:15965392972228430987")
+
+    assert ordinary == "evidence-P1"
+    assert external.startswith("evidence-external-")
+    assert ":" not in external
+    assert external == controller._evidence_artifact_name("scholar:15965392972228430987")
+
+
+def test_formal_preflight_rollback_allows_full_access_without_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+    monkeypatch.setenv("CODEX_PERMISSION_PROFILE", ":danger-full-access")
+    calls: list[str] = []
+    controller.execute_query(
+        "test field", "fake", lambda value: calls.append(value) or []
+    )
+    assert calls == ["test field"]
+    assert controller.status()["research_lit"]["query_count"] == 1
+    assert not (tmp_path / ".aris" / "formal-preflight").exists()
+
+
+def test_paper_reader_evidence_accepts_valid_card_without_attestation(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    controller.submit_evidence_card("P1", evidence)
+    accepted = controller.status()["research_lit"]["accepted_artifacts"]["evidence:P1"]
+    assert accepted["read_event_id"] == read["read_event_id"]
+    assert "paper_reader_agent_id" not in accepted
+
+
+def test_paper_reader_evidence_consumes_valid_attestation_and_records_agent(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    receipt = (
+        tmp_path / ".aris" / "agent-attestations" / "paper_reader" / f"{read['read_event_id']}.json"
+    )
+    controller.submit_evidence_card("P1", evidence)
+    accepted = controller.status()["research_lit"]["accepted_artifacts"]["evidence:P1"]
+    assert accepted["paper_reader_agent_id"] == "agent-paper_reader-test"
+    assert not receipt.exists()
+    assert receipt.with_suffix(".consumed.json").is_file()
+
+
+def test_paper_reader_evidence_rejects_mismatched_attestation(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    receipt = (
+        tmp_path / ".aris" / "agent-attestations" / "paper_reader" / f"{read['read_event_id']}.json"
+    )
+    malformed = json.loads(receipt.read_text(encoding="utf-8"))
+    malformed["payload_sha256"] = "0" * 64
+    receipt.write_text(json.dumps(malformed), encoding="utf-8")
+    with pytest.raises(ControllerError, match="invalid or mismatched paper_reader attestation"):
+        controller.submit_evidence_card("P1", evidence)
+    assert receipt.is_file()
+    assert "evidence:P1" not in controller.status()["research_lit"]["accepted_artifacts"]
+
+
+def test_all_provider_failures_stop_for_human_search_and_resume_with_results(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    attempts = [
+        {"provider": "serpapi_google_scholar", "status": "unavailable", "reason": "key"},
+        {"provider": "scholar_google_hk", "status": "blocked", "reason": "403"},
+        {"provider": "arxiv", "status": "unavailable", "reason": "network"},
+        {"provider": "ieee_xplore", "status": "unavailable", "reason": "key"},
+    ]
+
+    with pytest.raises(HumanSearchRequired):
+        controller.execute_query(
+            "test field",
+            "research-lit-provider-cascade",
+            lambda _: (_ for _ in ()).throw(HumanSearchRequired(attempts)),
+        )
+
+    research = controller.status()["research_lit"]
+    assert research["current_stage"] == "HUMAN_SEARCH_REQUIRED"
+    assert research["human_search_request"]["query"] == "test field"
+    assert research["human_search_request"]["purpose"] == "close explicit gap"
+    assert research["human_search_request"]["evidence_gaps"] == ["anchor"]
+    rows = controller.submit_human_search_results(
+        {"query": "test field", "results": [metadata()]}
+    )
+    assert rows[0]["search_route"] == "human_google_scholar"
+    assert controller.current_stage() == "METADATA_RETRIEVAL"
+    research = controller.status()["research_lit"]
+    assert research["query_count"] == 1
+    assert research["query_events"]["Q0001"]["status"] == "complete_human"
+    ledger = (tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert '"result_status": "complete_human"' in ledger
+
+
+def level_three_outcome(rows: list[dict]) -> SearchOutcome:
+    return SearchOutcome(
+        rows,
+        "arxiv+ieee_xplore",
+        False,
+        [
+            {"provider": "serpapi_google_scholar", "status": "unavailable", "reason": "key"},
+            {"provider": "scholar_google_hk", "status": "unavailable", "reason": "no browser"},
+            {"provider": "arxiv", "status": "complete", "reason": ""},
+            {"provider": "ieee_xplore", "status": "complete", "reason": ""},
+        ],
+    )
+
+
+def test_partial_automatic_discovery_stops_for_one_batch_human_search(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    with pytest.raises(HumanSearchRequired):
+        controller.execute_query(
+            "test field",
+            "research-lit-provider-cascade",
+            lambda _: level_three_outcome([metadata(venue="Ordinary")]),
+        )
+    research = controller.status()["research_lit"]
+    assert research["current_stage"] == "HUMAN_SEARCH_REQUIRED"
+    assert research["human_search_request"]["query"] == "test field"
+    assert research["human_search_request"]["kind"] == "metadata_search_batch"
+    assert research["human_search_request"]["queries"][0]["query"] == "test field"
+    assert research["papers"]["P1"]["venue"] == "Ordinary"
+
+
+def test_all_provider_failure_human_fallback_passes_final_landscape_audit(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    attempts = [
+        {"provider": "serpapi_google_scholar", "status": "unavailable", "reason": "key"},
+        {"provider": "scholar_google_hk", "status": "blocked", "reason": "403"},
+        {"provider": "arxiv", "status": "unavailable", "reason": "network"},
+        {"provider": "ieee_xplore", "status": "unavailable", "reason": "key"},
+    ]
+    with pytest.raises(HumanSearchRequired):
+        controller.execute_query(
+            "test field",
+            "research-lit-provider-cascade",
+            lambda _: (_ for _ in ()).throw(HumanSearchRequired(attempts)),
+        )
+    controller.submit_human_search_results(
+        {"query": "test field", "results": [metadata()]}
+    )
+
+    state = complete_landscape_from_metadata(controller)
+
+    assert state["research_lit"]["waiting_for"] == "scope_human_approval"
+    assert state["research_lit"]["query_count"] == 1
+
+
+def test_lower_priority_success_human_followup_passes_final_landscape_audit(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    with pytest.raises(HumanSearchRequired):
+        controller.execute_query(
+            "test field",
+            "research-lit-provider-cascade",
+            lambda _: level_three_outcome([metadata()]),
+        )
+    controller.submit_human_search_results(
+        {"query": "test field", "results": []}
+    )
+
+    state = complete_landscape_from_metadata(controller)
+
+    assert state["research_lit"]["waiting_for"] == "scope_human_approval"
+    assert state["research_lit"]["query_count"] == 1
+
+
+def test_all_provider_failures_request_the_entire_planned_query_batch(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path, queries=["test field", "related field"])
+    with pytest.raises(HumanSearchRequired):
+        controller.execute_query(
+            "test field",
+            "research-lit-provider-cascade",
+            lambda _: (_ for _ in ()).throw(
+                HumanSearchRequired(
+                    [{"provider": "serpapi_google_scholar", "status": "unavailable", "reason": "network"}],
+                    query_options={"year_from": 2020, "year_to": 2025, "exact_title": False},
+                )
+            ),
+        )
+    research = controller.status()["research_lit"]
+    assert research["current_stage"] == "HUMAN_SEARCH_REQUIRED"
+    assert [item["query"] for item in research["human_search_request"]["queries"]] == [
+        "test field",
+        "related field",
+    ]
+    assert research["human_search_request"]["queries"][0]["constraints"]["year_from"] == 2020
+    rows = controller.submit_human_search_results(
+        {
+            "queries": [
+                {"query": "test field", "results": [metadata("P1")]},
+                {"query": "related field", "results": []},
+            ]
+        }
+    )
+    assert [row["paper_id"] for row in rows] == ["P1"]
+    assert controller.current_stage() == "METADATA_RETRIEVAL"
+    research = controller.status()["research_lit"]
+    assert research["query_count"] == 2
+    assert set(research["query_events"]) == {"Q0001", "Q0002"}
+    assert all(
+        event["status"] == "complete_human"
+        for event in research["query_events"].values()
+    )
+
+
+def test_added_provider_credential_resumes_pending_query_without_state_edit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SERPAPI_KEY", raising=False)
+    controller = start_controller(tmp_path)
+    attempts = [
+        {
+            "provider": "serpapi_google_scholar",
+            "status": "unavailable",
+            "reason": "SERPAPI_KEY is missing",
+        },
+        {
+            "provider": "scholar_google_hk",
+            "status": "unavailable",
+            "reason": "browser unavailable",
+        },
+    ]
+    with pytest.raises(HumanSearchRequired):
+        controller.execute_query(
+            "test field",
+            "research-lit-provider-cascade",
+            lambda _: (_ for _ in ()).throw(HumanSearchRequired(attempts)),
+        )
+    with pytest.raises(ControllerError, match="SERPAPI_KEY is still missing"):
+        controller.submit_human_search_results(
+            {
+                "query": "test field",
+                "retry_provider": "serpapi_google_scholar",
+            }
+        )
+    assert controller.current_stage() == "HUMAN_SEARCH_REQUIRED"
+
+    monkeypatch.setenv("SERPAPI_KEY", "test-secret")
+    recovery = controller.submit_human_search_results(
+        {
+            "query": "test field",
+            "retry_provider": "serpapi_google_scholar",
+        }
+    )
+    assert recovery["status"] == "PROVIDER_REENABLED"
+    research = controller.status()["research_lit"]
+    assert research["current_stage"] == "METADATA_RETRIEVAL"
+    assert research["query_count"] == 1
+    assert research["planned_queries"][0]["status"] == "planned"
+    assert "unavailable_providers" not in research
+
+    controller.execute_query("test field", "fake-recovered-provider", lambda _: [metadata()])
+    recovered = controller.status()["research_lit"]
+    assert recovered["query_count"] == 1
+    assert set(recovered["query_events"]) == {"Q0001"}
+    ledger = (tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert '"action": "provider_reenabled"' in ledger
+    assert "test-secret" not in ledger
+    state = complete_landscape_from_metadata(controller)
+    assert state["research_lit"]["waiting_for"] == "scope_human_approval"
+
+
+def test_unadmitted_fulltext_is_rejected_before_reader(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query("test field", "fake", lambda _: [metadata(venue="Ordinary")])
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="the paper is in scope but does not satisfy the source policy",
+        reading_priority="RECENT_ELITE_FRONTIER",
+        fulltext_selected=False,
+        fulltext_selection_reason="retain metadata for coverage but do not schedule an ineligible full-text read",
+    ) == "ADMIT_DISCOVERY_ONLY"
+    assert controller.current_stage() == "METADATA_RETRIEVAL"
+    state = controller.finish_retrieval()
+    assert state["research_lit"]["current_stage"] == "HUMAN_SEARCH_REQUIRED"
+    assert state["research_lit"]["human_search_request"]["kind"] == "metadata_search_batch"
+
+
+def test_decisive_low_citation_source_requires_and_records_bounded_exception(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query(
+        "test field", "fake", lambda _: [metadata(venue="Ordinary")]
+    )
+    with pytest.raises(ControllerError, match="scientific reason"):
+        controller.decide_admission(
+            "P1",
+            screening_in_scope=True,
+            decision_grade_exception="decisive_closest_prior_or_concurrent",
+        )
+
+    decision = controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        decision_grade_exception="decisive_closest_prior_or_concurrent",
+        exception_reason=(
+            "Identity-verified concurrent work may already implement the nearest "
+            "mechanism and can change the unresolvedness judgment."
+        ),
+        decision_targets=["problem_novelty:P-1", "coverage:recent_prior_work"],
+    )
+
+    assert decision == "ADMIT_FOR_READING"
+    paper = controller.status()["research_lit"]["papers"]["P1"]
+    assert paper["admission_exception"]["kind"] == "decisive_closest_prior_or_concurrent"
+    assert paper["admission_exception"]["decision_targets"] == [
+        "coverage:recent_prior_work",
+        "problem_novelty:P-1",
+    ]
+    ledger = (tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert '"admission_exception"' in ledger
+
+
+def test_unadmitted_fulltext_never_calls_gateway_when_other_paper_allows_reading(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    with controller._store.mutate() as state:
+        state["research_lit"]["papers"]["P2"] = metadata(
+            paper_id="P2", venue="Ordinary"
+        )
+    called = False
+
+    def forbidden_gateway(_: dict) -> str:
+        nonlocal called
+        called = True
+        return "must not run"
+
+    with pytest.raises(ControllerError, match="denied before tool call"):
+        controller.read_full_text("P2", "network", forbidden_gateway)
+    assert called is False
+
+
+def test_evidence_requires_completed_fulltext_event(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    fake = card({"read_event_id": "fake", "content_sha256": "0" * 64})
+    with pytest.raises(ControllerError, match="completed full-text gateway event"):
+        controller.submit_evidence_card("P1", fake)
+    assert controller.current_stage() == "PAPER_READING"
+
+
+def test_real_read_receipt_allows_evidence_and_promotes_decision_grade(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P1", evidence)
+    state = controller.status()["research_lit"]
+    assert state["papers"]["P1"]["admission_status"] == "ADMIT_DECISION_GRADE"
+    assert state["accepted_artifacts"]["evidence:P1"]["read_event_id"] == read["read_event_id"]
+
+
+def test_accepted_evidence_can_be_rescreened_without_duplicate_read(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P1", evidence)
+    with controller._store.mutate() as state:
+        state["research_lit"]["current_stage"] = "METADATA_RETRIEVAL"
+
+    verifier_called = False
+
+    def forbidden_verifier(_: dict) -> dict:
+        nonlocal verifier_called
+        verifier_called = True
+        raise AssertionError("accepted full-text evidence must not require abstract enrichment")
+
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        screening_basis="FULL_TEXT",
+        screening_reason="accepted Evidence remains directly relevant to the revised scope",
+        reading_priority="HIGH_CITATION_BACKBONE",
+        fulltext_selected=True,
+        identity_verifier=forbidden_verifier,
+    ) == "ADMIT_DECISION_GRADE"
+    assert verifier_called is False
+    paper = controller.status()["research_lit"]["papers"]["P1"]
+    assert paper["screening_basis"] == "FULL_TEXT"
+
+
+def test_revised_scope_can_exclude_a_paper_with_old_accepted_evidence(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P1", evidence)
+    with controller._store.mutate() as state:
+        state["research_lit"]["current_stage"] = "METADATA_RETRIEVAL"
+
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=False,
+        screening_basis="FULL_TEXT",
+        screening_reason="the revised brief excludes this peripheral branch",
+        reading_priority="RECENT_ELITE_FRONTIER",
+        fulltext_selected=False,
+    ) == "EXCLUDE_IRRELEVANT"
+    with controller._store.mutate() as state:
+        restored = controller._reconcile_accepted_evidence_papers(state["research_lit"])
+    assert restored == []
+    assert controller.status()["research_lit"]["papers"]["P1"]["admission_status"] == (
+        "EXCLUDE_IRRELEVANT"
+    )
+
+
+def test_research_lit_ids_are_unique_and_cross_references_resolve(tmp_path: Path) -> None:
+    blank_id_card = card({"read_event_id": "read", "content_sha256": "a" * 64})
+    blank_id_card["source_id"] = " "
+    with pytest.raises(ValidationError, match="non-empty evidence identifier"):
+        validate_evidence_card(blank_id_card, " ")
+    with pytest.raises(ValidationError, match="unique among accepted"):
+        validate_evidence_card(card({"read_event_id": "read", "content_sha256": "a" * 64}), "P1", existing_evidence_ids={"P1"})
+
+    controller = start_controller(tmp_path)
+    reach_synthesis(controller)
+
+    duplicate_method = field_map("PARTIAL")
+    duplicate_method["method_families"].append({"id": "M", "mechanism": "other"})
+    with pytest.raises(ControllerError, match="method_families.id values must be unique"):
+        controller.submit_field_map(duplicate_method)
+
+    dangling_method = field_map("PARTIAL")
+    dangling_method["problem_method_matrix"][0]["method"] = "missing"
+    with pytest.raises(ControllerError, match="problem_method_matrix row 1.method does not resolve"):
+        controller.submit_field_map(dangling_method)
+
+    dangling_evidence = field_map("PARTIAL")
+    dangling_evidence["family_development_traces"][0]["evidence_ids"] = ["missing"]
+    with pytest.raises(ControllerError, match="unresolved evidence IDs"):
+        controller.submit_field_map(dangling_evidence)
+
+    assert controller.submit_field_map(field_map("PARTIAL"))["research_lit"]["current_stage"] == "QUERY_PLANNING"
+
+
+def test_field_map_requires_complete_declared_traces_but_not_a_fixed_history() -> None:
+    classification_only = field_map()
+    classification_only["family_development_traces"] = [
+        {"family": "M", "evidence_ids": ["P1"]}
+    ]
+    with pytest.raises(ValidationError, match="missing required fields"):
+        validate_field_map(classification_only, evidence_ids={"P1"})
+
+    no_material_transition = field_map()
+    no_material_transition["family_development_traces"] = []
+    assert validate_field_map(no_material_transition, evidence_ids={"P1"}) is no_material_transition
+
+    parallel = field_map()
+    parallel["family_development_traces"].append(
+        development_trace("T2", family=None)
+    )
+    validated = validate_field_map(parallel, evidence_ids={"P1"})
+    assert len(validated["family_development_traces"]) == 2
+    assert all("year" not in trace and "stage" not in trace for trace in validated["family_development_traces"])
+
+    duplicate_transition = field_map()
+    duplicate_transition["family_development_traces"].append(development_trace("T1"))
+    with pytest.raises(ValidationError, match="transition_id values must be unique"):
+        validate_field_map(duplicate_transition, evidence_ids={"P1"})
+
+    invalid_status = field_map()
+    invalid_status["family_development_traces"][0]["transition_problem_status"] = "complete"
+    with pytest.raises(ValidationError, match="transition_problem_status is invalid"):
+        validate_field_map(invalid_status, evidence_ids={"P1"})
+
+
+def test_coverage_review_enforces_evolution_assessment_without_forcing_traces() -> None:
+    empty_trace_review = coverage_review(
+        "a" * 64,
+        "request",
+        development_trace_count=0,
+    )
+    assert validate_coverage_review(
+        empty_trace_review,
+        development_trace_count=0,
+    ) is empty_trace_review
+
+    wrong_empty_basis = json.loads(json.dumps(empty_trace_review))
+    wrong_empty_basis["evolution_assessment"]["transition_causality"]["basis"] = (
+        "DECLARED_TRACES_REVIEWED"
+    )
+    with pytest.raises(ValidationError, match="NO_MATERIAL_TRANSITION_SUPPORTED"):
+        validate_coverage_review(wrong_empty_basis, development_trace_count=0)
+
+    wrong_nonempty_basis = coverage_review(
+        "a" * 64,
+        "request",
+        development_trace_count=1,
+    )
+    wrong_nonempty_basis["evolution_assessment"]["transition_causality"]["basis"] = (
+        "NO_MATERIAL_TRANSITION_SUPPORTED"
+    )
+    with pytest.raises(ValidationError, match="DECLARED_TRACES_REVIEWED"):
+        validate_coverage_review(wrong_nonempty_basis, development_trace_count=1)
+
+    coherence_gap = coverage_review("a" * 64, "request", development_trace_count=1)
+    coherence_gap["evolution_assessment"]["explanatory_coherence"] = {
+        "status": "GAP",
+        "rationale": "The frontier is not connected to the recovered history.",
+    }
+    gap = "The current frontier is not connected to the recovered history."
+    coherence_gap["evolution_assessment"]["material_evolution_gaps"] = [gap]
+    coherence_gap["gaps"] = [gap]
+    with pytest.raises(ValidationError, match="requires CONTINUE"):
+        validate_coverage_review(coherence_gap, development_trace_count=1)
+
+    coherence_gap["decision"] = "CONTINUE"
+    assert validate_coverage_review(coherence_gap, development_trace_count=1) is coherence_gap
+
+    unforwarded_gap = json.loads(json.dumps(coherence_gap))
+    unforwarded_gap["gaps"] = ["A different top-level gap."]
+    with pytest.raises(ValidationError, match="appear verbatim"):
+        validate_coverage_review(unforwarded_gap, development_trace_count=1)
+
+    missing_material_gap = coverage_review(
+        "a" * 64,
+        "request",
+        decision="CONTINUE",
+        development_trace_count=1,
+    )
+    missing_material_gap["gaps"] = ["A non-evolution evidence boundary remains open."]
+    missing_material_gap["evolution_assessment"]["foundation_to_frontier"]["status"] = "GAP"
+    with pytest.raises(ValidationError, match="mutually consistent"):
+        validate_coverage_review(missing_material_gap, development_trace_count=1)
+
+    missing_material_gap["evolution_assessment"]["foundation_to_frontier"]["status"] = "PASS"
+    missing_material_gap["evolution_assessment"]["material_evolution_gaps"] = [
+        "An important foundational node is missing."
+    ]
+    with pytest.raises(ValidationError, match="mutually consistent"):
+        validate_coverage_review(missing_material_gap, development_trace_count=1)
+
+    all_evolution_pass = coverage_review(
+        "a" * 64,
+        "request",
+        decision="CONTINUE",
+        development_trace_count=1,
+    )
+    all_evolution_pass["gaps"] = ["A non-evolution evidence boundary remains open."]
+    assert validate_coverage_review(all_evolution_pass, development_trace_count=1) is all_evolution_pass
+
+
+def test_landscape_audit_rejects_duplicate_evidence_ids_and_dangling_references(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "idea-stage"
+    stage.mkdir()
+    (stage / "ACTIVE_FIELD_MAP.md").write_text(render_field_map(field_map()), encoding="utf-8")
+    evidence = card({"read_event_id": "read", "content_sha256": "a" * 64})
+    (stage / "EVIDENCE_REGISTRY.jsonl").write_text(
+        json.dumps(evidence) + "\n", encoding="utf-8"
+    )
+    (stage / "LITERATURE_CORPUS.jsonl").write_text(
+        json.dumps({"source_id": "P1", "admission_status": "ADMIT_DECISION_GRADE"}) + "\n",
+        encoding="utf-8",
+    )
+    (stage / "SOURCE_ADMISSION_POLICY.yaml").write_text(
+        "citation threshold\nelite venues\nuser supplied track\n", encoding="utf-8"
+    )
+    (stage / "SEARCH_LEDGER.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "now",
+                "run_id": "run",
+                "stage": "METADATA_RETRIEVAL",
+                "action": "query",
+                "query_id": "query-1",
+                "query": "topic",
+                "paper_id": None,
+                "tool": "test",
+                "result_status": "complete",
+                "admission_decision": None,
+                "budget_before": 0,
+                "budget_after": 1,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    workflow = {
+        "artifact_manifest": {
+            "active_field_map": "idea-stage/ACTIVE_FIELD_MAP.md",
+            "evidence_registry": "idea-stage/EVIDENCE_REGISTRY.jsonl",
+            "literature_corpus": "idea-stage/LITERATURE_CORPUS.jsonl",
+            "source_admission_policy": "idea-stage/SOURCE_ADMISSION_POLICY.yaml",
+            "search_log": "idea-stage/SEARCH_LEDGER.jsonl",
+        }
+    }
+
+    assert audit_landscape(tmp_path, workflow)["ok"] is True
+
+    dangling = field_map()
+    dangling["assumption_effectiveness_failure_matrix"][0]["source_ids"] = ["missing"]
+    (stage / "ACTIVE_FIELD_MAP.md").write_text(render_field_map(dangling), encoding="utf-8")
+    result = audit_landscape(tmp_path, workflow)
+    assert result["ok"] is False
+    assert any("unresolved evidence IDs" in error for error in result["errors"])
+
+    (stage / "ACTIVE_FIELD_MAP.md").write_text(render_field_map(field_map()), encoding="utf-8")
+    (stage / "EVIDENCE_REGISTRY.jsonl").write_text(
+        json.dumps(evidence) + "\n" + json.dumps(evidence) + "\n", encoding="utf-8"
+    )
+    result = audit_landscape(tmp_path, workflow)
+    assert result["ok"] is False
+    assert any("duplicates Evidence Card source_id" in error for error in result["errors"])
+
+
+def test_provider_unavailable_requests_a_fulltext_batch_and_resumes_reading(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query(
+        "test field", "fake", lambda _: [metadata(), metadata(paper_id="P2")]
+    )
+    for paper_id in ("P1", "P2"):
+        assert controller.decide_admission(
+            paper_id,
+            screening_in_scope=True,
+            screening_basis="TITLE_ABSTRACT",
+            screening_reason="the source is in scope for the initial cognition pass",
+            reading_priority="RECENT_ELITE_FRONTIER",
+        ) == "ADMIT_FOR_READING"
+    controller.select_reading_subset(
+        ["P1", "P2"],
+        rationale="the initial cognition pass needs both complementary sources",
+        initial=True,
+    )
+    controller.finish_retrieval()
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P1", evidence)
+
+    def unavailable(_: dict) -> str:
+        raise ProviderUnavailable("test_fulltext", "no open copy")
+
+    result = controller.read_full_text("P2", "network", unavailable)
+    assert result["status"] == "FULLTEXT_PROVIDER_UNAVAILABLE"
+    assert controller.current_stage() == "PAPER_READING"
+    controller.finish_reading()
+    assert controller.allowed_actions() == [
+        "submit_human_search_results",
+        "submit_human_fulltext_batch",
+        "promote_user_source",
+        "reverify_admission",
+        "withdraw_admission",
+    ]
+    state = controller.status()["research_lit"]
+    assert state["papers"]["P2"]["admission_status"] == "ADMIT_FOR_READING"
+    assert state["papers"]["P2"]["fulltext_failure"]["read_event_id"]
+    assert [item["paper_id"] for item in state["human_fulltext_request"]["papers"]] == ["P2"]
+    source = tmp_path / "source-materials" / "p2.txt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("user supplied full paper", encoding="utf-8")
+    controller.submit_human_fulltext_batch(
+        {
+            "papers": [
+                {
+                    "paper_id": "P2",
+                    "source_path": "source-materials/p2.txt",
+                    "media_type": "text/plain",
+                }
+            ]
+        }
+    )
+    user_read = controller.read_registered_user_fulltext("P2")
+    user_evidence = card(user_read, paper_id="P2")
+    attest(controller, "paper_reader", user_evidence)
+    controller.submit_evidence_card("P2", user_evidence)
+    controller.finish_reading()
+    assert controller.current_stage() == "FIELD_SYNTHESIS"
+
+
+def test_fulltext_batch_combines_deferred_non_arxiv_after_arxiv_reads(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query(
+        "test field",
+        "fake",
+        lambda _: [metadata(), metadata(paper_id="P2"), metadata(paper_id="P3")],
+    )
+    for paper_id in ("P1", "P2", "P3"):
+        assert controller.decide_admission(
+            paper_id,
+            screening_in_scope=True,
+            screening_basis="TITLE_ABSTRACT",
+            screening_reason="the source is in scope for the initial cognition pass",
+            reading_priority="RECENT_ELITE_FRONTIER",
+        ) == "ADMIT_FOR_READING"
+    controller.select_reading_subset(
+        ["P1", "P2", "P3"],
+        rationale="the initial cognition pass needs the complete selected cohort",
+        initial=True,
+    )
+    controller.finish_retrieval()
+
+    p1_read = controller.read_full_text("P1", "arxiv", lambda _: "paper one")
+    deferred = controller.defer_fulltext_to_human_batch(
+        ["P2", "P3"], reason="non-arXiv admitted papers require user download"
+    )
+    assert deferred["deferred_paper_ids"] == ["P2", "P3"]
+    assert controller.current_stage() == "PAPER_READING"
+    assert controller.status()["research_lit"]["human_fulltext_request"] is None
+
+    evidence = card(p1_read, paper_id="P1")
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P1", evidence)
+
+    state = controller.finish_reading()["research_lit"]
+    assert state["current_stage"] == "HUMAN_SEARCH_REQUIRED"
+    assert [
+        item["paper_id"] for item in state["human_fulltext_request"]["papers"]
+    ] == ["P2", "P3"]
+    assert state["human_fulltext_request"]["target_directory"] == "source-materials/"
+
+
+def test_user_can_withdraw_unread_admission_during_paper_reading(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query(
+        "test field",
+        "fake-search",
+        lambda _: [metadata("P1"), metadata("P2")],
+    )
+    for paper_id in ("P1", "P2"):
+        assert controller.decide_admission(
+            paper_id,
+            screening_in_scope=True,
+            screening_basis="TITLE_ABSTRACT",
+            screening_reason="the source is in scope for the initial cognition pass",
+            reading_priority="RECENT_ELITE_FRONTIER",
+        ) == "ADMIT_FOR_READING"
+    controller.select_reading_subset(
+        ["P1", "P2"],
+        rationale="the initial cognition pass needs both selected sources",
+        initial=True,
+    )
+    controller.finish_retrieval()
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P1", evidence)
+
+    assert controller.withdraw_admission("P2", reason="user corrected the reading scope") == (
+        "EXCLUDE_USER_WITHDRAWN"
+    )
+    state = controller.finish_reading()["research_lit"]
+    assert state["current_stage"] == "FIELD_SYNTHESIS"
+    assert state["papers"]["P2"]["admission_status"] == "EXCLUDE_USER_WITHDRAWN"
+    assert state["papers"]["P2"]["admission_withdrawal"]["reason"] == (
+        "user corrected the reading scope"
+    )
+
+
+def test_admission_withdrawal_updates_pending_fulltext_batch_and_protects_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+
+    def unavailable(_: dict) -> str:
+        raise ProviderUnavailable("test_fulltext", "no open copy")
+
+    controller.read_full_text("P1", "network", unavailable)
+    controller.finish_reading()
+    assert controller.current_stage() == "HUMAN_SEARCH_REQUIRED"
+    controller.withdraw_admission("P1", reason="user removed the paper from scope")
+    state = controller.status()["research_lit"]
+    assert state["current_stage"] == "PAPER_READING"
+    assert state["human_fulltext_request"] is None
+
+    accepted_root = tmp_path / "accepted"
+    accepted_root.mkdir()
+    monkeypatch.chdir(accepted_root)
+    controller = start_controller(accepted_root)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P1", evidence)
+    with pytest.raises(ControllerError, match="accepted Evidence Card"):
+        controller.withdraw_admission("P1", reason="too late")
+
+
+def test_admitted_identity_can_be_corrected_only_before_evidence(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+
+    correction = controller.reverify_admission(
+        "P1",
+        reason="duplicate-title verifier selected the conference version",
+        identity_verifier=lambda _: {
+            "identity_status": "verified",
+            "identity_provider": "crossref_metadata",
+            "title": "Test paper",
+            "authors": ["A. Author"],
+            "year": 2025,
+            "venue": "Test Elite Venue",
+            "doi": "10.1/corrected",
+            "doi_or_stable_url": "https://doi.org/10.1/corrected",
+            "publication_type": "journal-article",
+        },
+    )
+    assert correction["previous"]["doi_or_stable_url"] == "https://doi.org/10.1/test"
+    assert correction["corrected"]["doi"] == "10.1/corrected"
+    assert controller.status()["research_lit"]["papers"]["P1"]["admission_status"] == (
+        "ADMIT_FOR_READING"
+    )
+
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    evidence = card(read)
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P1", evidence)
+    with pytest.raises(ControllerError, match="accepted Evidence Card"):
+        controller.reverify_admission(
+            "P1",
+            reason="too late",
+            identity_verifier=lambda paper: paper,
+        )
+
+
+def test_discovered_paper_can_be_promoted_when_user_later_supplies_fulltext(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query(
+        "test field",
+        "fake-search",
+        lambda _: [metadata("P1"), {**metadata("P2"), "identity_status": "verify_pending"}],
+    )
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="the source is in scope for the initial cognition pass",
+        reading_priority="RECENT_ELITE_FRONTIER",
+    ) == "ADMIT_FOR_READING"
+    assert controller.decide_admission(
+        "P2",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="the discovered source remains in scope pending identity verification",
+        reading_priority="RECENT_ELITE_FRONTIER",
+        fulltext_selected=False,
+        fulltext_selection_reason="defer full-text selection until the user supplies the identified source",
+    ) == "HOLD_IDENTITY"
+    controller.select_reading_subset(
+        ["P1"],
+        rationale="the verified source provides the minimal initial cognition pass",
+        initial=True,
+    )
+    controller.finish_retrieval()
+    source = tmp_path / "source-materials" / "p2.pdf"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"user supplied paper")
+
+    promoted = controller.promote_user_source(
+        "P2",
+        source_path="source-materials/p2.pdf",
+        reason="user identified this paper as required high-impact evidence",
+        media_type="application/pdf",
+        identity_verifier=lambda paper: {
+            **paper,
+            "identity_status": "verified",
+            "identity_provider": "test_verifier",
+            "doi": "10.1/promoted",
+        },
+    )
+
+    assert promoted["admission_status"] == "USER_SUPPLIED_READ"
+    assert promoted["source_origin"] == "gateway_discovery"
+    assert promoted["identity_status"] == "verified"
+    assert Path(promoted["user_fulltext"]["source_path"]) == Path("source-materials/p2.pdf")
+    controller.select_reading_subset(
+        ["P2"],
+        rationale="the user-supplied in-scope source now completes the initial cognition pass",
+    )
+    assert controller.read_registered_user_fulltext("P2")["read_event_id"]
+    ledger = (tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert '"action": "user_source_promotion"' in ledger
+    assert '"admission_decision": "USER_SUPPLIED_READ"' in ledger
+
+
+def test_user_source_promotion_keeps_scope_and_evidence_guards(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query("test field", "fake-search", lambda _: [metadata("P1")])
+    controller.decide_admission("P1", screening_in_scope=False)
+    outside = tmp_path / "outside.pdf"
+    outside.write_bytes(b"paper")
+    with pytest.raises(ControllerError, match="inside source-materials"):
+        controller.promote_user_source(
+            "P1", source_path="outside.pdf", reason="user supplied the paper"
+        )
+
+
+def test_all_unavailable_reads_cannot_create_evidence_free_field_map(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+
+    def unavailable(_: dict) -> str:
+        raise ProviderUnavailable("test_fulltext", "no open copy")
+
+    result = controller.read_full_text("P1", "network", unavailable)
+    assert result["status"] == "FULLTEXT_PROVIDER_UNAVAILABLE"
+    assert controller.current_stage() == "PAPER_READING"
+    controller.finish_reading()
+    assert controller.current_stage() == "HUMAN_SEARCH_REQUIRED"
+    assert controller.status()["research_lit"]["human_fulltext_request"]["papers"][0]["paper_id"] == "P1"
+
+
+def test_main_agent_handles_planning_and_routine_synthesis_without_subagent(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    reach_synthesis(controller)
+    state = controller.submit_field_map(field_map("PARTIAL"))
+    assert state["research_lit"]["current_stage"] == "QUERY_PLANNING"
+    assert state["research_lit"]["coverage_review_request"] is None
+    assert controller.allowed_agents() == ["main_research_agent"]
+
+
+def test_reviewer_runs_only_with_controller_request_and_exact_hash(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    with pytest.raises(ControllerError, match="stale or unknown"):
+        controller.submit_coverage_review(coverage_review(digest, "forged"))
+    with pytest.raises(ControllerError, match="does not match"):
+        controller.submit_coverage_review(coverage_review("0" * 64, request_id))
+    with pytest.raises(ControllerError, match="no externally attested reviewer result"):
+        controller.submit_coverage_review(coverage_review(digest, request_id))
+    assert controller.current_stage() == "COVERAGE_REVIEW"
+
+
+def test_formal_gate_rejects_workspace_forgery_and_input_hash_drift(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+
+    controller.start_current_phase()
+    candidate = tmp_path / "idea-stage" / "PROBLEM_CANDIDATES.md"
+    candidate.write_text("# Problems\nP-1", encoding="utf-8")
+    (tmp_path / "idea-stage" / "PROBLEM_CANDIDATES.jsonl").write_text(
+        problem_candidate(), encoding="utf-8"
+    )
+    controller.complete_current_phase()
+    controller.start_current_phase()
+    verdict_path = tmp_path / "idea-stage" / "PROBLEM_QUALITY_VERDICTS.jsonl"
+    request = run_state._find_phase(
+        controller.status(), "problem_quality_gate"
+    )["review_request"]
+    valid_verdict = formal_verdict_artifact(controller, verdict_id="forged-verdict")
+    verdict_path.write_text(
+        valid_verdict.replace(request["id"], "wrong-request-id"), encoding="utf-8"
+    )
+    with pytest.raises(ControllerError, match="review_request_id"):
+        controller.complete_current_phase()
+    reviewed_hash = next(iter(request["artifact_bindings"].values()))
+    verdict_path.write_text(
+        valid_verdict.replace(reviewed_hash, "0" * 64), encoding="utf-8"
+    )
+    with pytest.raises(ControllerError, match="reviewed_artifact_hashes"):
+        controller.complete_current_phase()
+    verdict_path.write_text(valid_verdict, encoding="utf-8")
+    controller.complete_current_phase()
+    verdict_path.write_text(
+        formal_verdict_artifact(
+            controller, verdict_id="forged-verdict", reviewer="gemini-2.5-pro"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ControllerError, match="acceptance provenance"):
+        controller.accept_current_phase("forged-verdict", "claude-sonnet-4")
+    verdict_path.write_text(valid_verdict, encoding="utf-8")
+    forged = (
+        tmp_path / ".aris" / "agent-attestations" / "independent_problem_reviewer"
+        / f"{request['id']}.json"
+    )
+    forged.parent.mkdir(parents=True, exist_ok=True)
+    forged.write_text('{"agent_id":"forged"}', encoding="utf-8")
+    with pytest.raises(ControllerError, match="no externally attested reviewer result"):
+        controller.accept_current_phase("forged-verdict", "claude-sonnet-4")
+
+    candidate.write_text("# Problems\nP-1 tampered", encoding="utf-8")
+    with pytest.raises(ControllerError, match="changed after acceptance"):
+        controller.accept_current_phase("forged-verdict", "claude-sonnet-4")
+
+
+def test_happy_path_reaches_and_passes_real_scope_human_gate(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    state = controller.submit_coverage_review(review)
+    assert state["research_lit"]["waiting_for"] == "scope_human_approval"
+    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
+        controller.human_approve("scope_human_approval", "approve")
+    final = approve(controller, "scope_human_approval")
+    assert final["research_lit"]["current_stage"] == "LANDSCAPE_ACCEPTED"
+    assert run_state._find_phase(final, "scope_human_approval")["status"] == "human_accepted"
+    assert controller.current_stage() == "PROBLEM_GENERATION"
+    assert controller.allowed_actions() == ["start_phase"]
+    handoff = final["scientific_core"]["landscape_handoff"]
+    assert handoff["scope_approval"]["request_id"]
+    assert handoff["artifacts"]["idea-stage/ACTIVE_FIELD_MAP.md"]["sha256"]
+
+
+def test_running_problem_lead_queries_preserve_context_and_query_plan_history(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+
+    field_map_sha256 = controller.status()["research_lit"]["accepted_artifacts"][
+        "active_field_map"
+    ]["sha256"]
+
+    def lead_plan(*, statement: str, dimension: str = "Unresolvedness") -> dict:
+        return {
+            "coverage_gaps": [],
+            "queries": [{
+                "query": "calibration failure closest prior",
+                "purpose": "test the closest prior residual delta",
+                "expected_close_condition": "identify whether the stated scope remains unresolved",
+                "lead_id": "lead-calibration-boundary",
+                "lead_statement": statement,
+                "active_field_map_sha256": field_map_sha256,
+                "decision_dimension": dimension,
+            }],
+        }
+
+    # Pending problem generation cannot initiate an incremental literature pass.
+    with pytest.raises(ControllerError, match="incremental literature is allowed"):
+        controller.submit_query_plan(lead_plan(statement="Calibration fails under shift."))
+    assert controller.allowed_actions() == ["start_phase"]
+
+    controller.start_current_phase()
+    with pytest.raises(ControllerError, match="decision_dimension"):
+        controller.submit_query_plan(
+            lead_plan(statement="Calibration fails under shift.", dimension="Novelty")
+        )
+    first_plan = lead_plan(statement="Calibration fails under shift.")
+    controller.submit_query_plan(first_plan)
+    first_path = tmp_path / ".aris" / "canonical" / "run-1" / "incremental-query-plan-problem_generation.json"
+    first_bytes = first_path.read_bytes()
+    controller.execute_query("calibration failure closest prior", "fake", lambda _: [metadata("P2")])
+    automatic = controller.status()["research_lit"]["query_events"]["Q0002"]
+    expected_context = {
+        "phase": "problem_generation",
+        "query_plan_sha256": sha256_file(first_path),
+        "lead_id": "lead-calibration-boundary",
+        "lead_statement": "Calibration fails under shift.",
+        "active_field_map_sha256": field_map_sha256,
+        "decision_dimension": "Unresolvedness",
+        "purpose": "test the closest prior residual delta",
+        "expected_close_condition": "identify whether the stated scope remains unresolved",
+    }
+    assert automatic["query_context"] == expected_context
+    assert automatic["query_plan_sha256"] == expected_context["query_plan_sha256"]
+
+    # No mature Candidate was produced: the Lead may simply be rejected and
+    # the running phase can continue its ordinary cognition loop.
+    controller.decide_admission(
+        "P2",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="the Lead requires a direct closest-prior check",
+        reading_priority="RECENT_ELITE_FRONTIER",
+    )
+    controller.finish_retrieval()
+    evidence = card(controller.read_full_text("P2", "fake-paper", lambda _: "full paper"), "P2")
+    controller.submit_evidence_card("P2", evidence)
+    accepted_card = json.loads(
+        (tmp_path / ".aris" / "canonical" / "run-1" / "evidence-P2.json").read_text(encoding="utf-8")
+    )
+    assert accepted_card["problem_lead_search_contexts"] == [expected_context]
+    controller.finish_reading()
+    assert controller.current_stage() == "PROBLEM_GENERATION"
+    assert not (tmp_path / "idea-stage" / "PROBLEM_CANDIDATES.jsonl").exists()
+
+    # Narrow/reframe uses the same running derivation.  The old accepted bytes
+    # survive because the first plan was formally referenced by Q0002.
+    controller.submit_query_plan(lead_plan(statement="Calibration fails only under covariate shift."))
+    history = controller.status()["research_lit"]["query_plan_history"]
+    assert history[-1]["sha256"] == expected_context["query_plan_sha256"]
+    archive = tmp_path / history[-1]["archive_path"]
+    assert archive.read_bytes() == first_bytes
+    assert "evidence:P2" in controller.status()["research_lit"]["incremental_evidence_by_phase"]["problem_generation"]
+
+    with pytest.raises(HumanSearchRequired) as required:
+        controller.execute_query(
+            "calibration failure closest prior",
+            "fake",
+            lambda _: (_ for _ in ()).throw(HumanSearchRequired([])),
+        )
+    human_query = required.value.request["queries"][0]
+    assert human_query["query_context"]["lead_statement"] == "Calibration fails only under covariate shift."
+    controller.submit_human_search_results(
+        {"queries": [{"query_id": human_query["query_id"], "results": []}]}
+    )
+    human_event = controller.status()["research_lit"]["query_events"][human_query["query_id"]]
+    assert human_event["query_context"] == human_query["query_context"]
+    assert controller.status()["scientific_core"]["current_phase"] == "problem_generation"
+
+
+def test_incremental_reading_deferred_fulltext_enters_human_batch(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+    controller.start_current_phase()
+
+    field_map_sha256 = controller.status()["research_lit"]["accepted_artifacts"][
+        "active_field_map"
+    ]["sha256"]
+    controller.submit_query_plan({
+        "coverage_gaps": [],
+        "queries": [{
+            "query": "calibration failure closest prior",
+            "purpose": "test the closest prior residual delta",
+            "expected_close_condition": "identify whether the stated scope remains unresolved",
+            "lead_id": "lead-calibration-boundary",
+            "lead_statement": "Calibration fails under shift.",
+            "active_field_map_sha256": field_map_sha256,
+            "decision_dimension": "Unresolvedness",
+        }],
+    })
+    controller.execute_query(
+        "calibration failure closest prior", "fake", lambda _: [metadata("P2")]
+    )
+    controller.decide_admission(
+        "P2",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="the Lead requires a direct closest-prior check",
+        reading_priority="RECENT_ELITE_FRONTIER",
+    )
+    controller.finish_retrieval()
+    controller.defer_fulltext_to_human_batch(
+        ["P2"], reason="non-arXiv admitted paper requires user download"
+    )
+
+    state = controller.finish_reading()["research_lit"]
+
+    assert state["current_stage"] == "HUMAN_SEARCH_REQUIRED"
+    assert state["incremental_literature_active"]["phase"] == "problem_generation"
+    assert [
+        item["paper_id"] for item in state["human_fulltext_request"]["papers"]
+    ] == ["P2"]
+    assert state["human_fulltext_request"]["target_directory"] == "source-materials/"
+
+
+def test_query_plan_history_boundary_is_phase_agnostic(tmp_path: Path) -> None:
+    """The one history boundary also preserves another incremental phase's plan."""
+
+    controller = start_controller(tmp_path)
+    plan_path = tmp_path / ".aris" / "canonical" / "run-1" / "incremental-query-plan-root_cause_analysis.json"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text('{"queries":["diagnostic gap"]}\n', encoding="utf-8")
+    plan_sha256 = sha256_file(plan_path)
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        research["accepted_artifacts"]["incremental-query-plan-root_cause_analysis"] = {
+            "path": str(plan_path.relative_to(tmp_path)),
+            "validator_result": "PASS",
+            "sha256": plan_sha256,
+            "accepted_at": "2026-08-20T00:00:00Z",
+        }
+        research["query_events"]["Q9999"] = {"query_plan_sha256": plan_sha256}
+        controller._archive_accepted_query_plan_if_referenced(
+            research, "incremental-query-plan-root_cause_analysis"
+        )
+        history = research["query_plan_history"]
+    archive = tmp_path / history[-1]["archive_path"]
+    assert archive.read_bytes() == plan_path.read_bytes()
+
+
+def test_explicit_problem_revision_creates_a_draft_version_and_requires_reacceptance(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+
+    def write(relative: str, content: str) -> None:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    def execute(files: dict[str, str]) -> None:
+        controller.start_current_phase()
+        for relative, content in files.items():
+            write(relative, content() if callable(content) else content)
+        controller.complete_current_phase()
+
+    execute({
+        "idea-stage/PROBLEM_CANDIDATES.md": "# Problems\nP-1",
+        "idea-stage/PROBLEM_CANDIDATES.jsonl": problem_candidate(),
+    })
+    execute({"idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl": lambda: formal_verdict_artifact(controller, verdict_id="quality-v1")})
+    accept_formal(controller, "quality-v1", "claude-sonnet-4")
+    execute({"idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl": lambda: formal_verdict_artifact(controller, verdict_id="novelty-v1")})
+    accept_formal(controller, "novelty-v1", "claude-sonnet-4")
+    write_problem_handoffs(controller)
+    approve(controller, "problem_acceptance", selected_id="P-1")
+    assert controller.status()["scientific_core"]["active_problem_version"]["version"] == 1
+
+    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
+        controller.revise_problem("New evidence narrows the accepted phenomenon boundary.")
+    revised = revise_problem(
+        controller, "New evidence narrows the accepted phenomenon boundary."
+    )
+    core = revised["scientific_core"]
+    assert controller.current_stage() == "PROBLEM_GENERATION"
+    assert core["active_problem_version"] is None
+    pending = core["pending_problem_revision"]
+    assert pending["problem_id"] == "P-1"
+    assert pending["version"] == 2 and pending["parent_version"] == 1
+    assert pending["status"] == "draft"
+    assert pending["reason"] == "New evidence narrows the accepted phenomenon boundary."
+    assert pending["source"] == "explicit_user_revision"
+    assert pending["allow_problem_replacement"] is False
+    assert core["problem_versions"][-1]["status"] == "superseded"
+    assert core["approvals"][-1]["gate"] == "problem_revision"
+    assert core["approvals"][-1]["decision"] == "approve"
+
+    execute({
+        "idea-stage/PROBLEM_CANDIDATES.md": "# Problems\nP-1 revised",
+        "idea-stage/PROBLEM_CANDIDATES.jsonl": problem_candidate(),
+    })
+    execute({"idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl": lambda: formal_verdict_artifact(controller, verdict_id="quality-v2")})
+    accept_formal(controller, "quality-v2", "claude-sonnet-4")
+    execute({"idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl": lambda: formal_verdict_artifact(controller, verdict_id="novelty-v2")})
+    accept_formal(controller, "novelty-v2", "claude-sonnet-4")
+    write_problem_handoffs(controller)
+    assert controller.current_stage() == "PROBLEM_HUMAN_ACCEPTANCE"
+    with pytest.raises(ControllerError, match="human checkpoint"):
+        controller.start_current_phase()
+    assert controller.status()["scientific_core"]["active_problem_version"] is None
+    approve(controller, "problem_acceptance", selected_id="P-1")
+    active = controller.status()["scientific_core"]["active_problem_version"]
+    assert active["problem_id"] == "P-1" and active["version"] == 2
+
+
+def test_controller_drives_post_landscape_flow_and_waits_for_user_validation(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+
+    def write_outputs(files: dict[str, str]) -> None:
+        for relative, content in files.items():
+            path = tmp_path / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content() if callable(content) else content, encoding="utf-8")
+
+    root_diagnostic_binding: dict[str, str] = {}
+
+    def execute_phase(files: dict[str, str]) -> None:
+        controller.start_current_phase()
+        write_outputs(files)
+        if controller.status()["scientific_core"]["current_phase"] == "root_cause_analysis":
+            assert controller.allowed_actions() == ["submit_query_plan", "complete_phase"]
+        if controller.status()["scientific_core"]["current_phase"] == "root_cause_gate":
+            request = run_state._find_phase(
+                controller.status(), "root_cause_gate"
+            )["review_request"]
+            for path, digest in root_diagnostic_binding.items():
+                assert request["artifact_bindings"][path] == digest
+            verdict = json.loads((tmp_path / "idea-stage" / "ROOT_CAUSE_VERDICT.json").read_text(encoding="utf-8"))
+            attest_current_review(
+                controller, str(verdict["verdict_id"]), str(verdict["reviewer"]),
+                decision=str(verdict["decision"]),
+            )
+        controller.complete_current_phase()
+
+    execute_phase(
+        {
+            "idea-stage/PROBLEM_CANDIDATES.md": "# Problems\nP-1",
+                "idea-stage/PROBLEM_CANDIDATES.jsonl": problem_candidate(),
+        }
+    )
+    assert controller.current_stage() == "PROBLEM_QUALITY_GATE"
+
+    execute_phase(
+        {"idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl": lambda: formal_verdict_artifact(controller, verdict_id="quality-verdict-1")}
+    )
+    accept_formal(controller, "quality-verdict-1", "claude-sonnet-4")
+    quality_hook = controller.status()["scientific_core"]["accepted_artifacts"][
+        "idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl"
+    ]
+    assert quality_hook["acceptance"]["verdict_id"] == "quality-verdict-1"
+    assert quality_hook["upstream_snapshot"][
+        "idea-stage/PROBLEM_CANDIDATES.md"
+    ]
+    execute_phase(
+        {"idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl": lambda: formal_verdict_artifact(controller, verdict_id="novelty-verdict-1")}
+    )
+    accept_formal(controller, "novelty-verdict-1", "claude-sonnet-4")
+
+    assert controller.allowed_actions() == ["human_approve"]
+    assert controller.allowed_agents() == ["main_research_agent"]
+    write_problem_handoffs(controller)
+    with pytest.raises(ControllerError, match="selected_id"):
+        controller.human_approve("problem_acceptance", "approve")
+    approve(controller, "problem_acceptance", selected_id="P-1")
+    first_problem_version = controller.status()["scientific_core"]["active_problem_version"]
+    assert first_problem_version["problem_id"] == "P-1"
+    assert first_problem_version["version"] == 1
+
+    contract_hash = sha256_file(tmp_path / "idea-stage" / "RESEARCH_CONTRACT.md")
+    evidence_hash = sha256_file(tmp_path / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md")
+    analysis = {
+        "schema_version": 1,
+        "run_id": "run-1",
+        "analysis_id": "RCA-1",
+        "problem_id": "P-1",
+        "problem_contract_sha256": contract_hash,
+        "evidence_capsule_sha256": evidence_hash,
+        "failure_observations": [{
+            "observation_id": "O-1", "phenomenon": "failure", "conditions": "shift",
+            "abnormal_variables": ["error"], "evidence_source_type": "literature",
+            "evidence_refs": ["P1"],
+            "epistemic_status": "supported",
+        }],
+        "phenomenon_clusters": [{
+            "cluster_id": "C-1", "observation_ids": ["O-1"],
+            "grouping_rationale": "shared observed failure",
+        }],
+        "causal_depth_traces": [{
+            "trace_id": "T-1", "cluster_id": "C-1", "why_steps": [{
+                "step_id": "W-1", "effect": "failure", "candidate_cause": "miscalibration",
+                "evidence_refs": ["P1"], "epistemic_status": "supported",
+                "discriminating_observation": "calibration remains stable",
+            }],
+        }],
+        "causal_chains": [{
+            "chain_id": "CHAIN-1", "cluster_ids": ["C-1"],
+            "conditions_or_input_change": "shift", "mechanism_failure": "miscalibration",
+            "intermediate_state_abnormality": "underestimated uncertainty",
+            "final_failure_phenomenon": "failure", "evidence_refs": ["P1"],
+            "alternative_explanations": [{
+                "explanation_id": "ALT-1", "mechanism": "noise",
+                "epistemic_status": "preliminary", "discriminating_evidence": "clean data",
+            }],
+            "intervention_target": "calibration", "falsifier": "correction has no effect",
+            "epistemic_status": "supported",
+        }],
+        "primary_causal_chain_ids": ["CHAIN-1"],
+        "unresolved_questions": [],
+        "analysis_provenance": {
+            "author_role": "main_research_agent", "created_at": "2026-08-10T00:00:00Z",
+            "source_artifact_ids": ["P1"],
+        },
+    }
+    execute_phase(
+        {
+            "idea-stage/ROOT_CAUSE_ANALYSIS.json": json.dumps(analysis),
+            "idea-stage/ROOT_CAUSE_ANALYSIS.md": (
+                f"# Root cause\nRCA-1; P-1; CHAIN-1; {contract_hash}; {evidence_hash}"
+            ),
+        }
+    )
+    diagnostic_card = tmp_path / "idea-stage" / "EVIDENCE_CARD_RCA-DEEPEN.json"
+    diagnostic_card.write_text('{"source_id":"P2"}\n', encoding="utf-8")
+    diagnostic_hash = sha256_file(diagnostic_card)
+    root_diagnostic_binding["idea-stage/EVIDENCE_CARD_RCA-DEEPEN.json"] = diagnostic_hash
+    with controller._store.mutate() as state:
+        state["research_lit"]["incremental_evidence_by_phase"]["root_cause_analysis"] = {
+            "evidence:RCA-DEEPEN": {
+                "path": "idea-stage/EVIDENCE_CARD_RCA-DEEPEN.json",
+                "sha256": diagnostic_hash,
+            }
+        }
+    analysis_hash = sha256_file(tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json")
+    verdict = {
+        "schema_version": 1, "run_id": "run-1", "verdict_id": "root-verdict-1",
+        "reviewer": "claude-sonnet-4", "analysis_id": "RCA-1",
+        "reviewed_analysis_sha256": analysis_hash,
+        "problem_contract_sha256": contract_hash,
+        "evidence_capsule_sha256": evidence_hash,
+        "decision": "REOPEN_PROBLEM", "reasons": ["problem evidence must be reopened"], "issues": [{
+            "issue_id": "RCA-I-1", "severity": "BLOCKING", "message": "reopen problem"
+        }],
+        "observation_fidelity": "PASS", "grouping_adequacy": "PASS",
+        "causal_depth": "PASS", "explanatory_coverage": "PASS",
+        "evidence_calibration": "PASS", "intervention_relevance": "PASS",
+        "falsifiability": "PASS",
+    }
+    execute_phase({"idea-stage/ROOT_CAUSE_VERDICT.json": json.dumps(verdict)})
+    assert controller.allowed_actions() == ["return_phase", "revise_problem"]
+    attest_current_review(
+        controller, "root-verdict-1", "claude-sonnet-4", decision="REOPEN_PROBLEM"
+    )
+    returned = controller.return_current_phase(
+        "root-verdict-1",
+        "claude-sonnet-4",
+        lesson={
+            "failure_phenomenon": "The selected problem cannot support the claimed diagnosis.",
+            "wrong_assumption_or_reason": "The problem evidence was treated as sufficient before diagnosis review.",
+            "evidence_refs": ["ROOT_CAUSE_VERDICT.json: RCA-I-1"],
+            "future_check": "Before accepting a problem, check that its evidence can support a discriminating diagnosis.",
+        },
+    )
+    assert controller.current_stage() == "PROBLEM_GENERATION"
+    core = controller.status()["scientific_core"]
+    assert core["active_problem_version"] is None
+    assert core["pending_problem_revision"]["problem_id"] == "P-1"
+    assert core["pending_problem_revision"]["version"] == 2
+    assert core["problem_versions"][-1]["status"] == "superseded"
+    assert "idea-stage/RESEARCH_CONTRACT.md" not in core["accepted_artifacts"]
+    assert not (tmp_path / "idea-stage" / "RESEARCH_CONTRACT.md").exists()
+    assert not (tmp_path / "idea-stage" / "ROOT_CAUSE_VERDICT.json").exists()
+    return_record = core["return_history"][-1]
+    assert return_record["id"].startswith("return-")
+    assert return_record["archive_root"] == returned["scientific_core"]["return_history"][-1]["archive_root"]
+    archive = tmp_path / return_record["archive_root"] / "artifacts"
+    archived_contract = archive / "idea-stage" / "RESEARCH_CONTRACT.md"
+    archived_verdict = archive / "idea-stage" / "ROOT_CAUSE_VERDICT.json"
+    assert "- **Problem ID**: P-1" in archived_contract.read_text(encoding="utf-8")
+    assert archived_verdict.is_file()
+    invalidated_contract = next(
+        record
+        for record in core["invalidated_artifacts"]
+        if record["archive_path"] == str(archived_contract.relative_to(tmp_path))
+    )
+    assert invalidated_contract["status"] == "invalidated"
+    lesson = tmp_path / "LESSONS_LEARNED.md"
+    assert "Failure phenomenon:" in lesson.read_text(encoding="utf-8")
+    assert "# Contract" not in lesson.read_text(encoding="utf-8")
+    # The first RCA's phase-scoped Evidence remains historical after the
+    # problem version changes; the revised diagnosis needs a new current
+    # binding rather than inheriting it.
+    root_diagnostic_binding.clear()
+
+    execute_phase(
+        {
+            "idea-stage/PROBLEM_CANDIDATES.md": "# Problems\nP-1 revised",
+            "idea-stage/PROBLEM_CANDIDATES.jsonl": problem_candidate(),
+        }
+    )
+    execute_phase(
+        {"idea-stage/PROBLEM_QUALITY_VERDICTS.jsonl": lambda: formal_verdict_artifact(controller, verdict_id="quality-verdict-2")}
+    )
+    accept_formal(controller, "quality-verdict-2", "claude-sonnet-4")
+    execute_phase(
+        {"idea-stage/PROBLEM_NOVELTY_VERDICTS.jsonl": lambda: formal_verdict_artifact(controller, verdict_id="novelty-verdict-2")}
+    )
+    accept_formal(controller, "novelty-verdict-2", "claude-sonnet-4")
+    write_problem_handoffs(controller)
+    assert controller.status()["scientific_core"]["active_problem_version"] is None
+    with pytest.raises(ControllerError, match="human checkpoint"):
+        controller.start_current_phase()
+    approve(controller, "problem_acceptance", selected_id="P-1")
+    assert controller.status()["scientific_core"]["active_problem_version"]["version"] == 2
+    contract_hash = sha256_file(tmp_path / "idea-stage" / "RESEARCH_CONTRACT.md")
+    evidence_hash = sha256_file(tmp_path / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md")
+    analysis["problem_contract_sha256"] = contract_hash
+    analysis["evidence_capsule_sha256"] = evidence_hash
+
+    execute_phase(
+        {
+            "idea-stage/ROOT_CAUSE_ANALYSIS.json": json.dumps(analysis),
+            "idea-stage/ROOT_CAUSE_ANALYSIS.md": (
+                f"# Root cause\nRCA-1; P-1; CHAIN-1; {contract_hash}; {evidence_hash}"
+            ),
+            }
+        )
+    analysis_hash = sha256_file(tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json")
+    verdict["reviewed_analysis_sha256"] = analysis_hash
+    verdict["problem_contract_sha256"] = contract_hash
+    verdict["evidence_capsule_sha256"] = evidence_hash
+    verdict["decision"] = "REVISE_DIAGNOSIS"
+    verdict["reasons"] = ["causal depth needs revision"]
+    verdict["issues"] = [{
+        "issue_id": "RCA-I-2", "severity": "BLOCKING", "message": "deepen trace"
+    }]
+    execute_phase({"idea-stage/ROOT_CAUSE_VERDICT.json": json.dumps(verdict)})
+    attest_current_review(
+        controller, "root-verdict-1", "claude-sonnet-4", decision="REVISE_DIAGNOSIS"
+    )
+    controller.return_current_phase("root-verdict-1", "claude-sonnet-4")
+    assert controller.current_stage() == "ROOT_CAUSE_ANALYSIS"
+
+    execute_phase(
+        {
+            "idea-stage/ROOT_CAUSE_ANALYSIS.json": json.dumps(analysis),
+            "idea-stage/ROOT_CAUSE_ANALYSIS.md": (
+                f"# Root cause\nRCA-1; P-1; CHAIN-1; {contract_hash}; {evidence_hash}"
+            ),
+        }
+    )
+    verdict["decision"] = "DIAGNOSIS_READY"
+    verdict["reasons"] = ["adequate after revision"]
+    verdict["issues"] = []
+    execute_phase({"idea-stage/ROOT_CAUSE_VERDICT.json": json.dumps(verdict)})
+    accept_formal(controller, "root-verdict-1", "claude-sonnet-4")
+
+    route_handoff = method_route_handoff(controller)
+    controller.start_current_phase()
+    write_outputs(
+        {
+            "idea-stage/METHOD_ROUTES.md": route_handoff["idea-stage/METHOD_ROUTES.md"],
+            "idea-stage/METHOD_ROUTES.jsonl": route_handoff["idea-stage/METHOD_ROUTES.jsonl"].replace(
+                contract_hash, "0" * 64
+            ),
+        }
+    )
+    with pytest.raises(ControllerError, match="does not match the active handoff"):
+        controller.complete_current_phase()
+    write_outputs(
+        {
+            "idea-stage/METHOD_ROUTES.md": route_handoff["idea-stage/METHOD_ROUTES.md"],
+            "idea-stage/METHOD_ROUTES.jsonl": route_handoff["idea-stage/METHOD_ROUTES.jsonl"],
+        }
+    )
+    controller.complete_current_phase()
+    write_outputs({"idea-stage/SELECTED_ROUTE.yaml": route_handoff["idea-stage/SELECTED_ROUTE.yaml"]})
+    wrong_selection = yaml.safe_load(route_handoff["idea-stage/SELECTED_ROUTE.yaml"])
+    wrong_selection["route_id"] = "R-missing"
+    write_outputs({"idea-stage/SELECTED_ROUTE.yaml": yaml.safe_dump(wrong_selection, sort_keys=False)})
+    with pytest.raises(ControllerError, match="does not identify a current method route"):
+        approve(controller, "route_selection", selected_id="R-missing")
+    write_outputs({"idea-stage/SELECTED_ROUTE.yaml": route_handoff["idea-stage/SELECTED_ROUTE.yaml"]})
+    with pytest.raises(ControllerError, match="does not match the Human selected_id"):
+        controller.human_approve("route_selection", "approve", selected_id="R-missing")
+    approve(controller, "route_selection", selected_id="R-1")
+
+    accepted_contract = tmp_path / "idea-stage" / "RESEARCH_CONTRACT.md"
+    accepted_contract_text = accepted_contract.read_text(encoding="utf-8")
+    accepted_contract.write_text("# silently changed problem", encoding="utf-8")
+    with pytest.raises(ControllerError, match="has changed"):
+        controller.start_current_phase()
+    accepted_contract.write_text(accepted_contract_text, encoding="utf-8")
+    controller.start_current_phase()
+    write_outputs(
+        {
+            "refine-logs/FINAL_PROPOSAL.md": route_handoff["refine-logs/FINAL_PROPOSAL.md"].replace(
+                "- **Selected route ID**: R-1", "- **Selected route ID**: R-missing"
+            ),
+            "refine-logs/FINAL_BLIND_REVIEW.md": lambda: formal_verdict_artifact(controller, verdict_id="refinement-verdict-1"),
+            "refine-logs/REFINE_STATE.json": '{"status":"complete"}\n',
+        }
+    )
+    with pytest.raises(ControllerError, match="Selected route ID does not match"):
+        controller.complete_current_phase()
+    write_outputs(
+        {
+            "refine-logs/FINAL_PROPOSAL.md": route_handoff["refine-logs/FINAL_PROPOSAL.md"],
+            "refine-logs/FINAL_BLIND_REVIEW.md": lambda: formal_verdict_artifact(
+                controller, verdict_id="refinement-revise-verdict", decision="REVISE"
+            ),
+            "refine-logs/REFINE_STATE.json": '{"status":"complete"}\n',
+        }
+    )
+    controller.complete_current_phase()
+    refinement_request = run_state._find_phase(
+        controller.status(), "method_refinement"
+    )["review_request"]
+    assert refinement_request["allowed_review_verdicts"] == [
+        "METHOD_READY", "REVISE", "RETHINK", "HOLD"
+    ]
+    assert controller.allowed_actions() == ["return_phase", "revise_problem"]
+    attest_current_review(
+        controller, "refinement-revise-verdict", "claude-sonnet-4", decision="REVISE"
+    )
+    controller.return_current_phase("refinement-revise-verdict", "claude-sonnet-4")
+    assert controller.current_stage() == "METHOD_REFINEMENT"
+    assert controller.status()["scientific_core"]["return_history"][-1]["return_target"] == "method_refinement"
+
+    controller.start_current_phase()
+    write_outputs(
+        {
+            "refine-logs/FINAL_PROPOSAL.md": route_handoff["refine-logs/FINAL_PROPOSAL.md"],
+            "refine-logs/FINAL_BLIND_REVIEW.md": lambda: formal_verdict_artifact(
+                controller, verdict_id="refinement-hold-verdict", decision="HOLD"
+            ),
+            "refine-logs/REFINE_STATE.json": '{"status":"complete"}\n',
+        }
+    )
+    controller.complete_current_phase()
+    assert controller.allowed_actions() == ["return_phase", "revise_problem"]
+    attest_current_review(
+        controller, "refinement-hold-verdict", "claude-sonnet-4", decision="HOLD"
+    )
+    controller.return_current_phase("refinement-hold-verdict", "claude-sonnet-4")
+    assert controller.current_stage() == "METHOD_REFINEMENT"
+    assert controller.status()["scientific_core"]["return_history"][-1]["return_target"] == "method_refinement"
+
+    controller.start_current_phase()
+    write_outputs(
+        {
+            "refine-logs/FINAL_PROPOSAL.md": route_handoff["refine-logs/FINAL_PROPOSAL.md"],
+            "refine-logs/FINAL_BLIND_REVIEW.md": lambda: formal_verdict_artifact(
+                controller, verdict_id="refinement-rethink-verdict", decision="RETHINK"
+            ),
+            "refine-logs/REFINE_STATE.json": '{"status":"complete"}\n',
+        }
+    )
+    controller.complete_current_phase()
+    attest_current_review(
+        controller, "refinement-rethink-verdict", "claude-sonnet-4", decision="RETHINK"
+    )
+    controller.return_current_phase("refinement-rethink-verdict", "claude-sonnet-4")
+    assert controller.current_stage() == "METHOD_DESIGN"
+    assert controller.status()["scientific_core"]["return_history"][-1]["return_target"] == "method_design"
+
+    controller.start_current_phase()
+    write_outputs(
+        {
+            "idea-stage/METHOD_ROUTES.md": route_handoff["idea-stage/METHOD_ROUTES.md"],
+            "idea-stage/METHOD_ROUTES.jsonl": route_handoff["idea-stage/METHOD_ROUTES.jsonl"],
+        }
+    )
+    controller.complete_current_phase()
+    write_outputs({"idea-stage/SELECTED_ROUTE.yaml": route_handoff["idea-stage/SELECTED_ROUTE.yaml"]})
+    approve(controller, "route_selection", selected_id="R-1")
+    controller.start_current_phase()
+    write_outputs(
+        {
+            "refine-logs/FINAL_PROPOSAL.md": route_handoff["refine-logs/FINAL_PROPOSAL.md"],
+            "refine-logs/FINAL_BLIND_REVIEW.md": lambda: formal_verdict_artifact(
+                controller, verdict_id="refinement-verdict-1"
+            ),
+            "refine-logs/REFINE_STATE.json": '{"status":"complete"}\n',
+        }
+    )
+    controller.complete_current_phase()
+    refinement_binding = controller.status()["scientific_core"]["accepted_artifacts"][
+        "refine-logs/FINAL_PROPOSAL.md"
+    ]["problem_version_binding"]
+    assert refinement_binding["version"] == 2
+    assert refinement_binding["contract_sha256"] == contract_hash
+    refinement_request = run_state._find_phase(
+        controller.status(), "method_refinement"
+    )["review_request"]
+    proposal_hash = sha256_file(tmp_path / "refine-logs" / "FINAL_PROPOSAL.md")
+    assert refinement_request["artifact_bindings"]["refine-logs/FINAL_PROPOSAL.md"] == proposal_hash
+    blind_review = tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md"
+    valid_blind_review = blind_review.read_text(encoding="utf-8")
+    blind_review.write_text(valid_blind_review.replace(proposal_hash, "0" * 64), encoding="utf-8")
+    with pytest.raises(ControllerError, match="reviewed_artifact_hashes"):
+        controller.accept_current_phase("refinement-verdict-1", "claude-sonnet-4")
+    blind_review.write_text(valid_blind_review, encoding="utf-8")
+    accept_formal(controller, "refinement-verdict-1", "claude-sonnet-4")
+    accepted_evidence = tmp_path / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md"
+    accepted_evidence_text = accepted_evidence.read_text(encoding="utf-8")
+    accepted_evidence.write_text("# silently changed evidence", encoding="utf-8")
+    with pytest.raises(ControllerError, match="accepted problem version changed"):
+        controller.start_current_phase()
+    accepted_evidence.write_text(accepted_evidence_text, encoding="utf-8")
+    execute_phase(
+        {"idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": lambda: formal_verdict_artifact(controller, verdict_id="final-novelty-verdict-1")}
+    )
+    final_novelty = tmp_path / "idea-stage" / "FINAL_METHOD_NOVELTY_VERDICT.md"
+    valid_final_novelty = final_novelty.read_text(encoding="utf-8")
+    final_novelty.write_text(
+        valid_final_novelty.replace("final-novelty-verdict-1", "wrong-final-verdict"),
+        encoding="utf-8",
+    )
+    with pytest.raises(ControllerError, match="acceptance provenance"):
+        controller.accept_current_phase("final-novelty-verdict-1", "claude-sonnet-4")
+    final_novelty.write_text(valid_final_novelty, encoding="utf-8")
+    accept_formal(controller, "final-novelty-verdict-1", "claude-sonnet-4")
+
+    write_outputs({"idea-stage/IDEA_REPORT.md": "# Confirmed method"})
+    final = approve(controller, "method_acceptance")
+
+    assert controller.current_stage() == "METHOD_CONFIRMED_AWAITING_USER_VALIDATION"
+    assert controller.allowed_actions() == ["validation_handoff"]
+    assert controller.allowed_agents() == []
+    entry = final["scientific_core"]["validation_entry"]
+    assert entry["status"] == "AWAITING_USER_INITIATION"
+    assert entry["entry_policy"] == "human_initiated_only"
+    assert entry["method_confirmation"]["approval_request_id"]
+    assert "idea-stage/IDEA_REPORT.md" in entry["accepted_method_artifacts"]
+    legacy_contract = tmp_path / "idea-stage" / "docs" / "research_contract.md"
+    legacy_contract.parent.mkdir(parents=True, exist_ok=True)
+    legacy_contract.write_text("legacy-only contract", encoding="utf-8")
+    handoff = controller.validation_handoff()
+    assert handoff["handoff_type"] == "FORMAL_CANONICAL_VALIDATION"
+    assert handoff["run_id"] == "run-1"
+    assert "idea-stage/RESEARCH_CONTRACT.md" in handoff["artifacts"]
+    assert "idea-stage/docs/research_contract.md" not in handoff["artifacts"]
+    proposal = tmp_path / "refine-logs" / "FINAL_PROPOSAL.md"
+    proposal.write_text("# changed after acceptance", encoding="utf-8")
+    with pytest.raises(ControllerError, match="missing or changed"):
+        controller.validation_handoff()
+    with pytest.raises(ControllerError, match="not active"):
+        controller.start_current_phase()
+
+
+def test_validation_handoff_rejects_prompt_or_legacy_files_without_formal_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    controller = start_controller(tmp_path)
+    proposal = tmp_path / "refine-logs" / "FINAL_PROPOSAL.md"
+    proposal.parent.mkdir(parents=True, exist_ok=True)
+    proposal.write_text("# Complete method supplied in prompt", encoding="utf-8")
+    legacy = tmp_path / "idea-stage" / "docs" / "research_contract.md"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("# Historic report-derived contract", encoding="utf-8")
+
+    with pytest.raises(
+        ControllerError, match="METHOD_CONFIRMED_AWAITING_USER_VALIDATION"
+    ):
+        controller.validation_handoff()
+
+    legacy_root = tmp_path / "legacy-ad-hoc"
+    run_state.start_run(legacy_root, "legacy", ["experiment"], executor="codex")
+    monkeypatch.chdir(legacy_root)
+    legacy_plan = legacy_root / "refine-logs" / "EXPERIMENT_PLAN.md"
+    legacy_plan.parent.mkdir(parents=True, exist_ok=True)
+    legacy_plan.write_text(
+        "execution_context: NON_CANONICAL_AD_HOC\n# user-supplied method\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ControllerError, match="managed .codex layer"):
+        ARISController(legacy_root, "legacy").validation_handoff()
+    assert legacy_plan.is_file()
+    assert build_parser().parse_args(["validation-handoff", "run-1"]).command == (
+        "validation-handoff"
+    )
+    assert build_parser().parse_args(
+        ["submit-validation-result", "run-1", "VALIDATION_RESULT.json"]
+    ).command == "submit-validation-result"
+
+
+def test_validation_result_closes_a_bound_canonical_handoff(tmp_path: Path) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    assert controller.allowed_actions() == ["validation_handoff"]
+    with pytest.raises(ControllerError, match="Controller-issued validation handoff"):
+        controller.submit_validation_result(
+            validation_result(controller, decision="VALIDATED", issue_handoff=False)
+        )
+
+    handoff = controller.validation_handoff()
+    assert controller.allowed_actions() == ["validation_handoff", "submit_validation_result"]
+    assert controller.allowed_agents() == ["result_to_claim_reviewer"]
+    reviewer_owned = validation_result(controller, decision="VALIDATED")
+    attest_validation_verdict(controller, reviewer_owned)
+    wrong_run = dict(reviewer_owned)
+    wrong_run["run_id"] = "other-run"
+    with pytest.raises(ControllerError, match="exact externally attested"):
+        controller.submit_validation_result(wrong_run)
+    wrong_handoff = dict(reviewer_owned)
+    wrong_handoff["handoff_sha256"] = "0" * 64
+    with pytest.raises(ControllerError, match="exact externally attested"):
+        controller.submit_validation_result(wrong_handoff)
+    main_rewrite = json.loads(json.dumps(reviewer_owned))
+    main_rewrite["mechanism_evidence_closure"][0]["observed_mechanism_change"] = (
+        "No mechanism change was observed."
+    )
+    with pytest.raises(ControllerError, match="exact externally attested"):
+        controller.submit_validation_result(main_rewrite)
+
+    stale = reviewer_owned
+    proposal = tmp_path / "refine-logs" / "FINAL_PROPOSAL.md"
+    original_proposal = proposal.read_text(encoding="utf-8")
+    proposal.write_text("# changed after handoff\n", encoding="utf-8")
+    with pytest.raises(ControllerError, match="missing or changed"):
+        controller.submit_validation_result(stale)
+    proposal.write_text(original_proposal, encoding="utf-8")
+
+    completed = controller.submit_validation_result(reviewer_owned)
+    core = completed["scientific_core"]
+    assert controller.current_stage() == "VALIDATION_CONFIRMED"
+    assert controller.allowed_actions() == []
+    assert core["validation_entry"]["handoff_sha256"] == handoff["handoff_sha256"]
+    result = core["validation_results"][-1]
+    assert result["decision"] == "VALIDATED"
+    assert (tmp_path / result["path"]).is_file()
+    with pytest.raises(ControllerError, match="METHOD_CONFIRMED_AWAITING_USER_VALIDATION"):
+        controller.validation_handoff()
+
+
+@pytest.mark.parametrize("invalid_must_id", ["OBL-MISSING", "OBL-OTHER-SET"])
+def test_validated_rejects_must_obligation_ids_outside_canonical_set(
+    tmp_path: Path, invalid_must_id: str
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    controller.validation_handoff()
+    result = validation_result(controller, decision="VALIDATED")
+    result["mechanism_evidence_closure"][0]["must_obligation_ids"] = [invalid_must_id]
+    attest_validation_verdict(controller, result)
+
+    with pytest.raises(ControllerError, match="MUST obligation IDs are invalid"):
+        controller.submit_validation_result(result)
+
+
+def test_validated_rejects_a_performance_only_mechanism_closure(tmp_path: Path) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    controller.validation_handoff()
+    result = validation_result(controller, decision="VALIDATED")
+    closure = result["mechanism_evidence_closure"][0]
+    closure["observed_mechanism_change"] = "No mechanism change was observed."
+    closure["performance_consequence"] = "Performance improved anyway."
+    closure["explanation_status"] = "PERFORMANCE_ONLY"
+    closure["mechanism_match"] = "DOES_NOT_MATCH_PREDICTION"
+    attest_validation_verdict(controller, result)
+    with pytest.raises(ControllerError, match="EXPLANATION_SUPPORTED"):
+        controller.submit_validation_result(result)
+
+
+@pytest.mark.parametrize(
+    ("decision", "target"),
+    [
+        ("METHOD_REFINEMENT_REQUIRED", "method_refinement"),
+        ("METHOD_ROUTE_REJECTED", "method_design"),
+        ("ROOT_CAUSE_REJECTED", "root_cause_analysis"),
+        ("PROBLEM_PREMISE_REJECTED", "problem_generation"),
+    ],
+)
+def test_validation_result_uses_fixed_canonical_return_targets(
+    tmp_path: Path, decision: str, target: str
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    verdict = validation_result(controller, decision=decision)
+    attest_validation_verdict(controller, verdict)
+    returned = controller.submit_validation_result(verdict)
+    core = returned["scientific_core"]
+    assert core["status"] == "ACTIVE"
+    assert core["current_phase"] == target
+    assert controller.current_stage() == target.upper()
+    return_record = core["return_history"][-1]
+    assert return_record["decision"] == decision
+    assert return_record["return_target"] == target
+    assert return_record["validation_result_id"] == core["validation_results"][-1]["id"]
+    assert any(Path(path).as_posix() == "idea-stage/IDEA_REPORT.md" for path in return_record["invalidated_artifact_paths"])
+    assert not (tmp_path / "idea-stage" / "IDEA_REPORT.md").exists()
+    if target == "problem_generation":
+        assert core["active_problem_version"] is None
+        assert core["pending_problem_revision"]["allow_problem_replacement"] is True
+    else:
+        assert core["active_problem_version"]["problem_id"] == "P-1"
+
+
+def test_tampering_accepted_policy_or_field_map_blocks_transition(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    policy = tmp_path / "idea-stage" / "SOURCE_ADMISSION_POLICY.yaml"
+    policy.write_text(policy.read_text(encoding="utf-8") + "\n# changed", encoding="utf-8")
+    with pytest.raises(ControllerError, match="changed after validation"):
+        controller.execute_query("test field", "fake", lambda _: [])
+
+    other = start_controller(tmp_path / "other")
+    digest, request_id = reach_coverage(other)
+    (other.root / "idea-stage" / "ACTIVE_FIELD_MAP.md").write_text("tampered", encoding="utf-8")
+    with pytest.raises(ControllerError, match="changed after validation"):
+        other.submit_coverage_review(coverage_review(digest, request_id))
+
+
+def test_alternate_workflow_and_legacy_in_place_conversion_are_rejected(tmp_path: Path) -> None:
+    alternate = tmp_path / "alternate.yaml"
+    alternate.write_text(WORKFLOW.read_text(encoding="utf-8"), encoding="utf-8")
+    with pytest.raises(ControllerError, match="canonical"):
+        ARISController.start(tmp_path, "alternate", alternate, executor="codex")
+    run_state.start_run(tmp_path, "legacy", ["landscape"], executor="codex")
+    with pytest.raises(ControllerError, match="legacy run"):
+        ARISController.start(tmp_path, "legacy", executor="codex")
+
+
+def test_workflow_hash_mismatch_requires_compatible_migration(tmp_path: Path) -> None:
+    write_policy(tmp_path)
+    controller = ARISController.start(tmp_path, "upgrade", executor="codex")
+    state = run_state._load(tmp_path, "upgrade")
+    old_sha256 = "1" * 64
+    state["workflow_sha256"] = old_sha256
+    state["workflow"]["workflow_id"] = "semantically-different-workflow"
+    run_state._save(tmp_path, "upgrade", state)
+    with pytest.raises(ValueError, match="canonical workflow"):
+        controller.status()
+    assert not hasattr(ARISController, "upgrade_workflow_at_initial_gate")
+    parser = build_parser()
+    commands = parser._subparsers._group_actions[0].choices
+    assert "upgrade-workflow" not in commands
+    assert "migrate-workflow" in commands
+    with pytest.raises(ControllerError, match="executed-stage semantics"):
+        controller.migrate_workflow_if_compatible()
+
+
+def test_compatible_workflow_migration_preserves_run_history(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    state = run_state._load(tmp_path, controller.run_id)
+    state["workflow_sha256"] = "1" * 64
+    state["workflow"]["scientific_core"]["incremental_literature"]["permitted_phases"] = [
+        "method_design"
+    ]
+    run_state._save(tmp_path, controller.run_id, state)
+
+    migrated = controller.migrate_workflow_if_compatible()
+
+    assert migrated["migration"]["from_workflow_sha256"] == "1" * 64
+    assert migrated["migration"]["to_workflow_sha256"] == controller.workflow_sha256
+    assert migrated["migration"]["executed_phases"] == ["landscape"]
+    restored = controller.status()
+    assert restored["workflow"] == controller.workflow
+    assert restored["workflow_migrations"][-1] == migrated["migration"]
+
+
+def test_compatible_workflow_migration_rejects_changed_literature_protocol(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    state = run_state._load(tmp_path, controller.run_id)
+    state["workflow_sha256"] = "1" * 64
+    state["workflow"]["research_lit"]["allowed_actions"]["METADATA_RETRIEVAL"].append(
+        "unreviewed_action"
+    )
+    run_state._save(tmp_path, controller.run_id, state)
+
+    with pytest.raises(ControllerError, match="research_lit"):
+        controller.migrate_workflow_if_compatible()
+
+
+def test_structural_paper_reading_migration_reuses_completed_events_and_resynthesizes_map(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    source = tmp_path / "source-materials" / "legacy-p1.txt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("full paper", encoding="utf-8")
+    active_map = tmp_path / "idea-stage" / "ACTIVE_FIELD_MAP.md"
+    active_map.write_text(render_field_map(field_map()), encoding="utf-8")
+    fulltext_before = controller.status()["research_lit"]["fulltext_count"]
+    read_events_before = controller.status()["research_lit"]["read_events"]
+
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        research["papers"]["P1"]["user_fulltext"] = {
+            "paper_id": "P1",
+            "source_path": "source-materials/legacy-p1.txt",
+            "source_sha256": read["content_sha256"],
+            "media_type": "text/plain",
+        }
+        research["active_reading_session"] = None
+        research["initial_screened_corpus_ids"] = None
+        research["initial_field_map_binding"] = None
+        research["formal_primary_selection"] = None
+        research["landscape_evidence_ids"] = []
+        research["accepted_artifacts"]["active_field_map"] = {
+            "path": "idea-stage/ACTIVE_FIELD_MAP.md",
+            "validator_result": "PASS",
+            "sha256": sha256_file(active_map),
+            "accepted_at": "2026-08-12T00:00:00Z",
+            "author_role": "main_research_agent",
+        }
+        state["workflow"] = json.loads(json.dumps(state["workflow"]))
+        state["workflow"]["research_lit"]["allowed_agents"]["PAPER_READING"] = [
+            "paper_reader"
+        ]
+        state["workflow_sha256"] = "1" * 64
+
+    migrated = controller.migrate_workflow_if_compatible()
+    migrated_state = controller.status()["research_lit"]
+    assert migrated["migration"]["migration_type"] == "STRUCTURAL_PAPER_READING_CONTINUATION"
+    assert migrated_state["current_stage"] == "PAPER_READING"
+    assert migrated_state["active_reading_session"]["paper_ids"] == ["P1"]
+    assert migrated_state["initial_field_map_binding"] is None
+    assert migrated_state["formal_primary_selection"] is None
+
+    replayed = controller.materialize_completed_read_event("P1", read["read_event_id"])
+    assert replayed["paper_id"] == "P1"
+    assert replayed["read_event_id"] == read["read_event_id"]
+    assert replayed["content_sha256"] == read["content_sha256"]
+    assert replayed["content"] == "full paper"
+    assert controller.status()["research_lit"]["read_events"] == read_events_before
+    assert controller.status()["research_lit"]["fulltext_count"] == fulltext_before
+
+    controller.submit_evidence_card("P1", card(replayed))
+    assert controller.status()["research_lit"]["read_events"] == read_events_before
+    assert controller.status()["research_lit"]["fulltext_count"] == fulltext_before
+    controller.finish_reading()
+    assert controller.current_stage() == "FIELD_SYNTHESIS"
+
+    controller.submit_field_map(field_map("PARTIAL"))
+    continued = controller.status()["research_lit"]
+    assert continued["current_stage"] == "QUERY_PLANNING"
+    assert continued["initial_field_map_binding"] is None
+    assert continued["formal_primary_selection"] is None
+    assert continued["last_coverage_status"] == "PARTIAL"
+
+
+def test_materialize_completed_read_event_cli_emits_original_reader_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_reading(controller)
+    read = controller.read_full_text("P1", "fake-paper", lambda _: "full paper")
+    source = tmp_path / "source-materials" / "replay.txt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("full paper", encoding="utf-8")
+    with controller._store.mutate() as state:
+        state["research_lit"]["papers"]["P1"]["user_fulltext"] = {
+            "paper_id": "P1",
+            "source_path": "source-materials/replay.txt",
+            "source_sha256": read["content_sha256"],
+            "media_type": "text/plain",
+        }
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "arisctl",
+            "--root",
+            str(tmp_path),
+            "materialize-completed-read-event",
+            controller.run_id,
+            "P1",
+            read["read_event_id"],
+        ],
+    )
+    assert main() == 0
+    result = json.loads(capfd.readouterr().out)
+    assert result == {
+        "paper_id": "P1",
+        "read_event_id": read["read_event_id"],
+        "content_sha256": read["content_sha256"],
+        "content": "full paper",
+    }
+
+
+def test_legacy_migration_archives_history_and_bootstraps_clean_formal_run(tmp_path: Path) -> None:
+    write_policy(tmp_path)
+    idea = tmp_path / "idea-stage"
+    (idea / "SEARCH_LEDGER.jsonl").write_text('{"legacy": true}\n', encoding="utf-8")
+    (idea / "ACTIVE_FIELD_MAP.md").write_text("# legacy map", encoding="utf-8")
+    manifest = tmp_path / ".aris" / "LEGACY_MIGRATION.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        json.dumps({"schema_version": 1, "migration_status": "legacy_archive_classified"}),
+        encoding="utf-8",
+    )
+    controller = ARISController.migrate_legacy(
+        tmp_path, "formal-v2", executor="codex-gpt-5.6-sol"
+    )
+    assert controller.current_stage() == "WAITING_FOR_HUMAN"
+    archive = tmp_path / ".aris" / "legacy" / "formal-v2" / "idea-stage"
+    assert (archive / "SEARCH_LEDGER.jsonl").is_file()
+    assert (archive / "ACTIVE_FIELD_MAP.md").is_file()
+    assert not (idea / "SEARCH_LEDGER.jsonl").exists()
+    assert not (idea / "ACTIVE_FIELD_MAP.md").exists()
+    assert (idea / "SOURCE_ADMISSION_POLICY.yaml").is_file()
+    updated = json.loads(manifest.read_text(encoding="utf-8"))
+    assert updated["migration_status"] == "formal_rerun_bootstrapped"
+    assert updated["formal_run_controller_compliance"] is True
+    assert updated["historical_artifacts_formal_controller_compliance"] is False
+
+
+def test_metadata_and_user_supplied_status_cannot_be_relabelled_by_admit(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    assert not hasattr(controller, "register_metadata")
+    assert "user_supplied" not in inspect.signature(controller.decide_admission).parameters
+    source = tmp_path / "source-materials" / "user-paper.txt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("user supplied paper", encoding="utf-8")
+    supplied = metadata("USER1")
+    supplied["source_path"] = "source-materials/user-paper.txt"
+    row = controller.register_user_source(supplied)
+    assert row["source_origin"] == "user_supplied"
+    assert controller.decide_admission("USER1", screening_in_scope=True) == "USER_SUPPLIED_READ"
+
+
+def test_admission_can_use_ledgered_identity_verification_gateway(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    pending = metadata()
+    pending["identity_status"] = "verify_pending"
+    pending["discovery_provider"] = "serpapi_google_scholar"
+    controller.execute_query("test field", "fake", lambda _: [pending])
+    calls: list[str] = []
+
+    def verify(paper: dict) -> dict:
+        calls.append(paper["paper_id"])
+        return {
+            "identity_status": "verified",
+            "identity_provider": "crossref_metadata",
+            "title": paper["title"],
+            "authors": paper["authors"],
+            "year": paper["year"],
+            "venue": paper["venue"],
+            "doi_or_stable_url": paper["doi_or_stable_url"],
+        }
+
+    assert controller.decide_admission(
+        "P1", screening_in_scope=True, identity_verifier=verify
+    ) == "ADMIT_FOR_READING"
+    assert calls == ["P1"]
+    paper = controller.status()["research_lit"]["papers"]["P1"]
+    assert paper["identity_status"] == "verified"
+    assert paper["identity_verification_status"] == "complete"
+    assert paper["source_origin"] == "gateway_discovery"
+    assert paper["discovery_provider"] == "serpapi_google_scholar"
+    ledger = (tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert '"action": "metadata_identity_verification"' in ledger
+
+
+def test_coverage_audit_rejects_corrupted_system_ledger(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    ledger_path = tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl"
+    ledger = ledger_path.read_text(encoding="utf-8")
+    ledger_path.write_text("{}\n", encoding="utf-8")
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    attestation_path = reviews.review_attestation_path(
+        controller.root, controller.run_id, "coverage_reviewer", request_id
+    )
+    with pytest.raises(
+        ControllerError,
+        match="coverage validator FAIL|current artifact bindings",
+    ):
+        controller.submit_coverage_review(review)
+    assert attestation_path.is_file()
+    assert not attestation_path.with_suffix(".consumed.json").exists()
+    assert run_state._find_phase(controller.status(), "landscape")["status"] == "running"
+    ledger_path.write_text(ledger, encoding="utf-8")
+    controller.submit_coverage_review(review)
+    assert not attestation_path.exists()
+    assert attestation_path.with_suffix(".consumed.json").is_file()
+
+
+def test_legacy_mutators_and_complete_looking_markdown_do_not_advance(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    for mutation in (
+        lambda: run_state.set_status(tmp_path, "run-1", "landscape", "done"),
+        lambda: run_state.accept(tmp_path, "run-1", "landscape", "v", "deterministic:test", force=True),
+        lambda: run_state.approve_human(tmp_path, "run-1", "scope_human_approval", "spoof"),
+    ):
+        with pytest.raises(ValueError, match="Controller-managed"):
+            mutation()
+    (tmp_path / "idea-stage" / "FINAL_LANDSCAPE.md").write_text("# Complete", encoding="utf-8")
+    assert controller.current_stage() == "METADATA_RETRIEVAL"
+
+
+def test_hook_protects_formal_boundaries_without_allowlisting_research_execution() -> None:
+    hook = REPO / ".codex" / "hooks" / "pre_tool_use_policy.py"
+    blocked = (
+        "python -c \"controller.human_approve('scope', 'approve')\"",
+        "python -c \"controller.request_source_policy_revision()\"",
+        "python -c \"from arisctl import ARISController; ARISController.start('.')\"",
+        "python -c \"from tools import run_state; run_state._save('.', 'run-1', {})\"",
+        "python -c \"from arisctl.gateways import append_jsonl; append_jsonl('x', {})\"",
+        "curl https://example.com/paper.pdf > source-materials/paper.pdf",
+        "Set-Content .aris/runs/run-1.json spoof",
+        "Set-Content idea-stage/SEARCH_LEDGER.jsonl spoof",
+        "Set-Content .aris/canonical/run/map.json spoof",
+    )
+    for command in blocked:
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"tool_name": "Bash", "tool_input": {"command": command}}),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        payload = json.loads(result.stdout)
+        assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    # Network retrieval becomes formal only when it tries to enter a protected
+    # evidence surface.  A bare web tool result has no canonical effect; the
+    # Controller rejects unregistered sources when formal evidence is admitted.
+    for network_tool, tool_input in (
+        ("WebSearch", {"query": "CUDA error documentation"}),
+        ("WebFetch", {"url": "https://example.com/docs"}),
+    ):
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"tool_name": network_tool, "tool_input": tool_input}),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+
+    for command in (
+        "Get-Item source-materials/paper.pdf",
+        "Get-FileHash source-materials/paper.pdf",
+        "Get-Content .aris/runs/run-1.json",
+        "pytest -q tests/test_aris_controller.py",
+        "python scripts/simulate.py --steps 10",
+        "python train.py --epochs 1",
+        "git status --short",
+        "ssh gpu.example.org 'python train.py --epochs 1'",
+        "nvidia-smi",
+    ):
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"tool_name": "Bash", "tool_input": {"command": command}}),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+
+    hooks = json.loads((REPO / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+    assert hooks["hooks"]["SubagentStop"][0]["matcher"] == ".*"
+    assert hooks["hooks"]["Stop"][0]["matcher"] == ".*"
+    exact = subprocess.run(
+        [sys.executable, str(hook)],
+        input=json.dumps(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "python -m arisctl human-approve run-1 source_policy_approval --decision approve"
+                },
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert exact.returncode == 0
+    assert exact.stdout == ""
+    revision = subprocess.run(
+        [sys.executable, str(hook)],
+        input=json.dumps(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "python -m arisctl request-source-policy-revision run-1"
+                },
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert revision.returncode == 0
+    assert revision.stdout == ""
+    problem_revision = subprocess.run(
+        [sys.executable, str(hook)],
+        input=json.dumps(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "python -m arisctl revise-problem run-1 --reason 'new evidence'"
+                },
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert problem_revision.returncode == 0
+    assert problem_revision.stdout == ""
+    gateway = subprocess.run(
+        [sys.executable, str(hook)],
+        input=json.dumps(
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": "python -m arisctl query run-1 topic"},
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert gateway.returncode == 0
+    assert gateway.stdout == ""
+    gateway_with_root = subprocess.run(
+        [sys.executable, str(hook)],
+        input=json.dumps(
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "python -m arisctl --root D:/project query run-1 topic"
+                },
+            }
+        ),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert gateway_with_root.returncode == 0
+    assert gateway_with_root.stdout == ""
+
+
+def test_hook_allows_protected_path_literals_in_ordinary_write_content() -> None:
+    hook = REPO / ".codex" / "hooks" / "pre_tool_use_policy.py"
+    ordinary_path = "notes/ordinary.md"
+    protected_path_text = "See source-materials/paper.pdf and .aris/runs/run-1.json."
+    payloads = (
+        ("Write", {"file_path": ordinary_path, "content": protected_path_text}),
+        (
+            "Edit",
+            {
+                "file_path": ordinary_path,
+                "old_string": "old",
+                "new_string": protected_path_text,
+            },
+        ),
+        (
+            "apply_patch",
+            {
+                "patch": "\n".join(
+                    (
+                        "*** Begin Patch",
+                        f"*** Update File: {ordinary_path}",
+                        "@@",
+                        f"+{protected_path_text}",
+                        "*** End Patch",
+                    )
+                )
+            },
+        ),
+    )
+    for tool_name, tool_input in payloads:
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"tool_name": tool_name, "tool_input": tool_input}),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0
+        assert result.stdout == ""
+
+
+def test_hook_still_denies_protected_write_targets() -> None:
+    hook = REPO / ".codex" / "hooks" / "pre_tool_use_policy.py"
+    payloads = (
+        ("Write", {"file_path": ".aris/runs/run-1.json", "content": "{}"}),
+        (
+            "Edit",
+            {
+                "file_path": "source-materials/paper.pdf",
+                "old_string": "old",
+                "new_string": "new",
+            },
+        ),
+        (
+            "apply_patch",
+            {
+                "patch": "\n".join(
+                    (
+                        "*** Begin Patch",
+                        "*** Update File: .aris/canonical/run/map.json",
+                        "@@",
+                        "+changed",
+                        "*** End Patch",
+                    )
+                )
+            },
+        ),
+    )
+    for tool_name, tool_input in payloads:
+        result = subprocess.run(
+            [sys.executable, str(hook)],
+            input=json.dumps({"tool_name": tool_name, "tool_input": tool_input}),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        payload = json.loads(result.stdout)
+        assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_codex_configuration_registers_all_declared_subagents_and_ui_prompt_rules() -> None:
+    agents = {path.stem for path in (REPO / ".codex" / "agents").glob("*.toml")}
+    assert agents == {
+        "paper_reader",
+        "coverage_reviewer",
+        "independent_problem_reviewer",
+        "independent_novelty_reviewer",
+        "independent_root_cause_reviewer",
+        "independent_method_reviewer",
+        "result_to_claim_reviewer",
+    }
+    config = (REPO / ".codex" / "config.toml").read_text(encoding="utf-8")
+    assert "query_planner" not in config and "field_synthesizer" not in config
+    assert 'approval_policy = "on-request"' in config
+    for role in agents - {"paper_reader", "coverage_reviewer"}:
+        assert f"[agents.{role}]" in config
+        agent_config = (REPO / ".codex" / "agents" / f"{role}.toml").read_text(
+            encoding="utf-8"
+        )
+        assert 'sandbox_mode = "read-only"' in agent_config
+        assert 'approval_policy = "never"' in agent_config
+        assert "review_request_id" in agent_config
+        assert "reviewed_artifact_hashes" in agent_config
+    hooks = json.loads((REPO / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+    matcher = hooks["hooks"]["SubagentStop"][0]["matcher"]
+    assert matcher == ".*"
+    assert hooks["hooks"]["Stop"][0]["matcher"] == ".*"
+    rules = (REPO / ".codex" / "rules" / "aris.rules").read_text(encoding="utf-8")
+    assert 'decision = "prompt"' in rules
+    workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+    assert workflow["research_lit"]["stages"][:2] == [
+        "SOURCE_POLICY_DRAFTING",
+        "WAITING_FOR_HUMAN",
+    ]
+    assert workflow["research_lit"]["allowed_actions"][
+        "SOURCE_POLICY_DRAFTING"
+    ] == ["submit_source_admission_policy"]
+    assert workflow["research_lit"]["allowed_agents"][
+        "SOURCE_POLICY_DRAFTING"
+    ] == ["main_research_agent"]
+    assert workflow["research_lit"]["allowed_actions"]["WAITING_FOR_HUMAN"] == [
+        "human_approve", "request_source_policy_revision"
+    ]
+    assert workflow["research_lit"]["allowed_agents"]["WAITING_FOR_HUMAN"] == []
+    assert workflow["research_lit"]["allowed_agents"]["QUERY_PLANNING"] == ["main_research_agent"]
+    assert workflow["research_lit"]["allowed_agents"]["FIELD_SYNTHESIS"] == ["main_research_agent"]
+    assert workflow["scientific_core"]["phases"][0] == "problem_generation"
+    assert workflow["scientific_core"]["completion_state"] == (
+        "METHOD_CONFIRMED_AWAITING_USER_VALIDATION"
+    )
+    assert workflow["scientific_core"]["validation_entry_policy"] == (
+        "human_initiated_only_after_method_confirmation"
+    )
+    parsed = build_parser().parse_args(
+        ["submit-source-policy", "run-1", "candidate-policy.yaml"]
+    )
+    assert parsed.command == "submit-source-policy"
+    revision = build_parser().parse_args(["request-source-policy-revision", "run-1"])
+    assert revision.command == "request-source-policy-revision"
+    problem_revision = build_parser().parse_args(
+        ["revise-problem", "run-1", "--reason", "new evidence narrows scope"]
+    )
+    assert problem_revision.command == "revise-problem"
+    human_revision = build_parser().parse_args(
+        [
+            "human-approve",
+            "run-1",
+            "route_selection",
+            "--decision",
+            "request_revision",
+        ]
+    )
+    assert human_revision.decision == "request_revision"
+    assert build_parser().parse_args(["start-phase", "run-1"]).command == "start-phase"
+    accepted = build_parser().parse_args(
+        [
+            "accept-phase",
+            "run-1",
+            "--verdict-id",
+            "verdict-1",
+            "--reviewer",
+            "claude-sonnet-4",
+        ]
+    )
+    assert accepted.command == "accept-phase"
+    returned = build_parser().parse_args(
+        [
+            "return-phase",
+            "run-1",
+            "--verdict-id",
+            "verdict-2",
+            "--reviewer",
+            "claude-sonnet-4",
+            "--lesson-file",
+            "reusable-lesson.json",
+        ]
+    )
+    assert returned.lesson_file == "reusable-lesson.json"
+
+
+def test_query_plan_v2_enforces_executable_pagination_before_gateway(tmp_path: Path) -> None:
+    write_policy(tmp_path)
+    controller = ARISController.start(
+        tmp_path, "run-v2", executor="codex-gpt-5.6-sol"
+    )
+    approve(controller, "source_policy_approval")
+    controller.submit_query_plan(
+        {
+            "schema_version": 2,
+            "search_strategy": {
+                "priority_order": [
+                    "RECENT_AUTHORITATIVE_REVIEWS",
+                    "HIGH_CITATION_BACKBONE",
+                    "RECENT_ELITE_FRONTIER",
+                    "TARGETED_GAP_FOLLOWUP",
+                ],
+                "discovery_sources": ["Google Scholar"],
+                "time_range": {"year_from": 2021, "year_to": 2026},
+                "screening_requirement": "TITLE_ABSTRACT_FOR_ALL_RETRIEVED_CANDIDATES",
+                "saturation_criteria": ["follow-up adds no major branch"],
+            },
+            "coverage_gaps": ["recent frontier"],
+            "queries": [
+                {
+                    "plan_item_id": "frontier-page-2",
+                    "query": "impedance control learning",
+                    "purpose": "cover the second result page",
+                    "priority_tier": "RECENT_ELITE_FRONTIER",
+                    "year_from": 2021,
+                    "year_to": 2026,
+                    "page": 2,
+                    "exact_title": False,
+                    "target_venues": ["Test Elite Venue"],
+                    "expected_close_condition": "no new mechanism family",
+                }
+            ],
+        }
+    )
+    calls: list[str] = []
+    with pytest.raises(ControllerError, match="do not match"):
+        controller.execute_query(
+            "impedance control learning",
+            "fake",
+            lambda query: calls.append(query) or [],
+            plan_item_id="frontier-page-2",
+            query_options={
+                "year_from": 2021,
+                "year_to": 2026,
+                "exact_title": False,
+                "page": 1,
+            },
+        )
+    assert calls == []
+
+
+def test_high_citation_backbone_can_wait_for_a_later_fulltext_pass(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    paper = metadata(venue="Ordinary")
+    paper["citation_count"] = 200
+    controller.execute_query("test field", "fake", lambda _: [paper])
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="foundational mechanism paper",
+        reading_priority="HIGH_CITATION_BACKBONE",
+        fulltext_selected=False,
+        fulltext_selection_reason="A complementary review is selected for the current initial pass first.",
+    ) == "ADMIT_DISCOVERY_ONLY"
+
+
+def test_high_citation_candidate_can_remain_abstract_only_when_not_a_backbone(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    paper = metadata(venue="Ordinary")
+    paper["citation_count"] = 200
+    controller.execute_query("test field", "fake", lambda _: [paper])
+
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="The paper is a task-specific application of an already covered mechanism.",
+        reading_priority="RECENT_ELITE_FRONTIER",
+        fulltext_selected=False,
+        fulltext_selection_reason=(
+            "Application implementation; no uncovered mechanism, contradiction, "
+            "or decision target remains."
+        ),
+    ) == "ADMIT_DISCOVERY_ONLY"
+    assert controller.finish_retrieval()["research_lit"]["current_stage"] == "HUMAN_SEARCH_REQUIRED"
+
+
+def test_high_citation_backbone_label_requires_high_citation_threshold(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    paper = metadata(venue="Test Elite Venue")
+    paper["citation_count"] = 0
+    controller.execute_query("test field", "fake", lambda _: [paper])
+
+    with pytest.raises(ControllerError, match="requires the source-policy high-citation threshold"):
+        controller.decide_admission(
+            "P1",
+            screening_in_scope=True,
+            screening_basis="TITLE_ABSTRACT",
+            screening_reason="claimed backbone",
+            reading_priority="HIGH_CITATION_BACKBONE",
+            fulltext_selected=True,
+        )
+
+
+def test_coverage_continue_requires_concrete_gap_and_reenters_query_planning(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id, decision="CONTINUE")
+    attest(controller, "coverage_reviewer", review)
+    with pytest.raises(ControllerError, match="requires at least one concrete gap"):
+        controller.submit_coverage_review(review)
+
+    review["gaps"] = ["The field map lacks evidence for the reported failure boundary."]
+    attest(controller, "coverage_reviewer", review)
+    state = controller.submit_coverage_review(review)
+    assert state["research_lit"]["current_stage"] == "QUERY_PLANNING"
+    assert state["research_lit"]["last_coverage_review_decision"] == "CONTINUE"
+    with pytest.raises(ControllerError, match="must retain every concrete CONTINUE gap"):
+        controller.submit_query_plan(
+            {
+                "coverage_gaps": ["unrelated gap"],
+                "queries": [{"query": "unrelated", "purpose": "bypass the review"}],
+            }
+        )
+    controller.submit_query_plan(
+        {
+            "coverage_gaps": review["gaps"],
+            "queries": [
+                {
+                    "query": "reported failure boundary",
+                    "purpose": "resolve the coverage-review gap",
+                    "coverage_gaps": review["gaps"],
+                }
+            ],
+        }
+    )
+    assert controller.status()["research_lit"]["current_stage"] == "METADATA_RETRIEVAL"
+
+
+def test_field_map_gaps_are_bound_to_targeted_queries_and_the_same_map_is_revised(
+    tmp_path: Path,
+) -> None:
+    for status in ("PARTIAL", "INSUFFICIENT"):
+        missing_gaps = field_map(status)
+        del missing_gaps["coverage_record"]["coverage_gaps"]
+        with pytest.raises(ValidationError, match="coverage_record.coverage_gaps"):
+            validate_field_map(missing_gaps, evidence_ids={"P1"})
+    sufficient_with_live_gap = field_map()
+    sufficient_with_live_gap["coverage_record"]["coverage_gaps"] = ["live gap"]
+    with pytest.raises(ValidationError, match="SUFFICIENT requires coverage_gaps to be empty"):
+        validate_field_map(sufficient_with_live_gap, evidence_ids={"P1"})
+    sufficient_without_gap_field = field_map()
+    del sufficient_without_gap_field["coverage_record"]["coverage_gaps"]
+    assert validate_field_map(sufficient_without_gap_field, evidence_ids={"P1"}) is (
+        sufficient_without_gap_field
+    )
+
+    controller = start_controller(tmp_path)
+    reach_synthesis(controller)
+    map_v1 = field_map("PARTIAL")
+    gap = map_v1["coverage_record"]["coverage_gaps"][0]
+    state = controller.submit_field_map(map_v1)
+    assert state["research_lit"]["required_coverage_gaps"] == [gap]
+
+    with pytest.raises(ControllerError, match="must retain every required coverage gap"):
+        controller.submit_query_plan(
+            {
+                "coverage_gaps": ["unrelated gap"],
+                "queries": [{"query": "unrelated", "purpose": "bypass map gap"}],
+            }
+        )
+    with pytest.raises(ControllerError, match="missing required fields"):
+        controller.submit_query_plan(
+            {
+                "coverage_gaps": [gap],
+                "queries": [
+                    {"query": "reported failure regime", "purpose": "resolve map gap"}
+                ],
+            }
+        )
+
+    controller.submit_query_plan(
+        {
+            "schema_version": 2,
+            "search_strategy": {
+                "priority_order": [
+                    "RECENT_AUTHORITATIVE_REVIEWS",
+                    "HIGH_CITATION_BACKBONE",
+                    "RECENT_ELITE_FRONTIER",
+                    "TARGETED_GAP_FOLLOWUP",
+                ],
+                "discovery_sources": ["Google Scholar"],
+                "time_range": {"year_from": 2000, "year_to": 2026},
+                "screening_requirement": "TITLE_ABSTRACT_FOR_ALL_RETRIEVED_CANDIDATES",
+                "saturation_criteria": ["the gap is resolved or reframed by new evidence"],
+            },
+            "coverage_gaps": [gap],
+            "queries": [
+                {
+                    "plan_item_id": "field-map-gap-p2",
+                    "query": "reported failure regime mechanism boundary",
+                    "purpose": "test the unresolved failure regime boundary",
+                    "coverage_gaps": [gap],
+                    "priority_tier": "TARGETED_GAP_FOLLOWUP",
+                    "year_from": 2000,
+                    "year_to": 2026,
+                    "page": 1,
+                    "exact_title": False,
+                    "target_venues": ["Test Elite Venue"],
+                    "expected_close_condition": "evidence discriminates the failure boundary",
+                }
+            ],
+        }
+    )
+    controller.execute_query(
+        "reported failure regime mechanism boundary",
+        "fake",
+        lambda _: [metadata("P2")],
+        plan_item_id="field-map-gap-p2",
+        query_options={
+            "year_from": 2000,
+            "year_to": 2026,
+            "exact_title": False,
+            "page": 1,
+        },
+    )
+    assert controller.status()["research_lit"]["query_events"]["Q0002"]["plan_item_id"] == (
+        "field-map-gap-p2"
+    )
+    assert controller.decide_admission(
+        "P2",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="direct evidence for the unresolved failure regime",
+        reading_priority="TARGETED_GAP_FOLLOWUP",
+    ) == "ADMIT_FOR_READING"
+    controller.select_reading_subset(
+        ["P2"],
+        rationale="The targeted failure-boundary paper is the next coverage pass.",
+    )
+    controller.finish_retrieval()
+    read = controller.read_full_text("P2", "fake-paper", lambda _: "full paper P2")
+    evidence = card(read, "P2")
+    attest(controller, "paper_reader", evidence)
+    controller.submit_evidence_card("P2", evidence)
+    controller.finish_reading()
+
+    map_v2 = field_map("PARTIAL")
+    map_v2["family_development_traces"][0]["evidence_ids"] = ["P1", "P2"]
+    map_v2["assumption_effectiveness_failure_matrix"][0]["source_ids"] = ["P1", "P2"]
+    map_v2["consensus"] = ["P2 revises the failure-boundary classification."]
+    state = controller.submit_field_map(map_v2)
+    canonical = tmp_path / "idea-stage" / "ACTIVE_FIELD_MAP.md"
+    assert Path(state["research_lit"]["accepted_artifacts"]["active_field_map"]["path"]).name == (
+        "ACTIVE_FIELD_MAP.md"
+    )
+    assert canonical.is_file()
+    assert '"P2"' in canonical.read_text(encoding="utf-8")
+    assert list((tmp_path / "idea-stage").glob("ACTIVE_FIELD_MAP*.md")) == [canonical]
+    assert state["research_lit"]["current_stage"] == "QUERY_PLANNING"
+
+
+def test_gap_bound_plan_cannot_finish_without_a_completed_targeted_search(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_synthesis(controller)
+    map_v1 = field_map("PARTIAL")
+    gap = map_v1["coverage_record"]["coverage_gaps"][0]
+    controller.submit_field_map(map_v1)
+    controller.submit_query_plan(
+        {
+            "coverage_gaps": [gap],
+            "queries": [
+                {
+                    "query": "failure regime targeted evidence",
+                    "purpose": "resolve the Field Map gap",
+                    "coverage_gaps": [gap],
+                }
+            ],
+        }
+    )
+    with controller._store.mutate() as state:
+        state["research_lit"]["planned_queries"][0]["status"] = "failed"
+    with pytest.raises(ControllerError, match="every required coverage gap has a completed bound query"):
+        controller.finish_retrieval()
+
+
+def test_missing_historical_transition_reenters_query_planning_as_targeted_gap(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_synthesis(controller)
+    empty_map = field_map()
+    empty_map["family_development_traces"] = []
+    controller.submit_field_map(empty_map)
+    research = controller.status()["research_lit"]
+    request = research["coverage_review_request"]
+    assert request["development_trace_count"] == 0
+
+    digest = CoverageDigest(
+        research["accepted_artifacts"]["active_field_map"]["sha256"],
+        request["artifact_bindings"],
+        request["development_trace_count"],
+    )
+    review = coverage_review(
+        digest,
+        request["id"],
+        decision="CONTINUE",
+        development_trace_count=0,
+    )
+    gap = "The transition from the foundational bottleneck to the current branch is missing."
+    review["gaps"] = [gap]
+    review["evolution_assessment"]["transition_causality"] = {
+        "status": "GAP",
+        "rationale": "Accepted evidence indicates a material question shift that the map omits.",
+        "basis": "MATERIAL_TRANSITION_MISSING",
+    }
+    review["evolution_assessment"]["material_evolution_gaps"] = [gap]
+    attest(controller, "coverage_reviewer", review)
+    state = controller.submit_coverage_review(review)
+    assert state["research_lit"]["current_stage"] == "QUERY_PLANNING"
+
+    with pytest.raises(ControllerError, match="must retain every concrete CONTINUE gap"):
+        controller.submit_query_plan(
+            {
+                "coverage_gaps": ["unrelated"],
+                "queries": [{"query": "unrelated", "purpose": "avoid the historical gap"}],
+            }
+        )
+    controller.submit_query_plan(
+        {
+            "coverage_gaps": [gap],
+            "queries": [
+                {
+                    "query": "foundational bottleneck current branch transition",
+                    "purpose": "recover evidence for the missing historical transition",
+                    "coverage_gaps": [gap],
+                }
+            ],
+        }
+    )
+    assert controller.current_stage() == "METADATA_RETRIEVAL"
+
+
+def test_elite_venue_alias_matches_provider_bibliographic_venue_string() -> None:
+    policy = {
+        "approved_elite_venues": [
+            {
+                "canonical_name": "IEEE International Conference on Robotics and Automation",
+                "aliases": ["ICRA"],
+            }
+        ]
+    }
+    assert ARISController._venue_eligible(
+        policy,
+        "2022 International Conference on Robotics and Automation (ICRA)",
+    )
+    assert not ARISController._venue_eligible(policy, "Micra Biology Workshop")
+    ijrr_policy = {
+        "approved_elite_venues": [
+            {
+                "canonical_name": "The International Journal of Robotics Research",
+                "aliases": ["IJRR"],
+            }
+        ]
+    }
+    assert not ARISController._venue_eligible(
+        ijrr_policy,
+        "Industrial Robot: the international journal of robotics research and application",
+    )
+
+
+def test_candidate_can_be_enriched_before_screening_decision(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query("test field", "fake", lambda _: [metadata()])
+    with controller._store.mutate() as state:
+        paper = state["research_lit"]["papers"]["P1"]
+        paper["identity_status"] = "verify_pending"
+        paper.pop("abstract", None)
+    enriched = controller.enrich_candidate_metadata(
+        "P1",
+        identity_verifier=lambda paper: {
+            **paper,
+            "identity_status": "verified",
+            "identity_provider": "test",
+            "abstract": "A retrieved abstract that can now be judged before admission.",
+            "abstract_source": "test",
+        },
+    )
+    assert enriched["abstract"].startswith("A retrieved abstract")
+    assert controller.status()["research_lit"]["papers"]["P1"].get("screening_status") is None
+
+
+def test_verified_candidate_without_abstract_can_route_to_mandatory_fulltext(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    paper = metadata()
+    paper["citation_count"] = 200
+    paper.pop("abstract", None)
+    paper["identity_status"] = "verify_pending"
+    controller.execute_query("test field", "fake", lambda _: [paper])
+    controller.enrich_candidate_metadata(
+        "P1",
+        identity_verifier=lambda candidate: {
+            **candidate,
+            "identity_status": "verified",
+            "identity_provider": "test",
+        },
+    )
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        screening_basis="TITLE_ONLY_ABSTRACT_UNAVAILABLE",
+        screening_reason="metadata sources expose no abstract; the high-citation paper requires full-text screening",
+        reading_priority="HIGH_CITATION_BACKBONE",
+        fulltext_selected=True,
+    ) == "ADMIT_FOR_READING"
+
+
+def test_interrupted_query_recovery_reuses_query_id_and_budget(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        planned = research["planned_queries"][0]
+        planned["plan_item_id"] = "plan-1"
+        planned["status"] = "started"
+        planned["query_id"] = "Q0001"
+        research["query_count"] = 1
+        research["query_events"]["Q0001"] = {
+            "event_id": "orphaned",
+            "query": planned["query"],
+            "status": "started",
+        }
+
+    recovered = controller.recover_interrupted_query(
+        "plan-1",
+        reason="the gateway process was terminated before it could report completion",
+    )
+    assert recovered["query_id"] == "Q0001"
+    assert controller.status()["research_lit"]["query_count"] == 1
+
+
+def test_query_plan_event_reconciliation_restores_reset_terminal_statuses(
+    tmp_path: Path,
+) -> None:
+    write_policy(tmp_path)
+    controller = ARISController.start(
+        tmp_path, "run-reconcile", executor="codex-gpt-5.6-sol"
+    )
+    approve(controller, "source_policy_approval")
+    controller.submit_query_plan(
+        {
+            "schema_version": 2,
+            "search_strategy": {
+                "priority_order": [
+                    "RECENT_AUTHORITATIVE_REVIEWS",
+                    "HIGH_CITATION_BACKBONE",
+                    "RECENT_ELITE_FRONTIER",
+                    "TARGETED_GAP_FOLLOWUP",
+                ],
+                "discovery_sources": ["Google Scholar"],
+                "time_range": {"year_from": 2021, "year_to": 2026},
+                "screening_requirement": "TITLE_ABSTRACT_FOR_ALL_RETRIEVED_CANDIDATES",
+                "saturation_criteria": ["follow-up adds no major branch"],
+            },
+            "coverage_gaps": ["recent frontier"],
+            "queries": [
+                {
+                    "plan_item_id": "frontier-page-1",
+                    "query": "impedance control learning",
+                    "purpose": "cover the first result page",
+                    "priority_tier": "RECENT_ELITE_FRONTIER",
+                    "year_from": 2021,
+                    "year_to": 2026,
+                    "page": 1,
+                    "exact_title": False,
+                    "target_venues": ["Test Elite Venue"],
+                    "expected_close_condition": "no new mechanism family",
+                }
+            ],
+        }
+    )
+    controller.execute_query(
+        "impedance control learning",
+        "fake",
+        lambda _: [metadata()],
+        plan_item_id="frontier-page-1",
+        query_options={
+            "year_from": 2021,
+            "year_to": 2026,
+            "exact_title": False,
+            "page": 1,
+        },
+    )
+    before = controller.status()["research_lit"]
+    with controller._store.mutate() as state:
+        planned = state["research_lit"]["planned_queries"][0]
+        planned["status"] = "planned"
+        planned["constraints"] = {
+            "year_from": 2021,
+            "year_to": 2026,
+            "exact_title": False,
+            "page": 1,
+        }
+        planned.pop("query_id", None)
+
+    assert "reconcile_query_plan_events" in controller.allowed_actions()
+    result = controller.reconcile_query_plan_events(
+        reason="accepted query plan was resubmitted during workflow migration"
+    )
+    after = controller.status()["research_lit"]
+
+    assert result["reconciled"] == [
+        {
+            "plan_item_id": "frontier-page-1",
+            "query_id": "Q0001",
+            "event_status": "complete",
+            "plan_status": "complete",
+        }
+    ]
+    assert after["planned_queries"][0]["status"] == "complete"
+    assert after["planned_queries"][0]["query_id"] == "Q0001"
+    assert after["query_count"] == before["query_count"]
+    assert after["query_events"] == before["query_events"]
+    assert after["papers"] == before["papers"]
+    assert "reconcile_query_plan_events" not in controller.allowed_actions()
+    assert '"action": "query_plan_event_reconciliation"' in (
+        tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl"
+    ).read_text(encoding="utf-8")
+
+
+def test_literature_budget_extension_is_monotonic_and_logged(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    old_limit = controller.status()["research_lit"]["max_fulltext_papers"]
+    result = controller.extend_literature_budget(
+        max_fulltext_papers=old_limit + 20,
+        reason="the approved evidence strategy requires additional high-citation full texts",
+    )
+    assert result["after"]["max_fulltext_papers"] == old_limit + 20
+    with pytest.raises(ControllerError, match="strictly increase"):
+        controller.extend_literature_budget(
+            max_fulltext_papers=old_limit,
+            reason="must not reduce the formal limit",
+        )
+    assert '"action": "budget_extension"' in (
+        tmp_path / "idea-stage" / "SEARCH_LEDGER.jsonl"
+    ).read_text(encoding="utf-8")
+
+
+def test_incremental_problem_binding_uses_field_map_then_existing_reopen_provenance(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    digest, request_id = reach_coverage(controller)
+    review = coverage_review(digest, request_id)
+    attest(controller, "coverage_reviewer", review)
+    controller.submit_coverage_review(review)
+    approve(controller, "scope_human_approval")
+    controller.start_current_phase()
+
+    plan = {
+        "coverage_gaps": [],
+        "queries": [{
+            "query": "targeted closest prior",
+            "purpose": "test the current Lead boundary",
+            "expected_close_condition": "resolve the Lead's closest-prior uncertainty",
+            "lead_id": "L-1",
+            "lead_statement": "The current field boundary remains unresolved.",
+            "active_field_map_sha256": controller.status()["research_lit"]["accepted_artifacts"]["active_field_map"]["sha256"],
+            "decision_dimension": "Unresolvedness",
+        }],
+    }
+    controller.submit_query_plan(plan)
+    state = controller.status()
+    anchor = state["research_lit"]["incremental_literature_active"]["phase_binding_anchor"]
+    assert "active_problem_binding" not in anchor
+    assert "idea-stage/ACTIVE_FIELD_MAP.md" in anchor["required_inputs"]
+
+    with controller._store.mutate() as mutable:
+        mutable["research_lit"]["incremental_literature_active"] = None
+        mutable["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
+        mutable["scientific_core"]["pending_problem_revision"] = {
+            "problem_id": "P-1", "version": 2, "parent_version": 1,
+            "return_event_id": "return-problem-1",
+        }
+        mutable["scientific_core"]["return_history"].append({
+            "id": "return-problem-1", "invalidated_phases": ["problem_generation"],
+        })
+        evidence_path = tmp_path / ".aris" / "canonical" / "run-1" / "evidence-P2.json"
+        evidence_path.write_text('{"source_id":"P2"}\n', encoding="utf-8")
+        mutable["research_lit"]["accepted_artifacts"]["evidence:P2"] = {
+            "path": str(evidence_path.relative_to(tmp_path)),
+            "sha256": sha256_file(evidence_path),
+            "validator_result": "PASS",
+        }
+        mutable["research_lit"]["incremental_evidence_by_phase"] = {
+            "problem_generation": {
+                "evidence:P2": {
+                    **mutable["research_lit"]["accepted_artifacts"]["evidence:P2"],
+                    "evidence_key": "evidence:P2",
+                    "phase_binding_anchor": anchor,
+                }
+            }
+        }
+        assert "P2" not in controller._current_phase_evidence_ids(
+            mutable, "problem_generation"
+        )
+    controller.submit_query_plan(plan)
+    reopened = controller.status()["research_lit"]["incremental_literature_active"]["phase_binding_anchor"]
+    assert reopened["pending_problem_revision"]["return_event_id"] == "return-problem-1"
+    assert reopened["problem_return_event_id"] == "return-problem-1"
+
+
+def test_re_adoption_preserves_history_and_search_cycle_authorization_is_boundary_only(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    card_path = tmp_path / ".aris" / "canonical" / "run-1" / "evidence-P2.json"
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    original_card = {
+        "source_id": "P2",
+        "read_event_id": "R-P2",
+        "method_design_search_context": {"residual": "OBL-1"},
+    }
+    card_path.write_text(json.dumps(original_card), encoding="utf-8")
+    original_bytes = card_path.read_bytes()
+    (tmp_path / "idea-stage" / "EVIDENCE_REGISTRY.jsonl").write_text(
+        json.dumps(original_card) + "\n", encoding="utf-8"
+    )
+
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        core["status"] = "ACTIVE"
+        core["current_phase"] = "method_refinement"
+        run_state._find_phase(state, "method_refinement")["status"] = "running"
+        run_state._find_phase(state, "root_cause_analysis")["validated_artifacts"] = {
+            raw_path: core["accepted_artifacts"][raw_path]["sha256"]
+            for raw_path in (
+                "idea-stage/RESEARCH_CONTRACT.md",
+                "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/ROOT_CAUSE_ANALYSIS.json",
+            )
+        }
+        run_state._find_phase(state, "root_cause_gate")["validated_artifacts"] = {
+            "idea-stage/ROOT_CAUSE_VERDICT.json": core["accepted_artifacts"][
+                "idea-stage/ROOT_CAUSE_VERDICT.json"
+            ]["sha256"]
+        }
+        research = state["research_lit"]
+        research["current_stage"] = "LANDSCAPE_ACCEPTED"
+        research["accepted_artifacts"]["evidence:P2"] = {
+            "path": str(card_path.relative_to(tmp_path)),
+            "sha256": sha256_file(card_path),
+            "read_event_id": "R-P2",
+            "validator_result": "PASS",
+        }
+        research["read_events"]["R-P2"] = {"paper_id": "P2", "status": "complete"}
+        research["papers"]["P2"] = {"found_by_query_ids": ["Q-P2"]}
+        research["query_events"]["Q-P2"] = {"status": "complete"}
+        first_anchor = controller._phase_evidence_anchor(state, "method_refinement")
+        research["incremental_evidence_by_phase"] = {
+            "method_refinement": {
+                "evidence:P2": {
+                    **research["accepted_artifacts"]["evidence:P2"],
+                    "evidence_key": "evidence:P2",
+                    "phase_binding_anchor": first_anchor,
+                }
+            }
+        }
+        research["search_cycle_count"] = research["max_search_cycles"]
+
+    # Replace only the current formal obligation/selection handoff.  The Card
+    # stays immutable and the old A binding must not become B-current by hash.
+    routes_path = tmp_path / "idea-stage" / "METHOD_ROUTES.jsonl"
+    selected_path = tmp_path / "idea-stage" / "SELECTED_ROUTE.yaml"
+    routes_path.write_text("\n".join(json.dumps(row) for row in (
+        {"record_type": "design_obligation_set", "design_obligation_set_id": "DOS-B", "design_obligations": [{"obligation_id": "OBL-B"}]},
+        {"record_type": "method_route", "route_id": "R-B", "design_obligation_set_id": "DOS-B"},
+    )) + "\n", encoding="utf-8")
+    selected_path.write_text("route_id: R-B\n", encoding="utf-8")
+    with controller._store.mutate() as state:
+        state["scientific_core"]["accepted_artifacts"]["idea-stage/METHOD_ROUTES.jsonl"] = controller._artifact_record(
+            "idea-stage/METHOD_ROUTES.jsonl", producer_phase="method_design", provenance={}, upstream_snapshot={}
+        )
+        state["scientific_core"]["accepted_artifacts"]["idea-stage/SELECTED_ROUTE.yaml"] = controller._artifact_record(
+            "idea-stage/SELECTED_ROUTE.yaml", producer_phase="route_human_selection", provenance={}, upstream_snapshot={}
+        )
+    assert controller._incremental_evidence_bindings(controller.status(), "method_refinement") == {}
+
+    adopted = controller.readopt_incremental_evidence("P2", obligation_ids=["OBL-B"])
+    assert adopted["status"] == "RE_ADOPTED"
+    state = controller.status()
+    bindings = state["research_lit"]["incremental_evidence_by_phase"]["method_refinement"]
+    assert len(bindings) == 2
+    assert bindings["evidence:P2"]["phase_binding_anchor"] != next(
+        item["phase_binding_anchor"] for key, item in bindings.items() if key != "evidence:P2"
+    )
+    assert card_path.read_bytes() == original_bytes
+
+    # A formal lifecycle return ends the downstream current binding even when
+    # regenerated method files would be byte-identical.
+    with controller._store.mutate() as state:
+        state["scientific_core"]["return_history"].append({
+            "id": "return-method-1", "invalidated_phases": ["method_refinement"],
+        })
+    assert controller._incremental_evidence_bindings(controller.status(), "method_refinement") == {}
+
+    # The same Card may support a formally reopened RCA without making its old
+    # Design Obligation context a currentness prerequisite.
+    with controller._store.mutate() as state:
+        state["scientific_core"]["current_phase"] = "root_cause_analysis"
+        run_state._find_phase(state, "root_cause_analysis")["status"] = "running"
+        state["scientific_core"]["return_history"].append({
+            "id": "return-rca-1", "invalidated_phases": ["root_cause_analysis"],
+        })
+    rca_adopted = controller.readopt_incremental_evidence("P2")
+    assert rca_adopted == {"status": "RE_ADOPTED", "evidence_id": "P2", "phase": "root_cause_analysis"}
+    assert controller._incremental_evidence_bindings(controller.status(), "root_cause_analysis")
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        research["incremental_evidence_by_phase"]["root_cause_analysis"]["evidence:P2-diagnostic"] = {
+            **research["accepted_artifacts"]["evidence:P2"],
+            "evidence_key": "evidence:P2",
+            "phase_binding_anchor": controller._phase_evidence_anchor(state, "root_cause_analysis"),
+        }
+        state["scientific_core"]["return_history"].append({
+            "id": "return-rca-2", "invalidated_phases": ["root_cause_analysis"],
+        })
+    # A same-Problem RCA revision does not clear a still-relevant diagnostic
+    # binding; only the prior re-adoption was tied to its older reopen receipt.
+    assert controller._incremental_evidence_bindings(controller.status(), "root_cause_analysis")
+    assert controller.readopt_incremental_evidence("P2") == {
+        "status": "ALREADY_CURRENT", "evidence_id": "P2", "phase": "root_cause_analysis"
+    }
+
+    with controller._store.mutate() as state:
+        state["scientific_core"]["current_phase"] = "method_refinement"
+        run_state._find_phase(state, "method_refinement")["status"] = "pending"
+    result = controller.extend_literature_budget(
+        max_search_cycles=controller.status()["research_lit"]["max_search_cycles"] + 1,
+        reason="authorized targeted retrieval is blocked only by the global cycle limit",
+    )
+    assert result["after"]["max_search_cycles"] == result["before"]["max_search_cycles"] + 1
+    with controller._store.mutate() as state:
+        state["research_lit"]["current_stage"] = "METADATA_RETRIEVAL"
+    with pytest.raises(ControllerError, match="idle incremental retrieval boundary"):
+        controller.extend_literature_budget(
+            max_search_cycles=result["after"]["max_search_cycles"] + 1,
+            reason="must not rewrite an active retrieval plan",
+        )
+
+
+def test_method_to_rca_reopen_records_method_evidence_and_uses_existing_readoption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    field_map = tmp_path / "idea-stage" / "ACTIVE_FIELD_MAP.md"
+    field_map.write_text("# Accepted field map\n", encoding="utf-8")
+    card_path = tmp_path / ".aris" / "canonical" / "run-1" / "evidence-P2.json"
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_card = {
+        "source_id": "P2",
+        "read_event_id": "R-P2",
+        "method_design_search_context": {"search_mode": "DOMINANT_SOLUTION_SEARCH"},
+    }
+    card_path.write_text(json.dumps(evidence_card), encoding="utf-8")
+    registry = tmp_path / "idea-stage" / "EVIDENCE_REGISTRY.jsonl"
+    registry.write_text(json.dumps(evidence_card) + "\n", encoding="utf-8")
+
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        core["status"] = "ACTIVE"
+        core["current_phase"] = "method_design"
+        run_state._find_phase(state, "method_design")["status"] = "running"
+        core["accepted_artifacts"]["idea-stage/ACTIVE_FIELD_MAP.md"] = controller._artifact_record(
+            "idea-stage/ACTIVE_FIELD_MAP.md",
+            producer_phase="landscape",
+            provenance={},
+            upstream_snapshot={},
+        )
+        root_analysis = run_state._find_phase(state, "root_cause_analysis")
+        root_analysis["validated_artifacts"] = {
+            raw_path: core["accepted_artifacts"][raw_path]["sha256"]
+            for raw_path in (
+                "idea-stage/RESEARCH_CONTRACT.md",
+                "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/ROOT_CAUSE_ANALYSIS.json",
+            )
+        }
+        run_state._find_phase(state, "root_cause_gate")["validated_artifacts"] = {
+            "idea-stage/ROOT_CAUSE_VERDICT.json": core["accepted_artifacts"][
+                "idea-stage/ROOT_CAUSE_VERDICT.json"
+            ]["sha256"]
+        }
+        research = state["research_lit"]
+        research["current_stage"] = "LANDSCAPE_ACCEPTED"
+        research["accepted_artifacts"]["evidence:P2"] = {
+            "path": str(card_path.relative_to(tmp_path)),
+            "sha256": sha256_file(card_path),
+            "read_event_id": "R-P2",
+            "validator_result": "PASS",
+        }
+        research["read_events"]["R-P2"] = {"paper_id": "P2", "status": "complete"}
+        research["papers"]["P2"] = {"found_by_query_ids": ["Q-P2"]}
+        research["query_events"]["Q-P2"] = {"status": "complete"}
+
+    assert controller.allowed_actions() == [
+        "submit_query_plan", "reopen_root_cause", "complete_phase",
+    ]
+    monkeypatch.setattr(sys, "argv", [
+        "arisctl", "--root", str(tmp_path), "reopen-root-cause", "run-1",
+        "--reason", "The method evidence exposes an incompatible causal mechanism.",
+        "--evidence-id", "P2",
+    ])
+    assert main() == 0
+    result = controller.status()
+    returned = next(
+        item for item in result["scientific_core"]["return_history"]
+        if item["id"] == result["scientific_core"]["transition_log"][-1]["return_event_id"]
+    )
+    assert returned["from_phase"] == "method_design"
+    assert returned["return_target"] == "root_cause_analysis"
+    assert returned["reason"] == "The method evidence exposes an incompatible causal mechanism."
+    assert returned["trigger_evidence_ids"] == ["P2"]
+    assert result["scientific_core"]["current_phase"] == "root_cause_analysis"
+    assert run_state._find_phase(result, "root_cause_analysis")["status"] == "pending"
+
+    assert controller.readopt_incremental_evidence("P2") == {
+        "status": "RE_ADOPTED", "evidence_id": "P2", "phase": "root_cause_analysis",
+    }
+    parser_args = build_parser().parse_args(["reopen-root-cause", "run-1", "--reason", "new causal conflict"])
+    assert parser_args.evidence_ids is None
+
+
+def _map_for_evidence(paper_id: str, *, coverage: bool) -> dict:
+    result = field_map()
+    result["family_development_traces"][0]["evidence_ids"] = [paper_id]
+    result["assumption_effectiveness_failure_matrix"][0]["source_ids"] = [paper_id]
+    if not coverage:
+        result.pop("coverage_record")
+    return result
+
+
+def _screen(
+    controller: ARISController,
+    paper_id: str,
+    *,
+    selected: bool = False,
+    unavailable_abstract: bool = False,
+    duplicate: bool = False,
+) -> None:
+    basis = "TITLE_ONLY_ABSTRACT_UNAVAILABLE" if unavailable_abstract else "TITLE_ABSTRACT"
+    controller.decide_admission(
+        paper_id,
+        screening_in_scope=not duplicate,
+        duplicate=duplicate,
+        screening_basis=basis,
+        screening_reason="screened against the declared initial field boundary",
+        reading_priority="RECENT_ELITE_FRONTIER",
+        fulltext_selected=selected,
+        fulltext_selection_reason=("not in the current active reading subset" if not selected else None),
+    )
+
+
+def test_review_led_initial_map_then_formal_primary_reuses_evidence_and_archives_map(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    no_abstract = metadata("T1")
+    no_abstract.pop("abstract")
+    no_abstract["identity_verification_status"] = "complete"
+    controller.execute_query("test field", "fake", lambda _: [metadata("R1"), metadata("P1"), no_abstract])
+    _screen(controller, "R1", selected=True)
+    _screen(controller, "P1", selected=True)
+    _screen(controller, "T1", unavailable_abstract=True)
+
+    with pytest.raises(ControllerError, match="must select"):
+        controller.finish_retrieval()
+    controller.select_reading_subset(["R1"], rationale="complementary authoritative Review", initial=True)
+    controller.finish_retrieval()
+    with pytest.raises(ControllerError, match="active readable subset"):
+        controller.read_full_text("P1", "fake", lambda _: "must not read")
+
+    review_read = controller.read_full_text("R1", "fake", lambda _: "review")
+    controller.submit_evidence_card("R1", card(review_read, "R1"))
+    controller.finish_reading()
+    controller.submit_field_map(_map_for_evidence("R1", coverage=False))
+    initial_bytes = (tmp_path / "idea-stage" / "ACTIVE_FIELD_MAP.md").read_bytes()
+    initial_sha = controller.status()["research_lit"]["initial_field_map_binding"]["sha256"]
+    assert controller.status()["research_lit"]["coverage_review_request"] is None
+
+    controller.select_formal_primary_subset(
+        ["P1", "R1"],
+        rationale="Initial Map requires a foundational anchor and the Review remains complementary",
+    )
+    before_reuse = controller.status()["research_lit"]["fulltext_count"]
+    primary_read = controller.read_full_text("P1", "fake", lambda _: "primary")
+    controller.submit_evidence_card("P1", card(primary_read, "P1"))
+    controller.finish_reading()
+    # R1 was selected again but did not create a second read event or Evidence Card.
+    assert controller.status()["research_lit"]["fulltext_count"] == before_reuse + 1
+    assert controller.status()["research_lit"]["formal_primary_selection"]["rationale"].startswith(
+        "Initial Map requires"
+    )
+    controller.submit_field_map(_map_for_evidence("P1", coverage=True))
+    history = controller.status()["research_lit"]["field_map_history"]
+    archived = next(item for item in history if item["sha256"] == initial_sha)
+    assert (tmp_path / archived["archive_path"]).read_bytes() == initial_bytes
+
+
+def test_initial_review_fallback_and_direct_primary_fallback_are_nonempty_active_passes(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query("test field", "fake", lambda _: [metadata("R1"), metadata("P1")])
+    _screen(controller, "R1", selected=True)
+    _screen(controller, "P1", selected=True)
+    controller.select_reading_subset(["R1"], rationale="first Review cognition", initial=True)
+    controller.finish_retrieval()
+    review_read = controller.read_full_text("R1", "fake", lambda _: "review")
+    controller.submit_evidence_card("R1", card(review_read, "R1"))
+    controller.select_reading_subset(["P1"], rationale="Review Evidence leaves a foundational mechanism unresolved")
+    primary_read = controller.read_full_text("P1", "fake", lambda _: "primary fallback")
+    controller.submit_evidence_card("P1", card(primary_read, "P1"))
+    controller.finish_reading()
+    controller.submit_field_map(_map_for_evidence("P1", coverage=False))
+
+    direct = start_controller(tmp_path / "direct")
+    # This test's formal runtime root is the nested project.
+    old_cwd = Path.cwd()
+    os.chdir(direct.root)
+    try:
+        direct.execute_query("test field", "fake", lambda _: [metadata("P1")])
+        _screen(direct, "P1", selected=True)
+        direct.select_reading_subset(["P1"], rationale="no usable Review; minimal foundational Primary fallback", initial=True)
+        direct.finish_retrieval()
+        primary_read = direct.read_full_text("P1", "fake", lambda _: "primary fallback")
+        direct.submit_evidence_card("P1", card(primary_read, "P1"))
+        direct.finish_reading()
+        direct.submit_field_map(_map_for_evidence("P1", coverage=False))
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_active_selection_cannot_reactivate_excluded_candidate(tmp_path: Path) -> None:
+    controller = start_controller(tmp_path)
+    controller.execute_query("test field", "fake", lambda _: [metadata("P1"), metadata("D1")])
+    _screen(controller, "P1")
+    _screen(controller, "D1", duplicate=True)
+    with pytest.raises(ControllerError, match="excluded, duplicate, or out of scope"):
+        controller.select_reading_subset(["D1"], rationale="must never wash a duplicate", initial=True)

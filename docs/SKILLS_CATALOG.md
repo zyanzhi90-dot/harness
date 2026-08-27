@@ -1,6 +1,6 @@
 # ARIS Skills Catalog
 
-Every skill that ships with ARIS, grouped by role. **81 skills** as of the
+Every skill that ships with ARIS, grouped by role. **80 skills** as of the
 latest update; new skills land via PR and get added to the table below.
 
 - Each `Skill` link goes to the canonical `SKILL.md` (the LLM-readable spec).
@@ -20,14 +20,14 @@ latest update; new skills land via PR and get added to the table below.
 
 ## 🏗️ Workflow Orchestrators
 
-End-to-end pipelines that chain many sub-skills. Most users start here.
+Orchestrators and long-running workflows. They are independent entry points,
+not one automatic chain from a research direction to a paper.
 
 | Skill | Role | Requires |
 |---|---|---|
-| [`/research-pipeline`](../skills/research-pipeline/SKILL.md) | **Full chain** — Workflow 1 → 1.5 → 2 → 3, from research direction to submission-ready paper | Codex MCP, LaTeX, GPU |
-| [`/idea-discovery`](../skills/idea-discovery/SKILL.md) | **Workflow 1** — research-lit → idea-creator → novelty-check → research-review → research-refine-pipeline | Codex MCP |
-| [`/idea-discovery-robot`](../skills/idea-discovery-robot/SKILL.md) | Workflow 1 adapter for robotics / embodied AI — robotics-aware literature survey + benchmark-anchored ideation | Codex MCP |
-| [`/experiment-bridge`](../skills/experiment-bridge/SKILL.md) | **Workflow 1.5** — read experiment plan → implement code → sanity check → deploy to GPU → collect initial results | GPU (local / remote / Vast / Modal) |
+| [`/research-pipeline`](../skills/research-pipeline/SKILL.md) | **Canonical validation continuation** — input is a canonical run ID; user-initiated after `METHOD_CONFIRMED_AWAITING_USER_VALIDATION` to bind planning, execution, and result interpretation | Controller state, GPU |
+| [`/idea-discovery`](../skills/idea-discovery/SKILL.md) | **Canonical problem-first discovery** — research-lit → human scope approval → problem Gates → human problem acceptance → root-cause Gate → method/route/refinement → final method Gates; stops before validation | Codex MCP |
+| [`/experiment-bridge`](../skills/experiment-bridge/SKILL.md) | **Experiment implementation** — execute a bound formal plan after validation handoff, or an explicitly non-canonical ad-hoc plan | GPU (local / remote / Vast / Modal) |
 | [`/auto-review-loop`](../skills/auto-review-loop/SKILL.md) | **Workflow 2** — autonomous review → fix → re-review until positive or max rounds; uses Codex MCP reviewer | Codex MCP |
 | [`/auto-review-loop-llm`](../skills/auto-review-loop-llm/SKILL.md) | Same as Workflow 2 but uses any OpenAI-compatible LLM via [`llm-chat`](../mcp-servers/llm-chat/) MCP server | llm-chat MCP |
 | [`/auto-review-loop-minimax`](../skills/auto-review-loop-minimax/SKILL.md) | Workflow 2 variant pinned to MiniMax API | MiniMax API key |
@@ -35,7 +35,7 @@ End-to-end pipelines that chain many sub-skills. Most users start here.
 | [`/rebuttal`](../skills/rebuttal/SKILL.md) | **Workflow 4** — parse reviews → atomize → strategy → draft → safety check → stress test → 2-version output → follow-ups | Codex MCP |
 | [`/resubmit-pipeline`](../skills/resubmit-pipeline/SKILL.md) | **Workflow 5** — text-only port across venues (no new experiments, no bib edits) — isolation → anonymity → audits `--soft-only` → microedit → kill-argument gate → compile + push | Codex MCP, LaTeX |
 | [`/paper-talk`](../skills/paper-talk/SKILL.md) | **Workflow 6** — paper → slide outline → Beamer + PPTX → per-page polish → assurance audits → final report | Codex MCP, LaTeX, python-pptx |
-| [`/research-refine-pipeline`](../skills/research-refine-pipeline/SKILL.md) | Sub-pipeline used by `/idea-discovery` — refine method + plan experiments in one chain | Codex MCP |
+| [`/research-refine-pipeline`](../skills/research-refine-pipeline/SKILL.md) | Standalone refine-and-plan convenience workflow; it is not part of canonical `/idea-discovery` | Codex MCP |
 | [`/patent-pipeline`](../skills/patent-pipeline/SKILL.md) | Full patent drafting — invention → claims → spec → jurisdiction format (CN / US / EP) | Codex MCP |
 | [`/dse-loop`](../skills/dse-loop/SKILL.md) | Autonomous design-space exploration loop for computer architecture / EDA — run → analyze → tune → iterate until objective met | Domain-specific tools |
 | [`/meta-optimize`](../skills/meta-optimize/SKILL.md) | **Workflow M** — analyze ARIS usage logs and propose SKILL.md / prompt / default-parameter improvements (outer-loop self-evolution) | Codex MCP, hook logging |
@@ -65,8 +65,8 @@ Generating, refining, planning research ideas before implementation.
 
 | Skill | Role | Requires |
 |---|---|---|
-| [`/idea-creator`](../skills/idea-creator/SKILL.md) | Brainstorm 8-12 ideas, filter by feasibility, pilot on GPU, rank by signal | Codex MCP, GPU for pilots |
-| [`/research-refine`](../skills/research-refine/SKILL.md) | Iterative method refinement — problem anchor → up to 5 review rounds → score ≥ 9 | Codex MCP |
+| [`/idea-creator`](../skills/idea-creator/SKILL.md) | Generate certified problem candidates, root-cause analysis, or method routes in the Controller-assigned phase | Codex MCP |
+| [`/research-refine`](../skills/research-refine/SKILL.md) | Certified problem → issue-based method refinement → fresh blind audit | Codex MCP |
 | [`/experiment-plan`](../skills/experiment-plan/SKILL.md) | Turn a refined proposal into a claim-driven experiment roadmap — ablations, budgets, run order | None |
 | [`/ablation-planner`](../skills/ablation-planner/SKILL.md) | Design ablation studies from a reviewer's perspective (after main results pass `/result-to-claim`) | Codex MCP |
 | [`/formula-derivation`](../skills/formula-derivation/SKILL.md) | Structure theory derivations — organize assumptions, build derivation chains, turn scattered equations into coherent narrative | None |

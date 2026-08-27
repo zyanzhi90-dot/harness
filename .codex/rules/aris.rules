@@ -1,0 +1,59 @@
+# Controller automatically verifies the current task root before issuing each
+# formal reader event or Hook-bound reviewer request. A parent workspace or
+# another project root must fail before native work; the diagnostic preflight
+# CLI never substitutes for Controller authorization or Hook provenance.
+
+# Human Gate commands must run outside the workspace sandbox and prompt every time.
+prefix_rule(
+    pattern = ["python", "-m", "arisctl", "human-approve"],
+    decision = "prompt",
+    justification = "Confirm this one ARIS Human Gate in the Codex interface.",
+)
+
+prefix_rule(
+    pattern = ["python3", "-m", "arisctl", "human-approve"],
+    decision = "prompt",
+    justification = "Confirm this one ARIS Human Gate in the Codex interface.",
+)
+
+prefix_rule(
+    pattern = ["python", "-m", "arisctl", "request-source-policy-revision"],
+    decision = "prompt",
+    justification = "Confirm this source-policy revision request in the Codex interface.",
+)
+
+prefix_rule(
+    pattern = ["python3", "-m", "arisctl", "request-source-policy-revision"],
+    decision = "prompt",
+    justification = "Confirm this source-policy revision request in the Codex interface.",
+)
+
+prefix_rule(
+    pattern = ["py", "-m", "arisctl", "request-source-policy-revision"],
+    decision = "prompt",
+    justification = "Confirm this source-policy revision request in the Codex interface.",
+)
+
+prefix_rule(
+    pattern = ["py", "-m", "arisctl", "human-approve"],
+    decision = "prompt",
+    justification = "Confirm this one ARIS Human Gate in the Codex interface.",
+)
+
+prefix_rule(
+    pattern = ["python", "-m", "arisctl", "revise-problem"],
+    decision = "prompt",
+    justification = "Confirm this explicit ARIS problem revision in the Codex interface.",
+)
+
+prefix_rule(
+    pattern = ["python3", "-m", "arisctl", "revise-problem"],
+    decision = "prompt",
+    justification = "Confirm this explicit ARIS problem revision in the Codex interface.",
+)
+
+prefix_rule(
+    pattern = ["py", "-m", "arisctl", "revise-problem"],
+    decision = "prompt",
+    justification = "Confirm this explicit ARIS problem revision in the Codex interface.",
+)

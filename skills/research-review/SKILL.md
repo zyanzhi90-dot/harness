@@ -48,6 +48,15 @@ equally to both backends.
 
 ## Context: $ARGUMENTS
 
+Parse `stage: problem|method|project` from the arguments. Default to `project`
+for an existing complete work. When an orchestrator passes an explicit stage,
+review only that stage's decision; do not ask a method to compensate for a weak
+problem or reject a certified problem merely because one method route is weak.
+Use the stage contracts in
+[`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md).
+For `stage: method`, also load
+[`method-design-contract.md`](../shared-references/method-design-contract.md).
+
 ## Prerequisites
 
 - **Codex MCP Server** configured in Claude Code:
@@ -62,7 +71,14 @@ equally to both backends.
 Before calling the external reviewer, compile a comprehensive briefing:
 1. Read project narrative documents (e.g., STORY.md, README.md, paper drafts)
 2. Read any memory/notes files for key findings and experiment history
-3. Identify: core claims, methodology, key results, known weaknesses
+3. For `stage: problem`, include the Evidence Map, exact research question,
+   source class, scope, value if yes/no, decisive falsifier, and P3 gate record.
+4. For `stage: method`, include the Certified Problem Contract, scientific
+   mainline, obligations, dominant method, backbone, innovation carrier,
+   supporting-mechanism ledger, integration interfaces, scientific closure,
+   and separate scientific-delta/technical-route novelty results.
+5. For `stage: project`, identify core claims, methodology, key results, and
+   known weaknesses as before.
 
 ### Step 2: Initial Review (Round 1)
 Send a detailed prompt with ultra reasoning, using the selected backend. For
@@ -79,14 +95,23 @@ mcp__codex__codex:
     Read the review brief at <absolute path to RESEARCH_REVIEW_REQUEST.md>.
     Executor notes are not evidence beyond the files they cite, so verify the
     referenced artifacts before judging.
-    Please act as a senior ML reviewer (NeurIPS/ICML level). Start from the
+    Please act as a senior top-venue reviewer. Respect the stage declared in
+    the brief. Start from the
     assumption that the work is broken somewhere — your job is to find where.
     Be adversarial. Trust nothing the author tells you — verify everything
-    yourself. Identify:
-    1. Logical gaps or unjustified claims
-    2. Missing experiments that would strengthen the story
-    3. Narrative weaknesses
-    4. Whether the contribution is sufficient for a top venue
+    yourself.
+    For stage=problem, score Reality, Importance, Unresolvedness, Precision,
+    Falsifiability, and Answerability; return CERTIFIED / HOLD / REJECT /
+    BLOCKED plus the decisive missing evidence.
+    For stage=method, judge hypothesis quality, dominant-method fit, separation
+    of reused backbone and innovation carrier, dominant-only closure, and each
+    declared residual MUST gap. Verify that the Field Map and same-field options
+    were assessed before any cross-field structural search, and that every
+    support has an actual integration interface, capability-specific removal
+    failure, targeted evidence, single causal closure, and scientific delta
+    beyond engineering integration. Combination is not the innovation verdict.
+    For stage=project, identify logical gaps, missing evidence, narrative
+    weaknesses, and top-venue sufficiency as usual.
     Please be brutally honest.
 ```
 
@@ -133,14 +158,20 @@ Key follow-up patterns:
 
 ### Step 4: Convergence
 Stop iterating when:
-- Both sides agree on the core claims and their evidence requirements
-- A concrete experiment plan is established
-- The narrative structure is settled
+- `stage: problem`: a stable P3 verdict and the evidence required to change it
+  are explicit.
+- `stage: method`: the obligations, route verdict, weak assumptions, and
+  decisive validation are explicit.
+- `stage: project`: core claims, evidence requirements, experiment plan, and
+  narrative structure are settled.
 
 ### Step 5: Document Everything
 Save the full interaction and conclusions to a review document in the project root:
 - Round-by-round summary of criticisms and responses
-- Final consensus on claims, narrative, and experiments
+- Declared stage and stage-specific verdict
+- Separate problem-quality/problem-novelty and method-quality/method-novelty
+  conclusions when both appear
+- Final consensus on claims, narrative, and experiments where applicable
 - Claims matrix (what claims are allowed under each possible outcome)
 - Prioritized TODO list with estimated compute costs
 - Paper outline if discussed
@@ -166,6 +197,8 @@ Update project memory/notes with key review conclusions.
 - Be honest about weaknesses — hiding them leads to worse feedback
 - Push back on criticisms you disagree with, but accept valid ones
 - Focus on ACTIONABLE feedback — "what experiment would fix this?"
+- Preserve stage separation: a problem verdict and a method verdict are
+  different decisions.
 - Document the threadId for potential future resumption
 - The review document should be self-contained (readable without the conversation)
 

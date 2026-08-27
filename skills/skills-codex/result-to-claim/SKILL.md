@@ -16,6 +16,61 @@ Experiments produce numbers; this gate decides what those numbers *mean*. Collec
 
 ## Context: $ARGUMENTS
 
+## Canonical validation feedback
+
+When `$ARGUMENTS` includes a canonical Controller run ID and the output of
+`arisctl validation-handoff`, use that handoff as the sole formal context. Keep
+its `run_id`, `workflow_sha256`, and `handoff_sha256` unchanged. After judging
+the result, write `VALIDATION_RESULT.json` with this minimum contract:
+
+```json
+{
+  "schema_version": 1,
+  "run_id": "<handoff run_id>",
+  "workflow_sha256": "<handoff workflow_sha256>",
+  "handoff_sha256": "<handoff handoff_sha256>",
+  "review_request_id": "<handoff validation_review_request.id>",
+  "reviewed_artifact_hashes": {"<accepted artifact path>": "<handoff-bound sha256>"},
+  "reviewer": "<exact Codex judgment model>",
+  "verdict_id": "<reviewer-generated verdict ID>",
+  "decision": "VALIDATED | METHOD_REFINEMENT_REQUIRED | METHOD_ROUTE_REJECTED | ROOT_CAUSE_REJECTED | PROBLEM_PREMISE_REJECTED",
+  "rationale": "evidence-grounded conclusion",
+  "evidence_artifacts": [{"path": "project-relative-result-path", "sha256": "<sha256>"}],
+  "mechanism_evidence_closure": [{
+    "causal_chain_id": "<selected-route chain ID>",
+    "must_obligation_ids": ["<covered MUST obligation IDs>"],
+    "predicted_mechanism_change": "<pre-registered prediction>",
+    "observed_mechanism_change": "<actual observation>",
+    "explanation_status": "EXPLANATION_SUPPORTED",
+    "mechanism_match": "MATCHES_PREDICTION",
+    "discriminating_evidence": {"method": "controlled_intervention | ablation | counterfactual | mechanism_measurement | joint_mechanism_experiment | theory", "artifact_paths": ["project-relative-result-path"]},
+    "performance_consequence": "<effect on the original failure>"
+  }]
+}
+```
+
+Dispatch only the Controller-allowed `result_to_claim_reviewer`; the existing
+secondary Codex judgment, not Main, must emit this exact complete object. Give
+it `validation_review_request`, the hash-bound handoff, and the result
+artifacts; return its JSON unchanged for `arisctl submit-validation-result`.
+The Hook stores that reviewer-owned payload outside the project and Controller
+accepts only its exact hash-attested copy. Main must not parse, revise, or
+complete the scientific verdict.
+
+Choose `VALIDATED` only when every selected causal chain and MUST obligation has
+an `EXPLANATION_SUPPORTED` closure whose observed mechanism
+`MATCHES_PREDICTION`; a performance-only result, an untested mechanism, or a
+contradicted prediction must use the applicable return decision. Use
+`METHOD_REFINEMENT_REQUIRED` only when the
+selected route remains supported and its proposal needs within-route revision.
+Use `METHOD_ROUTE_REJECTED` when the route itself is falsified and the method
+must return to route design and Human selection. Use
+`ROOT_CAUSE_REJECTED` when the result falsifies the accepted causal diagnosis;
+use `PROBLEM_PREMISE_REJECTED` only when it falsifies the accepted problem
+premise. Do not choose a rollback target or edit canonical artifacts. The user
+submits this reviewer-attested result through `arisctl submit-validation-result`;
+unbound, stale, Main-rewritten, or ordinary findings files are not canonical feedback.
+
 ## When to Use
 
 - After a set of experiments completes (main results, not just sanity checks)
@@ -39,6 +94,13 @@ Assemble the key information:
 - Main metrics and baseline comparisons (deltas)
 - The intended claim these experiments were designed to test
 - Any known confounds or caveats
+
+Also assemble a **mechanism evidence table** for every core method change in
+the experiment plan: causal-chain ID; targeted problem mechanism or failure;
+predicted observable change; actual observation with evidence path; and the
+performance comparison. A missing mechanism observation is `untested`, never
+evidence that the mechanism worked. Preserve anomalous observations as new
+research evidence rather than filtering them out.
 
 ### Step 1.5: Deterministic evidence pre-check
 
@@ -95,6 +157,10 @@ spawn_agent:
     Known caveats:
     [any confounding factors, limited datasets, missing comparisons]
 
+    Mechanism evidence table (required for each core method change):
+    [causal-chain ID; target mechanism/failure; predicted observable;
+     actual observation and evidence path; performance delta]
+
     Please evaluate:
     1. claim_supported: yes | partial | no
     2. what_results_support: what the data actually shows
@@ -103,12 +169,29 @@ spawn_agent:
     5. suggested_claim_revision: if the claim should be strengthened, weakened, or reframed
     6. next_experiments_needed: specific experiments to fill gaps (if any)
     7. confidence: high | medium | low
+    8. mechanism_status for each core change: supported | contradicted | untested | inconclusive
+    9. mechanism_interpretation: whether the predicted mechanism/failure
+       phenomenon changed as expected, with the exact supporting evidence
+    10. explanation_outcome for each core change:
+        EXPLANATION_SUPPORTED | PERFORMANCE_ONLY | DIAGNOSE_FAILURE
+    11. next_diagnostic_action: the smallest next check when the mechanism is
+        contradicted, untested, or performance is not improved
+    12. When a `validation_review_request` is supplied, return exactly the
+        complete canonical validation-verdict JSON contract above (including
+        copied request bindings); return no explanatory prose around it.
 
     Be honest. Do not inflate claims beyond what the data supports.
     A single positive result on one dataset does not support a general claim.
+    Performance improvement plus a contradicted or untested mechanism is a
+    positive empirical result, but does NOT establish the original mechanism.
 ```
 
 ### Step 3: Parse and Normalize
+
+For a formal Controller run, Main must not parse or normalize the judgment:
+the fresh result-to-claim reviewer returns the canonical JSON directly, and
+Main transports that byte-equivalent payload to the Controller. The following
+summary extraction applies only to non-canonical/advisory use.
 
 Extract structured fields from the secondary Codex response:
 
@@ -120,6 +203,13 @@ Extract structured fields from the secondary Codex response:
 - suggested_claim_revision: "..."
 - next_experiments_needed: "..."
 - confidence: high | medium | low
+- mechanism_evidence:
+  - causal_chain_id: "..."
+    performance_status: improved | not_improved | inconclusive
+    mechanism_status: matches_prediction | contradicts_prediction | untested | inconclusive
+    explanation_outcome: EXPLANATION_SUPPORTED | PERFORMANCE_ONLY | DIAGNOSE_FAILURE
+    actual_observation_and_evidence: "..."
+    next_diagnostic_action: "..."
 ```
 
 ### Step 3.5: Check Experiment Integrity (if audit exists)
@@ -148,6 +238,18 @@ See `shared-references/experiment-integrity.md` for the full integrity protocol.
 
 ### Step 4: Route Based on Verdict
 
+Apply this interpretation before any paper-facing claim is confirmed:
+
+| Performance | Predicted mechanism / failure phenomenon | Required interpretation |
+|-------------|-------------------------------------------|-------------------------|
+| improved | supported | `EXPLANATION_SUPPORTED`: performance and mechanism jointly support the current explanation within its stated scope. |
+| improved | contradicted, untested, or inconclusive | `PERFORMANCE_ONLY`: retain the positive result, but do not claim the original mechanism; diagnose the actual cause. |
+| not improved | any status | `DIAGNOSE_FAILURE`: use the mechanism evidence to distinguish method mismatch, implementation/measurement fault, and an incomplete or wrong earlier analysis. |
+
+For `PERFORMANCE_ONLY` and `DIAGNOSE_FAILURE`, append the anomalous result,
+alternative explanations, and next diagnostic action to `findings.md`. Do not
+silently rerun, pivot, or rewrite the causal explanation.
+
 #### `no` — Claim not supported
 
 1. Record postmortem in findings.md (Research Findings section):
@@ -166,7 +268,9 @@ See `shared-references/experiment-integrity.md` for the full integrity protocol.
 
 #### `yes` — Claim supported
 
-1. Record confirmed claim in project notes
+1. Record only the performance claim unless every linked core change is
+   `EXPLANATION_SUPPORTED`; a `PERFORMANCE_ONLY` result cannot confirm a
+   mechanism-level claim
 2. If ablation studies are incomplete → trigger `/ablation-planner`
 3. If all evidence is in → ready for paper writing
 

@@ -221,22 +221,31 @@ def check_inventory() -> list[str]:
     require(tool_loop, "tools/watchdog.py must implement the loop-liveness check_loop (A2)", failures)
     require(doc_loop, "external-cadence.md must document registering a watchdog 'loop' task — its trigger (A2)", failures)
 
-    # iteration_log.py (stall→pivot, B) must exist AND be both documented (the ladder with
-    # both thresholds) and actually wired into a heartbeat consumer — else it is dead code.
-    # Same dead-code guard as the Agent-grant⇒cite rule above.
+    # iteration_log.py is retained as a legacy helper with no shipped consumer.
+    # It must be explicitly marked as such everywhere that formerly described
+    # it as part of the research-pipeline heartbeat route.
     extc = read(SKILLS_ROOT / "shared-references" / "external-cadence.md")
+    integration = read(SKILLS_ROOT / "shared-references" / "integration-contract.md")
+    codex_extc = read(CODEX_ROOT / "shared-references" / "external-cadence.md")
+    codex_integration = read(CODEX_ROOT / "shared-references" / "integration-contract.md")
     rp = read(SKILLS_ROOT / "research-pipeline" / "SKILL.md")
-    tool_stall = (REPO_ROOT / "tools" / "iteration_log.py").is_file()
-    doc_ladder = bool(re.search(r"forced structural pivot", extc, re.IGNORECASE)) and \
-        bool(re.search(r"stale_count`?\s*>=\s*2", extc)) and bool(re.search(r"stale_count`?\s*>=\s*4", extc))
-    # Prove the wiring is real (not a prose mention): resolver chain + note invocation +
-    # both pivot branches handled in research-pipeline.
-    wired = ('iteration_log.py' in rp and 'ITER_LOG' in rp
-             and re.search(r'"\$ITER_LOG"\s+note', rp) is not None
-             and 'pivot' in rp and 'structural' in rp and 'human' in rp)
-    require(tool_stall, "tools/iteration_log.py (stall→pivot, B) must exist", failures)
-    require(doc_ladder, "external-cadence.md must document the stall ladder with both thresholds (>=2 structural, >=4 human) (B)", failures)
-    require(wired, "research-pipeline/SKILL.md must actually wire iteration_log.py (resolver + `$ITER_LOG note` + pivot handling) — not just mention it (B)", failures)
+    iteration_log = read(REPO_ROOT / "tools" / "iteration_log.py")
+    # The downstream pipeline must fail closed at the existing Controller
+    # handoff, rather than resurrecting its former autonomous run-state route.
+    canonical_entry = (
+        "validation-handoff <run_id>" in rp
+        and "METHOD_CONFIRMED_AWAITING_USER_VALIDATION" in rp
+        and "must not use `tools/run_state.py`" in rp
+    )
+    legacy_iteration_log = (
+        "LEGACY: iteration_log.py" in iteration_log
+        and "no active shipped consumer" in extc
+        and "Legacy; no active caller" in integration
+        and "no active shipped consumer" in codex_extc
+        and "Legacy; no active caller" in codex_integration
+    )
+    require(legacy_iteration_log, "iteration_log.py and its shared contracts must explicitly mark the helper legacy with no active caller", failures)
+    require(canonical_entry, "research-pipeline/SKILL.md must require the canonical validation handoff and forbid an independent run_state route (P0-6)", failures)
 
     # research_wiki.py add_claim (claim layer) ⇔ its documented birth trigger in
     # /proof-checker. add_claim is a writer; without a skill that calls it, the claim

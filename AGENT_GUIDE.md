@@ -24,7 +24,7 @@ complete workflows but records `review_independence: same-family` and
 verifiers may record accepted; never describe base Codex self-review as
 cross-model acceptance.
 
-**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **81 skills**, grouped by role.
+**Full catalog**: [`docs/SKILLS_CATALOG.md`](docs/SKILLS_CATALOG.md) — **80 skills**, grouped by role.
 
 Invocation syntax is identical across hosts:
 ```
@@ -55,7 +55,7 @@ Controls whether mandatory audits gate the final report. `lite` / `balanced` def
 
 ```
 — human checkpoint: true | false             # pause for approval (default: false)
-— AUTO_PROCEED: true | false                 # auto-continue at gates (default: true)
+— AUTO_PROCEED: true | false                 # only for skills that declare it; never overrides a canonical Gate
 — difficulty: medium | hard | nightmare      # reviewer adversarial level
 — venue: ICLR | NeurIPS | ICML | ...         # target venue
 — sources: web, zotero, deepxiv, exa, ...    # literature sources
@@ -78,15 +78,20 @@ Parameters pass through workflow chains automatically.
 
 ## Workflow Index
 
+四阶段科研交接的简明说明见 [`RESEARCH_HANDOFF_CN.md`](RESEARCH_HANDOFF_CN.md)：
+先做可审计的领域调研，再认证问题、验收根因分析，最后进入创新方法设计；
+不要跳过前一阶段的输入门槛。
+
 ```
-Main chain:      /research-pipeline = W1 → W1.5 → W2 → W3
+Formal chain:    canonical Controller workflow → method acceptance → /research-pipeline <run_id> → validation
 Post-paper:      W4 (rebuttal), W5 (resubmit to new venue), W6 (talk)
 ```
 
 | ID | Skill | Input | Output | When to invoke |
 |----|-------|-------|--------|----------------|
-| W1 | `/idea-discovery "direction"` | research direction | `IDEA_REPORT.md`, `EXPERIMENT_PLAN.md`, `FINAL_PROPOSAL.md` | Starting new research |
-| W1.5 | `/experiment-bridge` | `EXPERIMENT_PLAN.md` | running code, `EXPERIMENT_LOG.md` | Have a plan, need to implement |
+| Canonical validation | `/research-pipeline "<run_id>"` | Controller-approved validation handoff | bound experiment plan, execution, mechanism evidence | Only after `METHOD_CONFIRMED_AWAITING_USER_VALIDATION` |
+| W1 | `/idea-discovery "direction"` | research direction | accepted problem/root-cause/method artifacts and `IDEA_REPORT.md` | Start the canonical problem-first route; it stops at method confirmation |
+| W1.5 | `/experiment-bridge` | bound `refine-logs/EXPERIMENT_PLAN.md` or an explicitly non-canonical plan | running code, `EXPERIMENT_LOG.md` | Implement an already prepared plan |
 | W2 | `/auto-review-loop "scope"` | paper + results | improved paper + `REVIEW_STATE.json` | Iterative improvement loop |
 | W3 | `/paper-writing "NARRATIVE_REPORT.md"` | narrative report | `paper/main.pdf` + LaTeX source | Ready to write |
 | W4 | `/rebuttal "paper/ + reviews"` | paper + reviews | `PASTE_READY.txt` + `REBUTTAL_DRAFT_rich.md` | Reviews received |
@@ -134,9 +139,13 @@ Skills communicate through plain-text files in known locations:
 
 | Artifact | Created by | Consumed by |
 |----------|-----------|-------------|
-| `IDEA_REPORT.md` | `/idea-discovery` | `/experiment-bridge` |
-| `refine-logs/FINAL_PROPOSAL.md` | `/research-refine` | `/experiment-plan` |
-| `EXPERIMENT_PLAN.md` | `/experiment-plan` | `/experiment-bridge` |
+| `idea-stage/ROOT_CAUSE_ANALYSIS.{json,md}` | `/idea-creator mode: diagnosis` | independent root-cause Gate, `/idea-creator mode: method`, `/research-refine` |
+| `idea-stage/ROOT_CAUSE_VERDICT.json` | independent root-cause reviewer | state Gate, `/idea-creator mode: method`, `/research-refine` |
+| `idea-stage/SOURCE_ADMISSION_POLICY.yaml` | Controller after human approval | formal literature admission |
+| `idea-stage/SEARCH_LEDGER.jsonl` | Controller gateways | formal literature audit |
+| `IDEA_REPORT.md` | `/idea-discovery` | human reading only; never a downstream state handoff |
+| `refine-logs/FINAL_PROPOSAL.md` | `/research-refine` | final novelty Gate and Controller validation handoff |
+| `refine-logs/EXPERIMENT_PLAN.md` | `/experiment-plan` after validation handoff | `/experiment-bridge` |
 | `EXPERIMENT_LOG.md` | `/experiment-bridge` | `/auto-review-loop`, `/result-to-claim` |
 | `NARRATIVE_REPORT.md` | `/auto-review-loop` (or human) | `/paper-writing` |
 | `paper/main.tex` | `/paper-write` | `/paper-compile` |

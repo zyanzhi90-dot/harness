@@ -39,6 +39,7 @@ concurrent resumer. See shared-references/resumable-runs.md.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -47,6 +48,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
+
+import yaml
 
 try:
     from provenance import model_family
@@ -64,8 +67,21 @@ EXECUTOR_STATUSES = {"pending", "running", "done", "failed", "skipped"}
 # (`policy.provisional_advances`, default False). The Codex-native mirror sets it
 # true at start_run; mainline runs keep the historical guarantee that only a
 # cross-family acceptance (or an explicit skip) closes a phase.
-TERMINAL_STATUSES = {"accepted", "skipped"}
-ALL_STATUSES = EXECUTOR_STATUSES | {"accepted", "provisional"}
+TERMINAL_STATUSES = {"accepted", "human_accepted", "skipped"}
+ALL_STATUSES = EXECUTOR_STATUSES | {"accepted", "human_accepted", "provisional"}
+
+
+def _assert_not_controller_managed(state: dict) -> None:
+    """Keep legacy mutation APIs out of Controller-owned runs.
+
+    The controller mutates those runs through its atomic StateStore.  This
+    closes the old ``run_state.py set/accept/approve`` bypass while preserving
+    backwards compatibility for non-controller workflows.
+    """
+    if state.get("controller_managed"):
+        raise ValueError(
+            "run is Controller-managed; use arisctl instead of run_state mutation APIs"
+        )
 
 
 def _terminal_statuses(state: dict) -> set:
@@ -134,8 +150,989 @@ def _save(root: str, run_id: str, state: dict) -> None:
             raise
 
 
+def _load_workflow(path: Optional[str]) -> Optional[dict]:
+    """Load the JSON-compatible YAML workflow declaration.
+
+    The checked-in ``idea-workflow.yaml`` intentionally uses JSON syntax, which
+    is valid YAML and keeps this state helper dependency-free. A workflow is
+    metadata, not prompt text: it declares dependencies, handoff artifacts,
+    gate ownership, and human checkpoints.
+    """
+    if not path:
+        return None
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"workflow spec not found at {p}")
+    try:
+        workflow = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"workflow spec must be JSON-compatible YAML (stdlib parser): {p}: {exc}"
+        ) from exc
+    if not isinstance(workflow, dict) or not isinstance(workflow.get("phases"), list):
+        raise ValueError("workflow spec requires an object with a phases list")
+    manifest = workflow.get("artifact_manifest", {})
+    if not isinstance(manifest, dict) or any(
+        not isinstance(key, str) or not key or not isinstance(value, str) or not value
+        for key, value in manifest.items()
+    ):
+        raise ValueError("artifact_manifest must map non-empty names to paths")
+    names = [item.get("phase") for item in workflow["phases"] if isinstance(item, dict)]
+    if len(names) != len(set(names)) or any(not name for name in names):
+        raise ValueError("workflow phases must have unique non-empty phase names")
+    formal_gate_ids = [
+        item.get("gate_id") for item in workflow["phases"]
+        if item.get("formal_gate")
+    ]
+    if len(formal_gate_ids) != len(set(formal_gate_ids)):
+        raise ValueError("each formal Gate must have one unique gate_id")
+    for item in workflow["phases"]:
+        if item.get("formal_gate") and not item.get("gate_owner"):
+            raise ValueError(f"formal Gate {item.get('gate_id')!r} has no gate_owner")
+        for dependency in item.get("depends_on", []):
+            if dependency not in names:
+                raise ValueError(
+                    f"phase {item.get('phase')!r} depends on unknown phase {dependency!r}"
+                )
+        for field in ("required_inputs", "produced_artifacts", "reviewed_artifacts"):
+            for raw in item.get(field, []):
+                if isinstance(raw, str) and raw.startswith("@artifact:"):
+                    key = raw[len("@artifact:"):]
+                    if key not in manifest:
+                        raise ValueError(
+                            f"phase {item.get('phase')!r} references unknown artifact {key!r}"
+                        )
+        reviewed_artifacts = item.get("reviewed_artifacts")
+        if reviewed_artifacts is not None:
+            if not isinstance(reviewed_artifacts, list) or not reviewed_artifacts:
+                raise ValueError(
+                    f"phase {item.get('phase')!r} reviewed_artifacts must be a non-empty list"
+                )
+            reviewed_paths = _resolve_artifact_refs(workflow, reviewed_artifacts, item.get("phase"))
+            produced_paths = _resolve_artifact_refs(
+                workflow, item.get("produced_artifacts", []), item.get("phase")
+            )
+            if any(path not in produced_paths for path in reviewed_paths):
+                raise ValueError(
+                    f"phase {item.get('phase')!r} reviewed_artifacts must be produced by the same phase"
+                )
+        coverage = item.get("requires_coverage")
+        if coverage is not None:
+            if not isinstance(coverage, dict) or not isinstance(coverage.get("phase"), str):
+                raise ValueError(
+                    f"phase {item.get('phase')!r} requires valid requires_coverage metadata"
+                )
+            if coverage["phase"] not in names or not isinstance(coverage.get("statuses"), list) \
+                    or not coverage["statuses"]:
+                raise ValueError(
+                    f"phase {item.get('phase')!r} requires a known coverage phase and statuses"
+                )
+        validated = item.get("requires_validated_artifacts")
+        if validated is not None:
+            if not isinstance(validated, list) or not validated:
+                raise ValueError(
+                    f"phase {item.get('phase')!r} requires_validated_artifacts must be a non-empty list"
+                )
+            for requirement in validated:
+                if not isinstance(requirement, dict) or requirement.get("phase") not in names:
+                    raise ValueError(
+                        f"phase {item.get('phase')!r} requires validated artifacts from a known phase"
+                    )
+                artifacts = requirement.get("artifacts")
+                if not isinstance(artifacts, list) or not artifacts:
+                    raise ValueError(
+                        f"phase {item.get('phase')!r} has an empty validated artifact requirement"
+                    )
+                _resolve_artifact_refs(workflow, artifacts, item.get("phase"))
+        accepted_verdicts = item.get("accepted_verdicts")
+        if accepted_verdicts is not None and (
+            not isinstance(accepted_verdicts, list)
+            or not accepted_verdicts
+            or any(not isinstance(value, str) or not value for value in accepted_verdicts)
+        ):
+            raise ValueError(
+                f"phase {item.get('phase')!r} accepted_verdicts must be a non-empty string list"
+            )
+        accepted_decisions = item.get("accepted_decisions")
+        if item.get("human_checkpoint"):
+            if (
+                not isinstance(accepted_decisions, list)
+                or not accepted_decisions
+                or any(not isinstance(value, str) or not value for value in accepted_decisions)
+            ):
+                raise ValueError(
+                    f"human checkpoint {item.get('phase')!r} accepted_decisions must be a non-empty string list"
+                )
+        elif accepted_decisions is not None:
+            raise ValueError(
+                f"non-human phase {item.get('phase')!r} cannot declare accepted_decisions"
+            )
+        return_targets = item.get("return_targets")
+        if return_targets is not None:
+            if not isinstance(return_targets, dict) or not return_targets:
+                raise ValueError(
+                    f"phase {item.get('phase')!r} return_targets must be a non-empty object"
+                )
+            current_index = names.index(item.get("phase"))
+            for decision, target in return_targets.items():
+                if (
+                    not isinstance(decision, str) or not decision
+                    or target not in names
+                        or names.index(target) > current_index
+                ):
+                    raise ValueError(
+                            f"phase {item.get('phase')!r} return_targets must map verdicts to its current or an earlier phase"
+                    )
+            if accepted_decisions is not None and set(accepted_decisions) & set(return_targets):
+                raise ValueError(
+                    f"phase {item.get('phase')!r} accepted_decisions and return_targets overlap"
+                )
+    return workflow
+
+
+def _workflow_phase(state: dict, phase: str) -> Optional[dict]:
+    workflow = state.get("workflow") or {}
+    for item in workflow.get("phases", []):
+        if item.get("phase") == phase:
+            return item
+    return None
+
+
+def _resolve_artifact_refs(workflow: dict, paths: list[str], phase: str) -> list[str]:
+    manifest = workflow.get("artifact_manifest", {})
+    resolved = []
+    for raw in paths:
+        if isinstance(raw, str) and raw.startswith("@artifact:"):
+            key = raw[len("@artifact:"):]
+            try:
+                resolved.append(manifest[key])
+            except KeyError as exc:  # validated on workflow load; keep state safe too
+                raise ValueError(
+                    f"phase {phase!r} references unknown artifact {key!r}"
+                ) from exc
+        else:
+            resolved.append(raw)
+    return resolved
+
+
+def _is_terminal(state: dict, status: str, phase: Optional[str] = None) -> bool:
+    if status in _terminal_statuses(state):
+        return True
+    # Non-gate modules only need execution completeness. Formal gates still
+    # require an explicit accepted/provisional/human decision.
+    if status == "done" and phase is not None:
+        spec = _workflow_phase(state, phase)
+        return bool(spec is not None and not spec.get("formal_gate", False))
+    return False
+
+
+def _check_paths(root: str, paths: list[str], kind: str, phase: str) -> None:
+    missing = []
+    for raw in paths:
+        path = Path(raw)
+        if not path.is_absolute():
+            path = Path(root) / path
+        if not path.exists():
+            missing.append(raw)
+    if missing:
+        raise ValueError(
+            f"phase {phase!r} cannot proceed: missing {kind} artifact(s): {missing}"
+        )
+
+
+def _artifact_path(root: str, raw: str) -> Path:
+    path = Path(raw)
+    return path if path.is_absolute() else Path(root) / path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_hashes(root: str, paths: list[str]) -> dict[str, str]:
+    return {raw: _sha256(_artifact_path(root, raw)) for raw in paths}
+
+
+def _root_cause_formal_evidence_sources(
+    root: str,
+    state: dict,
+    *,
+    contract_path: str,
+    capsule_path: str,
+    analysis: dict,
+    output_paths: list[str],
+    current_incremental_evidence_ids: set[str] | None = None,
+) -> tuple[str, dict[str, str], list[dict[str, str]]]:
+    """Resolve diagnosis references against the current accepted problem.
+
+    The accepted Capsule freezes the problem handoff. During the declared
+    root-cause phase, the existing literature gateway may additionally bind
+    Controller-registered Evidence Cards as *phase-scoped diagnostic evidence*;
+    those cards supplement diagnosis only and never alter the accepted Capsule.
+    Newly collected diagnostic pilots remain separately registered evidence.
+    """
+
+    from arisctl.validators import (
+        ValidationError,
+        root_cause_problem_handoff,
+        validate_root_cause_diagnostic_pilots,
+    )
+
+    core = state.get("scientific_core") or {}
+    active = core.get("active_problem_version")
+    if not isinstance(active, dict) or not isinstance(active.get("problem_id"), str):
+        raise ValueError("root-cause analysis requires an active accepted problem version")
+    if (
+        active.get("contract_path") != contract_path
+        or active.get("evidence_capsule_path") != capsule_path
+        or active.get("contract_sha256") != _sha256(_artifact_path(root, contract_path))
+        or active.get("evidence_capsule_sha256") != _sha256(_artifact_path(root, capsule_path))
+    ):
+        raise ValueError("root-cause inputs no longer match the active accepted problem version")
+    try:
+        contract_problem_id, capsule_evidence_ids = root_cause_problem_handoff(
+            _artifact_path(root, contract_path).read_text(encoding="utf-8"),
+            _artifact_path(root, capsule_path).read_text(encoding="utf-8"),
+        )
+    except ValidationError as exc:
+        raise ValueError(str(exc)) from exc
+    if contract_problem_id != active["problem_id"]:
+        raise ValueError("root-cause inputs do not identify the active accepted problem")
+
+    evidence_sources: dict[str, str] = {}
+    research = state.get("research_lit") or {}
+    accepted_evidence = research.get("accepted_artifacts") or {}
+    registry_path = _artifact_path(root, "idea-stage/EVIDENCE_REGISTRY.jsonl")
+    registry_ids: set[str] = set()
+    if registry_path.is_file():
+        try:
+            registry_ids = {
+                str(row["source_id"])
+                for row in (
+                    json.loads(line)
+                    for line in registry_path.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                )
+                if isinstance(row, dict) and isinstance(row.get("source_id"), str)
+            }
+        except json.JSONDecodeError as exc:
+            raise ValueError("Evidence Registry must remain valid JSONL") from exc
+    registered_nonliterature: dict[str, dict] = {}
+    for record in (core.get("accepted_artifacts") or {}).values():
+        if not isinstance(record, dict):
+            continue
+        artifact_id = record.get("artifact_id")
+        binding = record.get("problem_version_binding")
+        source_type = record.get("evidence_source_type")
+        if (
+            isinstance(artifact_id, str)
+            and isinstance(binding, dict)
+            and binding.get("problem_id") == active["problem_id"]
+            and binding.get("version") == active.get("version")
+            and binding.get("contract_sha256") == active.get("contract_sha256")
+            and binding.get("evidence_capsule_sha256") == active.get("evidence_capsule_sha256")
+            and source_type in {"existing_experiment", "dataset", "real_world"}
+        ):
+            registered_nonliterature[artifact_id] = record
+    for evidence_id in capsule_evidence_ids:
+        record = accepted_evidence.get(f"evidence:{evidence_id}")
+        if isinstance(record, dict) and record.get("validator_result") == "PASS":
+            path = record.get("path")
+            digest = record.get("sha256")
+            if not isinstance(path, str) or not isinstance(digest, str):
+                raise ValueError(f"accepted Evidence Registry card {evidence_id!r} is incomplete")
+            card_path = _artifact_path(root, path)
+            if not card_path.is_file() or _sha256(card_path) != digest or evidence_id not in registry_ids:
+                raise ValueError(
+                    f"problem Capsule evidence {evidence_id!r} no longer matches the accepted Evidence Registry"
+                )
+            evidence_sources[evidence_id] = "literature"
+            continue
+        nonliterature = registered_nonliterature.get(evidence_id)
+        if not isinstance(nonliterature, dict):
+            raise ValueError(
+                f"problem Capsule evidence {evidence_id!r} is not a current problem-bound Evidence Card or artifact"
+            )
+        path = nonliterature.get("path")
+        digest = nonliterature.get("sha256")
+        if not isinstance(path, str) or not isinstance(digest, str):
+            raise ValueError(f"registered problem evidence {evidence_id!r} is incomplete")
+        source_path = _artifact_path(root, path)
+        if not source_path.is_file() or _sha256(source_path) != digest:
+            raise ValueError(f"registered problem evidence {evidence_id!r} has changed")
+        evidence_sources[evidence_id] = str(nonliterature["evidence_source_type"])
+
+    # The gateway is the sole source of post-acceptance literature. These cards
+    # are deliberately not merged into the accepted Capsule: they are valid only
+    # for this root-cause analysis and are snapshotted in the phase handoff.
+    incremental = (research.get("incremental_evidence_by_phase") or {}).get(
+        "root_cause_analysis"
+    )
+    if incremental is not None:
+        if not isinstance(incremental, dict):
+            raise ValueError("root-cause phase-scoped evidence registry is invalid")
+        for record in incremental.values():
+            if not isinstance(record, dict):
+                raise ValueError("root-cause phase-scoped evidence record is invalid")
+            path, digest = record.get("path"), record.get("sha256")
+            if not isinstance(path, str) or not isinstance(digest, str):
+                raise ValueError("root-cause phase-scoped evidence record is incomplete")
+            card_path = _artifact_path(root, path)
+            if not card_path.is_file() or _sha256(card_path) != digest:
+                raise ValueError("root-cause phase-scoped Evidence Card has changed")
+            try:
+                card = json.loads(card_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                raise ValueError("root-cause phase-scoped Evidence Card must be valid JSON") from exc
+            evidence_id = card.get("source_id") if isinstance(card, dict) else None
+            if not isinstance(evidence_id, str) or not evidence_id:
+                raise ValueError("root-cause phase-scoped Evidence Card has no source_id")
+            if (
+                current_incremental_evidence_ids is not None
+                and evidence_id not in current_incremental_evidence_ids
+            ):
+                continue
+            if evidence_id in evidence_sources:
+                # It is already part of the immutable problem handoff; it is not
+                # a distinct diagnosis-only source.
+                continue
+            evidence_sources[evidence_id] = "literature"
+
+    provenance = analysis.get("analysis_provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError("root-cause analysis_provenance must be an object")
+    try:
+        diagnostic_pilots = validate_root_cause_diagnostic_pilots(provenance)
+    except ValidationError as exc:
+        raise ValueError(str(exc)) from exc
+    output_files = {_artifact_path(root, path).resolve() for path in output_paths}
+    root_path = Path(root).resolve()
+    for artifact in diagnostic_pilots:
+        if Path(artifact["path"]).is_absolute():
+            raise ValueError(
+                f"root-cause diagnostic pilot {artifact['artifact_id']!r} must use a project-relative path"
+            )
+        source_path = _artifact_path(root, artifact["path"]).resolve()
+        try:
+            source_path.relative_to(root_path)
+        except ValueError as exc:
+            raise ValueError(
+                f"root-cause diagnostic pilot {artifact['artifact_id']!r} must be inside the project"
+            ) from exc
+        if source_path in output_files:
+            raise ValueError("root-cause diagnostic pilots cannot be diagnosis output artifacts")
+        if not source_path.is_file() or _sha256(source_path) != artifact["sha256"]:
+            raise ValueError(
+                f"root-cause diagnostic pilot {artifact['artifact_id']!r} does not match its declared file hash"
+            )
+        if artifact["artifact_id"] in evidence_sources:
+            raise ValueError(
+                f"root-cause diagnostic pilot ID duplicates formal evidence: {artifact['artifact_id']}"
+            )
+        evidence_sources[artifact["artifact_id"]] = artifact["evidence_source_type"]
+    return str(active["problem_id"]), evidence_sources, diagnostic_pilots
+
+
+def _assert_coverage_requirement(state: dict, spec: dict, phase: str) -> None:
+    coverage = spec.get("requires_coverage")
+    if not coverage:
+        return
+    required_phase = _find_phase(state, coverage["phase"])
+    allowed = set(coverage["statuses"])
+    actual = required_phase.get("coverage_status")
+    if actual not in allowed:
+        raise ValueError(
+            f"phase {phase!r} requires coverage status in {sorted(allowed)}, "
+            f"but {coverage['phase']!r} is {actual!r}"
+        )
+
+
+def _assert_validated_artifacts(root: str, state: dict, spec: dict, phase: str) -> None:
+    workflow = state.get("workflow") or {}
+    for requirement in spec.get("requires_validated_artifacts", []):
+        source_phase = _find_phase(state, requirement["phase"])
+        registered = source_phase.get("validated_artifacts")
+        if not isinstance(registered, dict):
+            raise ValueError(
+                f"phase {phase!r} requires validated artifacts from {requirement['phase']!r}, "
+                "but no validation snapshot is registered"
+            )
+        paths = _resolve_artifact_refs(workflow, requirement["artifacts"], phase)
+        _check_paths(root, paths, "validated input", phase)
+        for raw in paths:
+            expected = registered.get(raw)
+            actual = _sha256(_artifact_path(root, raw))
+            if not expected or actual != expected:
+                raise ValueError(
+                    f"phase {phase!r} cannot proceed: validated artifact {raw!r} "
+                    f"from {requirement['phase']!r} is missing its snapshot or has changed"
+                )
+
+
+def _assert_dependencies(root: str, state: dict, spec: dict, phase: str) -> None:
+    dependencies = spec.get("depends_on", [])
+    if not dependencies:
+        return
+    by_name = {item["phase"]: item for item in state["phases"]}
+    not_ready = [
+        dependency for dependency in dependencies
+        if not _is_terminal(state, by_name[dependency]["status"], dependency)
+    ]
+    if not_ready:
+        raise ValueError(
+            f"phase {phase!r} is blocked by non-terminal dependencies: {not_ready}"
+        )
+    _check_paths(
+        root,
+        _resolve_artifact_refs(state.get("workflow") or {}, spec.get("required_inputs", []), phase),
+        "required input",
+        phase,
+    )
+    _assert_coverage_requirement(state, spec, phase)
+    _assert_validated_artifacts(root, state, spec, phase)
+
+
+def _method_route_context(root: str, state: dict, phase: str) -> dict | None:
+    """Resolve the immutable problem/diagnosis handoff for P10 route checks."""
+
+    if not state.get("controller_managed"):
+        return None
+    core = state.get("scientific_core") or {}
+    active = core.get("active_problem_version")
+    required_binding = (
+        "problem_id", "version", "contract_sha256", "evidence_capsule_sha256"
+    )
+    if not isinstance(active, dict) or any(not active.get(key) for key in required_binding):
+        raise ValueError("method route validation requires an active accepted problem version")
+    workflow = state.get("workflow") or {}
+    try:
+        analysis_path = str(workflow["artifact_manifest"]["root_cause_analysis"])
+        analysis = json.loads(_artifact_path(root, analysis_path).read_text(encoding="utf-8"))
+    except (KeyError, OSError, json.JSONDecodeError) as exc:
+        raise ValueError("method route validation cannot read the accepted root-cause analysis") from exc
+    if not isinstance(analysis, dict) or not isinstance(analysis.get("analysis_id"), str):
+        raise ValueError("method route validation root-cause analysis has no analysis_id")
+    primary_chain_ids = analysis.get("primary_causal_chain_ids")
+    if not isinstance(primary_chain_ids, list) or not all(
+        isinstance(item, str) and item for item in primary_chain_ids
+    ):
+        raise ValueError("method route validation root-cause analysis has invalid primary causal chains")
+
+    if phase != "method_design":
+        accepted = core.get("accepted_artifacts") or {}
+        method_phase = _find_phase(state, "method_design")
+        method_spec = _workflow_phase(state, "method_design")
+        assert method_spec is not None
+        for raw_path in _resolve_artifact_refs(
+            workflow, method_spec.get("produced_artifacts", []), "method_design"
+        ):
+            record = accepted.get(raw_path)
+            path = _artifact_path(root, raw_path)
+            if (
+                not isinstance(record, dict)
+                or record.get("producer_phase") != "method_design"
+                or not path.is_file()
+                or record.get("sha256") != _sha256(path)
+            ):
+                raise ValueError(
+                    f"method route artifact {raw_path!r} is not the current Controller-registered handoff"
+                )
+        if method_phase.get("status") not in {"done", "accepted", "human_accepted"}:
+            raise ValueError("method routes are not complete")
+
+    return {
+        "problem_version": {
+            "problem_id": active["problem_id"],
+            "version": active["version"],
+            "contract_sha256": active["contract_sha256"],
+            "evidence_capsule_sha256": active["evidence_capsule_sha256"],
+        },
+        "root_cause_analysis_id": analysis["analysis_id"],
+        "root_cause_analysis_sha256": _sha256(_artifact_path(root, analysis_path)),
+        "primary_causal_chain_ids": set(primary_chain_ids),
+    }
+
+
+def _validate_method_route_outputs(
+    root: str,
+    state: dict,
+    spec: dict,
+    phase: str,
+    output_paths: list[str],
+) -> dict | None:
+    """Close routes, the Human selection, and final proposal to one handoff."""
+
+    context = _method_route_context(root, state, phase)
+    if context is None:
+        return None
+    from arisctl.validators import (
+        ValidationError,
+        validate_design_obligation_set,
+        validate_final_proposal,
+        validate_method_routes,
+        validate_method_routes_view,
+        validate_selected_route,
+    )
+
+    method_spec = _workflow_phase(state, "method_design")
+    assert method_spec is not None
+    method_paths = _resolve_artifact_refs(
+        state.get("workflow") or {}, method_spec.get("produced_artifacts", []), "method_design"
+    )
+    routes_path = next((path for path in method_paths if path.endswith(".jsonl")), None)
+    routes_view_path = next((path for path in method_paths if path.endswith(".md")), None)
+    if not routes_path or not routes_view_path:
+        raise ValueError("method-design workflow must declare JSONL and Markdown route artifacts")
+    try:
+        routes_text = _artifact_path(root, routes_path).read_text(encoding="utf-8")
+        routes = validate_method_routes(
+            routes_text,
+            **context,
+        )
+        search_record = ((state.get("research_lit") or {}).get("accepted_artifacts") or {}).get(
+            "incremental-query-plan-method_design"
+        )
+        if isinstance(search_record, dict):
+            search_path = _artifact_path(root, str(search_record.get("path") or ""))
+            if not search_path.is_file() or search_record.get("sha256") != _sha256(search_path):
+                raise ValueError("current method-search Query Plan is not a registered artifact")
+            search_context = json.loads(search_path.read_text(encoding="utf-8")).get(
+                "method_design_context"
+            )
+            if isinstance(search_context, dict) and isinstance(
+                search_context.get("design_obligation_set_id"), str
+            ):
+                expected_set = validate_design_obligation_set(
+                    search_context,
+                    label="current method-search Query Plan",
+                    problem_version=context["problem_version"],
+                    root_cause_analysis_id=context["root_cause_analysis_id"],
+                    root_cause_analysis_sha256=context["root_cause_analysis_sha256"],
+                    primary_causal_chain_ids=context["primary_causal_chain_ids"],
+                )
+                first_record = next(
+                    (json.loads(line) for line in routes_text.splitlines() if line.strip()),
+                    None,
+                )
+                actual_set = validate_design_obligation_set(
+                    first_record,
+                    label="METHOD_ROUTES design-obligation set",
+                    problem_version=context["problem_version"],
+                    root_cause_analysis_id=context["root_cause_analysis_id"],
+                    root_cause_analysis_sha256=context["root_cause_analysis_sha256"],
+                    primary_causal_chain_ids=context["primary_causal_chain_ids"],
+                )
+                if {
+                    key: actual_set[key]
+                    for key in ("design_obligation_set_id", "causal_chain_ids", "design_obligations")
+                } != {
+                    key: expected_set[key]
+                    for key in ("design_obligation_set_id", "causal_chain_ids", "design_obligations")
+                }:
+                    raise ValueError(
+                        "METHOD_ROUTES obligation set does not match the current method-search binding"
+                    )
+        validate_method_routes_view(
+            _artifact_path(root, routes_view_path).read_text(encoding="utf-8"),
+            routes=routes,
+            problem_version=context["problem_version"],
+            root_cause_analysis_id=context["root_cause_analysis_id"],
+            root_cause_analysis_sha256=context["root_cause_analysis_sha256"],
+        )
+        if phase == "method_design":
+            return {"route_ids": sorted(routes)}
+
+        selection_spec = _workflow_phase(state, "route_human_selection")
+        assert selection_spec is not None
+        selected_path = _resolve_artifact_refs(
+            state.get("workflow") or {}, selection_spec.get("produced_artifacts", []),
+            "route_human_selection",
+        )[0]
+        selected = validate_selected_route(
+            yaml.safe_load(_artifact_path(root, selected_path).read_text(encoding="utf-8")),
+            routes=routes,
+            problem_version=context["problem_version"],
+            root_cause_analysis_id=context["root_cause_analysis_id"],
+            root_cause_analysis_sha256=context["root_cause_analysis_sha256"],
+        )
+        if phase == "route_human_selection":
+            return {"route_ids": sorted(routes), "selected_route_id": selected["route_id"]}
+        if phase == "method_refinement":
+            final_path = next((path for path in output_paths if path.endswith("FINAL_PROPOSAL.md")), None)
+            if not final_path:
+                raise ValueError("method-refinement workflow must declare FINAL_PROPOSAL.md")
+            validate_final_proposal(
+                _artifact_path(root, final_path).read_text(encoding="utf-8"),
+                selected_route=selected,
+                problem_version=context["problem_version"],
+                root_cause_analysis_id=context["root_cause_analysis_id"],
+                root_cause_analysis_sha256=context["root_cause_analysis_sha256"],
+            )
+    except (ValidationError, yaml.YAMLError) as exc:
+        raise ValueError(f"phase {phase!r} has invalid method route handoff: {exc}") from exc
+    return None
+
+
+def _assert_outputs(
+    root: str,
+    state: dict,
+    spec: dict,
+    phase: str,
+    *,
+    current_phase_evidence_ids: set[str] | None = None,
+) -> Optional[dict]:
+    workflow = state.get("workflow") or {}
+    output_paths = _resolve_artifact_refs(workflow, spec.get("produced_artifacts", []), phase)
+    _check_paths(
+        root,
+        output_paths,
+        "required handoff",
+        phase,
+    )
+    method_route_result = (
+        _validate_method_route_outputs(root, state, spec, phase, output_paths)
+        if phase in {"method_design", "route_human_selection", "method_refinement"}
+        else None
+    )
+    if phase == "problem_generation":
+        from arisctl.validators import validate_problem_candidates_artifact
+
+        candidate_index = _artifact_path(root, output_paths[1])
+        try:
+            result = validate_problem_candidates_artifact(
+                candidate_index.read_text(encoding="utf-8"),
+                label="problem candidates",
+                formal_evidence_ids=(
+                    current_phase_evidence_ids
+                    if current_phase_evidence_ids is not None
+                    else set(_current_formal_evidence_paths(root, state))
+                    if state.get("controller_managed")
+                    else None
+                ),
+            )
+        except ValueError as exc:
+            raise ValueError(f"phase {phase!r} has invalid problem candidates: {exc}") from exc
+        return {
+            "validated_artifacts": _artifact_hashes(root, output_paths),
+            **result,
+        }
+    if spec.get("gate_id") == "landscape_sufficiency":
+        try:
+            from literature_coverage_audit import audit_landscape
+        except ImportError:  # package import: ``from tools import run_state``
+            from tools.literature_coverage_audit import audit_landscape
+        result = audit_landscape(root, state.get("workflow") or {})
+        if not result["ok"]:
+            raise ValueError(
+                f"phase {phase!r} has invalid landscape handoff: "
+                + "; ".join(result["errors"])
+            )
+        return result
+    if spec.get("gate_id") == "root_cause_analysis_completeness":
+        from arisctl.validators import (
+            load_json,
+            validate_root_cause_analysis,
+            validate_root_cause_view,
+        )
+
+        input_paths = _resolve_artifact_refs(workflow, spec.get("required_inputs", []), phase)
+        problem_contract, evidence_capsule = input_paths
+        analysis_path = output_paths[0]
+        problem_hash = _sha256(_artifact_path(root, problem_contract))
+        evidence_hash = _sha256(_artifact_path(root, evidence_capsule))
+        raw_analysis = load_json(_artifact_path(root, analysis_path))
+        active_problem_id: str | None = None
+        formal_evidence_sources: dict[str, str] | None = None
+        diagnostic_pilots: list[dict[str, str]] = []
+        if state.get("controller_managed"):
+            active_problem_id, formal_evidence_sources, diagnostic_pilots = (
+                _root_cause_formal_evidence_sources(
+                    root,
+                    state,
+                    contract_path=problem_contract,
+                    capsule_path=evidence_capsule,
+                    analysis=raw_analysis,
+                    output_paths=output_paths,
+                    current_incremental_evidence_ids=current_phase_evidence_ids,
+                )
+            )
+        analysis = validate_root_cause_analysis(
+            raw_analysis,
+            run_id=state["run_id"],
+            problem_contract_sha256=problem_hash,
+            evidence_capsule_sha256=evidence_hash,
+            active_problem_id=active_problem_id,
+            formal_evidence_sources=formal_evidence_sources,
+        )
+        validate_root_cause_view(
+            _artifact_path(root, output_paths[1]).read_text(encoding="utf-8"),
+            analysis,
+        )
+        return {
+            "validated_artifacts": _artifact_hashes(
+                root, [*input_paths, *output_paths]
+            ),
+            "analysis_id": analysis["analysis_id"],
+            "problem_contract_sha256": problem_hash,
+            "evidence_capsule_sha256": evidence_hash,
+            "diagnostic_pilot_artifacts": diagnostic_pilots,
+        }
+    if spec.get("gate_id") == "root_cause_quality":
+        from arisctl.validators import load_json, validate_root_cause_verdict
+
+        input_paths = _resolve_artifact_refs(workflow, spec.get("required_inputs", []), phase)
+        problem_contract, evidence_capsule, analysis_path, _analysis_view = input_paths
+        verdict_path = output_paths[0]
+        analysis = load_json(_artifact_path(root, analysis_path))
+        verdict = validate_root_cause_verdict(
+            load_json(_artifact_path(root, verdict_path)),
+            run_id=state["run_id"],
+            analysis_id=analysis["analysis_id"],
+            reviewed_analysis_sha256=_sha256(_artifact_path(root, analysis_path)),
+            problem_contract_sha256=_sha256(_artifact_path(root, problem_contract)),
+            evidence_capsule_sha256=_sha256(_artifact_path(root, evidence_capsule)),
+        )
+        return {
+            "validated_artifacts": _artifact_hashes(root, output_paths),
+            "gate_verdict": verdict["decision"],
+            "verdict_id": verdict["verdict_id"],
+            "reviewer": verdict["reviewer"],
+            "reviewed_analysis_sha256": verdict["reviewed_analysis_sha256"],
+        }
+    verdict_contracts = {
+        "problem_quality": (
+            "candidate",
+            {"CERTIFIED", "HOLD", "REJECT", "BLOCKED"},
+            {"CERTIFIED", "HOLD", "REJECT", "BLOCKED"},
+            "problem quality verdicts",
+        ),
+        "problem_novelty": (
+            "candidate",
+            {"NOVEL", "UNCERTAIN", "NOT_NOVEL", "BLOCKED"},
+            {"NOVEL", "UNCERTAIN", "NOT_NOVEL", "BLOCKED"},
+            "problem novelty verdicts",
+        ),
+        "method_refinement": (
+            "markdown",
+            set(spec.get("accepted_verdicts") or [])
+            | set((spec.get("return_targets") or {}).keys()),
+            None,
+            "final blind review",
+        ),
+        "method_novelty_final": (
+            "markdown",
+            {"NOVEL", "UNCERTAIN", "NOT_NOVEL", "BLOCKED"},
+            None,
+            "final method novelty verdict",
+        ),
+    }
+
+
+    contract = verdict_contracts.get(spec.get("gate_id"))
+    request = _find_phase(state, phase).get("review_request")
+    # Legacy run-state runs do not issue Controller review requests.  Their
+    # mutation API is intentionally not an alternate formal route; only a live
+    # Controller request can establish the closure below.
+    if contract and isinstance(request, dict):
+        if request.get("reviewed_artifacts_pending"):
+            return None
+        request_id = request.get("id")
+        bindings = request.get("artifact_bindings")
+        if not isinstance(request_id, str) or not isinstance(bindings, dict):
+            raise ValueError(f"phase {phase!r} has no valid live review request")
+        from arisctl.validators import (
+            validate_candidate_verdict_artifact,
+            validate_markdown_review_verdict_artifact,
+        )
+
+        kind, phase_decisions, candidate_decisions, label = contract
+        try:
+            if kind == "candidate":
+                expected_candidate_ids: set[str] | None = None
+                if phase == "problem_quality_gate":
+                    expected_candidate_ids = set(
+                        (_find_phase(state, "problem_generation").get("candidate_ids") or [])
+                    )
+                elif phase == "problem_novelty_gate":
+                    expected_candidate_ids = set(
+                        (_find_phase(state, "problem_quality_gate").get("survivor_ids") or [])
+                    )
+                if not expected_candidate_ids:
+                    raise ValueError(f"phase {phase!r} has no accepted candidate survivors to review")
+                verdict = validate_candidate_verdict_artifact(
+                    _artifact_path(root, output_paths[0]).read_text(encoding="utf-8"),
+                    label=label,
+                    request_id=request_id,
+                    artifact_bindings=bindings,
+                    phase_decisions=phase_decisions,
+                    candidate_decisions=candidate_decisions or set(),
+                    expected_candidate_ids=expected_candidate_ids,
+                    review_kind=("quality" if phase == "problem_quality_gate" else "novelty"),
+                    formal_evidence_paths=_current_formal_evidence_paths(root, state),
+                    formal_evidence_source_ids=_current_decision_grade_evidence_card_source_ids(root, state),
+                )
+            else:
+                verdict = validate_markdown_review_verdict_artifact(
+                    _artifact_path(root, output_paths[1] if spec.get("gate_id") == "method_refinement" else output_paths[0]).read_text(encoding="utf-8"),
+                    label=label,
+                    request_id=request_id,
+                    artifact_bindings=bindings,
+                    decisions=phase_decisions,
+                )
+        except ValueError as exc:
+            raise ValueError(f"phase {phase!r} has invalid {label}: {exc}") from exc
+        return {
+            "validated_artifacts": _artifact_hashes(root, output_paths),
+            "gate_verdict": verdict["decision"],
+            "verdict_id": verdict["verdict_id"],
+            "reviewer": verdict["reviewer"],
+            "review_request_id": verdict["review_request_id"],
+            "reviewed_artifact_hashes": verdict["reviewed_artifact_hashes"],
+            **(
+                {
+                    "candidate_ids": verdict["candidate_ids"],
+                    "survivor_ids": verdict["survivor_ids"],
+                    **(
+                        {"return_guidance": verdict["return_guidance"]}
+                        if "return_guidance" in verdict
+                        else {}
+                    ),
+                }
+                if kind == "candidate"
+                else {}
+            ),
+            **(method_route_result or {}),
+        }
+    return method_route_result
+
+
+def _current_formal_evidence_paths(root: str, state: dict) -> dict[str, str]:
+    """Return current, Controller-accepted evidence IDs and their artifact paths.
+
+    Problem discovery can cite the existing literature Evidence Cards. Existing
+    non-literature artifacts are included when they already have a Controller
+    registration, preserving the same resolution rule used by the later problem
+    Capsule handoff.
+    """
+
+    paths: dict[str, str] = {}
+    research = state.get("research_lit") or {}
+    for key, record in (research.get("accepted_artifacts") or {}).items():
+        if not isinstance(key, str) or not key.startswith("evidence:") or not isinstance(record, dict):
+            continue
+        evidence_id = key.split(":", 1)[1]
+        raw_path = record.get("path")
+        digest = record.get("sha256")
+        candidate = _artifact_path(root, str(raw_path or ""))
+        if (
+            record.get("validator_result") == "PASS"
+            and isinstance(raw_path, str)
+            and isinstance(digest, str)
+            and candidate.is_file()
+            and _sha256(candidate) == digest
+        ):
+            paths[evidence_id] = raw_path
+    core = state.get("scientific_core") or {}
+    for record in (core.get("accepted_artifacts") or {}).values():
+        if not isinstance(record, dict):
+            continue
+        evidence_id = record.get("artifact_id")
+        raw_path = record.get("path")
+        digest = record.get("sha256")
+        candidate = _artifact_path(root, str(raw_path or ""))
+        if (
+            isinstance(evidence_id, str)
+            and evidence_id
+            and isinstance(raw_path, str)
+            and isinstance(digest, str)
+            and candidate.is_file()
+            and _sha256(candidate) == digest
+        ):
+            if evidence_id in paths and paths[evidence_id] != raw_path:
+                raise ValueError(f"formal evidence ID {evidence_id!r} resolves to multiple artifacts")
+            paths[evidence_id] = raw_path
+    return paths
+
+
+def _current_decision_grade_evidence_card_source_ids(root: str, state: dict) -> dict[str, str]:
+    """Resolve existing admitted Evidence Card source IDs for novelty identity checks."""
+
+    sources: dict[str, str] = {}
+    research = state.get("research_lit") or {}
+    for key, record in (research.get("accepted_artifacts") or {}).items():
+        if not isinstance(key, str) or not key.startswith("evidence:") or not isinstance(record, dict):
+            continue
+        evidence_id = key.split(":", 1)[1]
+        raw_path = record.get("path")
+        digest = record.get("sha256")
+        path = _artifact_path(root, str(raw_path or ""))
+        if (
+            record.get("validator_result") != "PASS"
+            or not isinstance(raw_path, str)
+            or not isinstance(digest, str)
+            or not path.is_file()
+            or _sha256(path) != digest
+        ):
+            continue
+        try:
+            card = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"accepted Evidence Card {evidence_id!r} is not valid JSON") from exc
+        paper = (research.get("papers") or {}).get(evidence_id)
+        source_id = card.get("source_id") if isinstance(card, dict) else None
+        if (
+            source_id != evidence_id
+            or not isinstance(paper, dict)
+            or paper.get("admission_status") != "ADMIT_DECISION_GRADE"
+        ):
+            raise ValueError(
+                f"accepted Evidence Card {evidence_id!r} no longer matches its admitted paper identity"
+            )
+        sources[evidence_id] = source_id
+    return sources
+
+
+def _assert_acceptance_matches_gate(
+    root: str,
+    state: dict,
+    spec: Optional[dict],
+    phase: str,
+    verdict_id: str,
+    reviewer: str,
+) -> None:
+    if spec is None or not spec.get("accepted_verdicts"):
+        return
+    _assert_dependencies(root, state, spec, phase)
+    result = _assert_outputs(root, state, spec, phase) or {}
+    if "gate_verdict" not in result:
+        return
+    allowed = set(spec["accepted_verdicts"])
+    if result.get("gate_verdict") not in allowed:
+        raise ValueError(
+            f"phase {phase!r} verdict {result.get('gate_verdict')!r} does not authorize acceptance; "
+            f"expected one of {sorted(allowed)}"
+        )
+    if result.get("verdict_id") != verdict_id or result.get("reviewer") != reviewer:
+        raise ValueError(
+            f"phase {phase!r} acceptance provenance must match the validated verdict artifact"
+        )
+    request = _find_phase(state, phase).get("review_request")
+    if isinstance(request, dict) and "review_request_id" in result:
+        if (
+            result.get("review_request_id") != request.get("id")
+            or result.get("reviewed_artifact_hashes") != request.get("artifact_bindings")
+        ):
+            raise ValueError(
+                f"phase {phase!r} acceptance provenance must match the live review request"
+            )
+
+
 def start_run(root: str, run_id: str, phases: list[str], executor: Optional[str] = "claude",
-              provisional_advances: bool = False) -> dict:
+              provisional_advances: bool = False, workflow_path: Optional[str] = None) -> dict:
     """Create a run with ordered phases, all `pending` (idempotent: won't clobber).
 
     ``claude`` is the historical mainline executor default. Codex-native callers
@@ -145,6 +1142,9 @@ def start_run(root: str, run_id: str, phases: list[str], executor: Optional[str]
     provisional verdict close a phase for RESUME purposes (Codex-native mirror:
     true; mainline default: false — only cross-family acceptance advances).
     """
+    workflow = _load_workflow(workflow_path)
+    if workflow is not None:
+        phases = [item["phase"] for item in workflow["phases"]]
     with _lock(root, run_id):
         if _run_path(root, run_id).exists():
             return _load(root, run_id)
@@ -153,6 +1153,7 @@ def start_run(root: str, run_id: str, phases: list[str], executor: Optional[str]
             "executor_model": executor,
             "executor_family": model_family(executor) if executor else None,
             "policy": {"provisional_advances": bool(provisional_advances)},
+            "workflow": workflow or {},
             "created": _now(),
             "updated": _now(),
             "phases": [{"phase": ph, "status": "pending", "artifact": None,
@@ -160,6 +1161,7 @@ def start_run(root: str, run_id: str, phases: list[str], executor: Optional[str]
                         "reviewer_family": None, "review_independence": None,
                         "acceptance_status": None, "executor_model": executor,
                         "executor_family": model_family(executor) if executor else None,
+                        "human_decision": None,
                         "updated": _now()} for ph in phases],
         }
         _save(root, run_id, state)
@@ -181,10 +1183,69 @@ def set_status(root: str, run_id: str, phase: str, status: str, artifact: Option
             "'accepted' and 'provisional' require recorded review provenance.")
     with _lock(root, run_id):
         state = _load(root, run_id)
+        _assert_not_controller_managed(state)
         ph = _find_phase(state, phase)
+        spec = _workflow_phase(state, phase)
+        if spec is not None:
+            if status == "running":
+                _assert_dependencies(root, state, spec, phase)
+            elif status == "done":
+                if ph["status"] not in ("running", "done"):
+                    raise ValueError(
+                        f"phase {phase!r} must be running before done; current={ph['status']!r}"
+                    )
+                _assert_dependencies(root, state, spec, phase)
+                validation_result = _assert_outputs(root, state, spec, phase)
+                if validation_result is not None:
+                    if "coverage_status" in validation_result:
+                        ph["coverage_status"] = validation_result["coverage_status"]
+                    for key in (
+                        "validated_artifacts", "analysis_id", "problem_contract_sha256",
+                        "evidence_capsule_sha256", "gate_verdict", "verdict_id", "reviewer",
+                        "reviewed_analysis_sha256",
+                    ):
+                        if key in validation_result:
+                            ph[key] = validation_result[key]
         ph["status"] = status
         if artifact is not None:
             ph["artifact"] = artifact
+        ph["updated"] = _now()
+        _save(root, run_id, state)
+        return state
+
+
+def approve_human(root: str, run_id: str, phase: str, decision: str,
+                  selected_id: Optional[str] = None, note: Optional[str] = None) -> dict:
+    """Record an explicit human checkpoint without impersonating a reviewer.
+
+    Human checkpoints may be approved while their phase is pending, provided
+    dependencies and required inputs are satisfied. The decision is durable and
+    separate from model acceptance provenance.
+    """
+    if not decision.strip():
+        raise ValueError("human approval requires a non-empty decision")
+    with _lock(root, run_id):
+        state = _load(root, run_id)
+        _assert_not_controller_managed(state)
+        ph = _find_phase(state, phase)
+        spec = _workflow_phase(state, phase)
+        if spec is None or not spec.get("human_checkpoint"):
+            raise ValueError(f"phase {phase!r} is not a declared human checkpoint")
+        _assert_dependencies(root, state, spec, phase)
+        if spec.get("requires_selection") and not selected_id:
+            raise ValueError(f"phase {phase!r} requires selected_id")
+        if ph["status"] not in ("pending", "running", "done", "human_accepted"):
+            raise ValueError(
+                f"phase {phase!r} cannot receive human approval from status {ph['status']!r}"
+            )
+        ph["status"] = "human_accepted"
+        ph["acceptance_status"] = "human_accepted"
+        ph["human_decision"] = {
+            "decision": decision,
+            "selected_id": selected_id,
+            "note": note,
+            "recorded_at": _now(),
+        }
         ph["updated"] = _now()
         _save(root, run_id, state)
         return state
@@ -206,11 +1267,22 @@ def accept(root: str, run_id: str, phase: str, verdict_id: str, reviewer: str, f
                          "a phase cannot be accepted without recording who acquitted it.")
     with _lock(root, run_id):
         state = _load(root, run_id)
+        _assert_not_controller_managed(state)
         ph = _find_phase(state, phase)
+        spec = _workflow_phase(state, phase)
+        if spec is not None and spec.get("human_checkpoint"):
+            raise ValueError(
+                f"phase {phase!r} is a human checkpoint; use approve_human, not accept"
+            )
+        if force and state.get("workflow"):
+            raise ValueError(
+                "force is limited to unstructured legacy/development runs; it cannot bypass a declared workflow Gate"
+            )
         if not force and ph["status"] not in ("done", "accepted", "provisional"):
             raise ValueError(
                 f"phase {phase!r} is {ph['status']!r}, not 'done' — cannot accept a phase that "
                 f"has not completed execution. Set it 'done' first, or pass force=True.")
+        _assert_acceptance_matches_gate(root, state, spec, phase, verdict_id, reviewer)
         # (provisional -> accepted is the intended monotonic upgrade: a later
         # cross-family overlay acquits a phase a same-family review only drove.)
         reviewer_family = model_family(reviewer)
@@ -258,11 +1330,18 @@ def mark_provisional(root: str, run_id: str, phase: str, verdict_id: str,
             "mark_provisional requires a non-empty verdict_id AND reviewer.")
     with _lock(root, run_id):
         state = _load(root, run_id)
+        _assert_not_controller_managed(state)
         ph = _find_phase(state, phase)
+        spec = _workflow_phase(state, phase)
+        if spec is not None and spec.get("human_checkpoint"):
+            raise ValueError(
+                f"phase {phase!r} is a human checkpoint; use approve_human, not mark_provisional"
+            )
         if ph["status"] not in ("done", "provisional"):
             raise ValueError(
                 f"phase {phase!r} is {ph['status']!r}, not 'done' — cannot mark a "
                 "phase provisional before execution completes.")
+        _assert_acceptance_matches_gate(root, state, spec, phase, verdict_id, reviewer)
         executor_model = executor or ph.get("executor_model") or state.get("executor_model")
         if not executor_model:
             raise ValueError(
@@ -300,7 +1379,7 @@ def resume_point(root: str, run_id: str) -> Optional[dict]:
     """
     state = _load(root, run_id)
     for ph in state["phases"]:
-        if ph["status"] not in _terminal_statuses(state):
+        if not _is_terminal(state, ph["status"], ph["phase"]):
             return ph
     return None
 
@@ -314,20 +1393,24 @@ def _print_status(state: dict) -> None:
         line = f"  {glyph.get(ph['status'], '?'):>14}  {ph['phase']}  [{ph['status']}]"
         if ph["status"] in ("accepted", "provisional"):
             line += f"  ← {ph['reviewer']} / {ph['verdict_id']}"
+        elif ph["status"] == "human_accepted":
+            decision = ph.get("human_decision") or {}
+            line += f"  decision={decision.get('selected_id') or decision.get('decision')}"
         elif ph["artifact"]:
             line += f"  → {ph['artifact']}"
         print(line)
-    rp = next((p for p in state["phases"] if p["status"] not in _terminal_statuses(state)), None)
+    rp = next((p for p in state["phases"] if not _is_terminal(state, p["status"], p["phase"])), None)
     print(f"  resume → {rp['phase'] if rp else 'COMPLETE (all phases terminal; provisional is not accepted)'}")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="ARIS resumable run-state (done vs accepted).")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("start"); s.add_argument("root"); s.add_argument("run_id"); s.add_argument("--phases", required=True, help="comma-separated phase names"); s.add_argument("--executor", default="claude"); s.add_argument("--provisional-advances", action="store_true", help="per-run policy: let a same-family provisional verdict close a phase for resume (Codex-native mirror only; mainline default keeps cross-family-only advance)")
+    s = sub.add_parser("start"); s.add_argument("root"); s.add_argument("run_id"); s.add_argument("--phases", default="", help="comma-separated phase names (optional when --workflow is supplied)"); s.add_argument("--workflow", help="JSON-compatible YAML workflow spec"); s.add_argument("--executor", default="claude"); s.add_argument("--provisional-advances", action="store_true", help="per-run policy: let a same-family provisional verdict close a phase for resume (Codex-native mirror only; mainline default keeps cross-family-only advance)")
     s = sub.add_parser("set"); s.add_argument("root"); s.add_argument("run_id"); s.add_argument("phase"); s.add_argument("status", choices=sorted(EXECUTOR_STATUSES)); s.add_argument("--artifact")
     s = sub.add_parser("accept"); s.add_argument("root"); s.add_argument("run_id"); s.add_argument("phase"); s.add_argument("--verdict-id", required=True); s.add_argument("--reviewer", required=True); s.add_argument("--force", action="store_true")
     s = sub.add_parser("mark-provisional"); s.add_argument("root"); s.add_argument("run_id"); s.add_argument("phase"); s.add_argument("--verdict-id", required=True); s.add_argument("--reviewer", required=True); s.add_argument("--executor")
+    s = sub.add_parser("approve"); s.add_argument("root"); s.add_argument("run_id"); s.add_argument("phase"); s.add_argument("--decision", required=True); s.add_argument("--selected-id"); s.add_argument("--note")
     s = sub.add_parser("resume"); s.add_argument("root"); s.add_argument("run_id")
     s = sub.add_parser("status"); s.add_argument("root"); s.add_argument("run_id")
     s = sub.add_parser("list"); s.add_argument("root")
@@ -335,13 +1418,18 @@ def main() -> int:
 
     try:
         if a.cmd == "start":
-            _print_status(start_run(a.root, a.run_id, [p.strip() for p in a.phases.split(",") if p.strip()], executor=a.executor, provisional_advances=a.provisional_advances))
+            phases = [p.strip() for p in a.phases.split(",") if p.strip()]
+            if not phases and not a.workflow:
+                raise ValueError("start requires --phases or --workflow")
+            _print_status(start_run(a.root, a.run_id, phases, executor=a.executor, provisional_advances=a.provisional_advances, workflow_path=a.workflow))
         elif a.cmd == "set":
             _print_status(set_status(a.root, a.run_id, a.phase, a.status, a.artifact))
         elif a.cmd == "accept":
             _print_status(accept(a.root, a.run_id, a.phase, a.verdict_id, a.reviewer, force=a.force))
         elif a.cmd == "mark-provisional":
             _print_status(mark_provisional(a.root, a.run_id, a.phase, a.verdict_id, a.reviewer, executor=a.executor))
+        elif a.cmd == "approve":
+            _print_status(approve_human(a.root, a.run_id, a.phase, a.decision, selected_id=a.selected_id, note=a.note))
         elif a.cmd == "resume":
             rp = resume_point(a.root, a.run_id)
             if rp is None:

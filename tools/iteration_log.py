@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""iteration_log.py — overnight-loop stall detection → forced structural pivot.
+"""LEGACY: iteration_log.py — overnight-loop stall detection → forced structural pivot.
+
+No shipped ARIS skill currently consumes this helper. It is retained only for
+backward-compatible, user-owned custom loops and must not be attached to a
+canonical Controller run, `/research-pipeline`, or `/idea-discovery` without a
+separate Controller-aware design and contract update.
 
 Append-only per-iteration ledger for an unattended research loop. Each tick the
 orchestrator records how many NEW findings the iteration produced — where a "finding"

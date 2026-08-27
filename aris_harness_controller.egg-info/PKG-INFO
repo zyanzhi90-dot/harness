@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: aris-harness-controller
+Version: 0.2.0
+Summary: Deterministic Controller, validators, and gateways for formal ARIS research-lit runs
+Requires-Python: >=3.10
+License-File: LICENSE
+Requires-Dist: PyYAML>=6
+Dynamic: license-file

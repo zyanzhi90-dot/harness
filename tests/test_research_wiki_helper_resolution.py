@@ -231,7 +231,7 @@ class ChainTest(unittest.TestCase):
             # Skip Codex mirror — it has its own resolution chain.
             if "skills-codex" in path.parts:
                 continue
-            for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
                 # Allow `tools/research_wiki.py` in non-bash prose
                 # (the chain itself, doc explanations, etc.) by requiring
                 # a shell-invocation prefix.

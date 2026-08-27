@@ -1,6 +1,10 @@
 # Output Manifest Protocol
 
-After writing any output file, append an entry to `MANIFEST.md` in the project root.
+Maintain `MANIFEST.md` only when a run produces more than 15 durable artifacts.
+Below that threshold, canonical paths and stage state are the index; do not
+create a second bookkeeping artifact. Once the threshold is crossed, register
+canonical, state, decision, review, and final artifacts, but not disposable
+shards, transient logs, caches, or redundant latest-copy aliases.
 
 ## Format
 
@@ -15,7 +19,7 @@ If `MANIFEST.md` does not exist, create it with this header:
 |-----------|-------|------|-------|-------------|
 ```
 
-Then append one row per output file written:
+Then append one row per durable output file:
 
 ```
 | 2025-06-15 14:30 | /idea-creator | idea-stage/IDEA_REPORT_20250615_143022.md | idea-discovery | 12 ideas generated from "LLM reasoning" direction |

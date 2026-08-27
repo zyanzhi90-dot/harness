@@ -4,7 +4,7 @@ description: 'Turn a refined research proposal or method idea into a detailed, c
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, WebSearch, WebFetch
 ---
 
-# Experiment Plan: Claim-Driven, Paper-Oriented Validation
+# Experiment Plan: Claim-Driven, Mechanism-Aware Validation
 
 Refine and concretize: **$ARGUMENTS**
 
@@ -19,6 +19,43 @@ The goal is not to generate a giant benchmark wishlist. The goal is to turn a pr
 3. the method is elegant enough that extra complexity is unnecessary
 4. any frontier-model-era component is genuinely useful, not decorative
 
+For a formal ARIS method route, performance is necessary but not enough: the
+plan must also test the predicted mechanism or failure-phenomenon change that
+links each core method change to the validated root-cause analysis. This is an
+extension of the existing experiment blocks, not a new workflow stage or Gate.
+
+## Execution Boundary
+
+### Formal / canonical run — fail closed
+
+If this invocation belongs to a Controller-managed run, first obtain the
+current formal handoff and use **only** the paths and hashes it returns:
+
+```bash
+python -m arisctl --root . validation-handoff <run_id>
+```
+
+The command verifies the current run, accepted problem contract, root-cause
+analysis and verdict, final proposal, final novelty verdict, human method
+confirmation, producer phases, provenance, and hashes. If it fails, stop and
+report its missing or invalid formal artifact. Do not derive `FINAL_PROPOSAL`,
+create a research contract, or substitute a prompt, old report, compatibility
+path, or other free text. This check is read-only and does not add a stage or
+Gate.
+
+For a successful formal handoff, record its run ID, workflow hash, and artifact
+hash map in `EXPERIMENT_PLAN.md`; a later `/experiment-bridge` must re-check the
+same handoff before implementation.
+
+### Legacy / ad-hoc request — isolated
+
+Only when no Controller-managed run is being invoked may a user-supplied method
+or historical report be used directly. Label the resulting plan
+`execution_context: NON_CANONICAL_AD_HOC`, retain its source paths, and state
+that it has no canonical acceptance or upstream certification. Never write or
+register a canonical artifact, mutate `.aris` state, or present this plan as a
+completed `problem → root cause → method` route.
+
 ## Constants
 
 - **OUTPUT_DIR = `refine-logs/`** — Default destination for experiment planning artifacts.
@@ -31,11 +68,15 @@ The goal is not to generate a giant benchmark wishlist. The goal is to turn a pr
 
 ### Phase 0: Load the Proposal Context
 
-Read the most relevant existing files first if they exist:
+For a successful formal handoff, read only its returned artifacts. Otherwise,
+for a non-canonical ad-hoc request, read the most relevant existing files first
+if they exist:
 
 - `refine-logs/FINAL_PROPOSAL.md`
 - `refine-logs/REVIEW_SUMMARY.md`
 - `refine-logs/REFINEMENT_REPORT.md`
+- `idea-stage/ROOT_CAUSE_ANALYSIS.json`
+- `idea-stage/ROOT_CAUSE_VERDICT.json`
 
 Extract:
 
@@ -45,8 +86,18 @@ Extract:
 - **Critical reviewer concerns**
 - **Data / compute / timeline constraints**
 - **Which frontier primitive is central, if any**
+- **Primary causal-chain IDs, intervention targets, and expected observables**
+- **Each core method change and its claim-validation obligation**
 
-If these files do not exist, derive the same information from the user's prompt.
+If these files do not exist, derive the same information from the user's prompt
+**only for an explicitly non-canonical ad-hoc request**. In a formal run,
+missing files are a stop condition handled by `validation-handoff`, never a
+fallback.
+
+In a formal Controller route, do not invent a new mechanism here: a missing
+root-cause artifact must already have stopped at `validation-handoff`. Only a
+non-canonical ad-hoc plan may mark an unavailable mechanism link as
+`UNRESOLVED`, while clearly retaining that non-canonical limitation.
 
 ### Phase 1: Freeze the Paper Claims
 
@@ -62,6 +113,17 @@ Use this structure:
 Do not exceed `MAX_PRIMARY_CLAIMS` unless the paper truly has multiple inseparable claims.
 
 ### Phase 2: Build the Experimental Storyline
+
+Before choosing blocks, write a compact **Mechanism Validation Map**. For every
+core method change, record: the causal-chain ID or claim-validation obligation
+it traces to; the problem mechanism/failure it is intended to change; the
+predicted observable direction or failure-pattern change; the measurement or
+controlled experiment that can test it; and the final performance metric.
+
+If multiple core changes need their individual roles distinguished, add the
+smallest necessary ablation or controlled comparison. Do not force a component
+ablation merely because there are multiple changes; a joint mechanism test is
+enough when the changes are not independently claimable.
 
 Design the paper around a compact set of experiment blocks. Default to the following blocks and delete any that are not needed:
 
@@ -88,12 +150,22 @@ For every kept block, fully specify:
 - **Dataset / split / task**
 - **Compared systems**: strongest baselines, ablations, and variants only
 - **Metrics**: decisive metrics first, secondary metrics second
+- **Causal link / core change**: which accepted mechanism or failure is targeted
+- **Predicted mechanism or failure-phenomenon change**: what should change, in which direction
+- **Mechanism observation**: measurement, diagnostic, controlled comparison, or falsifier
+- **Performance evaluation**: final outcome metric and comparison that establishes utility
 - **Setup details**: backbone, frozen vs trainable parts, key hyperparameters, training budget, seeds
 - **Success criterion**: what outcome would count as convincing evidence?
 - **Failure interpretation**: if the result is negative, what does it mean?
 - **Table / figure target**: where this result should appear in the paper
 
 Special rules:
+
+- A core block cannot be complete with a performance metric alone. It must name
+  the mechanism/failure observation expected if the explanation is correct.
+- Preserve unexpected mechanism observations. They are new research evidence,
+  not noise to be omitted: use them to distinguish method mismatch,
+  implementation/measurement error, and a wrong or incomplete prior analysis.
 
 - A **simplicity check** should usually compare the final method against either an overbuilt variant or a tempting extra component that the paper intentionally rejects.
 - A **frontier necessity check** should usually compare the chosen modern primitive against the strongest plausible simpler or older alternative.
@@ -132,11 +204,24 @@ Use this structure:
 **Problem**: [problem]
 **Method Thesis**: [one-sentence thesis]
 **Date**: [today]
+**Execution context**: FORMAL_CANONICAL / NON_CANONICAL_AD_HOC
+
+## Formal Upstream Handoff (formal only)
+**Run ID**: [controller run ID]
+**Workflow hash**: [controller workflow SHA-256]
+| Accepted artifact | SHA-256 | Producer phase |
+|-------------------|---------|----------------|
+| ...               | ...     | ...            |
 
 ## Claim Map
 | Claim | Why It Matters | Minimum Convincing Evidence | Linked Blocks |
 |-------|-----------------|-----------------------------|---------------|
 | C1    | ...             | ...                         | B1, B2        |
+
+## Mechanism Validation Map
+| Core change / causal-chain ID | Problem mechanism or failure addressed | Predicted observable change | Mechanism test / metric | Final performance evaluation | Needed control? |
+|-------------------------------|-----------------------------------------|-----------------------------|-------------------------|------------------------------|-----------------|
+| M1 / CC-1                     | ...                                     | ...                         | ...                     | ...                          | yes / no        |
 
 ## Paper Storyline
 - Main paper must prove:
@@ -151,6 +236,10 @@ Use this structure:
 - Dataset / split / task:
 - Compared systems:
 - Metrics:
+- Causal link / core change:
+- Predicted mechanism or failure-phenomenon change:
+- Mechanism observation:
+- Performance evaluation:
 - Setup details:
 - Success criterion:
 - Failure interpretation:
@@ -190,9 +279,9 @@ Use this structure:
 ```markdown
 # Experiment Tracker
 
-| Run ID | Milestone | Purpose | System / Variant | Split | Metrics | Priority | Status | Notes |
-|--------|-----------|---------|------------------|-------|---------|----------|--------|-------|
-| R001   | M0        | sanity  | ...              | ...   | ...     | MUST     | TODO   | ...   |
+| Run ID | Milestone | Purpose | System / Variant | Split | Performance metric | Mechanism signal / causal-chain ID | Priority | Status | Notes |
+|--------|-----------|---------|------------------|-------|--------------------|------------------------------------|----------|--------|-------|
+| R001   | M0        | sanity  | ...              | ...   | ...                | ...                                | MUST     | TODO   | ...   |
 ```
 
 Keep the tracker compact and execution-oriented.
@@ -230,6 +319,11 @@ Tracker file: refine-logs/EXPERIMENT_TRACKER.md
 - **Large file handling**: If the Write tool fails due to file size, immediately retry using Bash (`cat << 'EOF' > file`) to write in chunks. Do NOT ask the user for permission — just do it silently.
 
 - **Every experiment must defend a claim.** If it does not change a reviewer belief, cut it.
+- **Formal inputs are consume-only.** A failed or missing `validation-handoff`
+  stops formal planning; no prompt, report, legacy contract, or template may
+  reconstruct the missing upstream artifact.
+- **Keep ad-hoc work isolated.** It may plan experiments from user material,
+  but it must remain `NON_CANONICAL_AD_HOC` and never claim formal acceptance.
 - **Prefer a compact paper story.** Design the main table first, then add only the ablations that defend it.
 - **Defend simplicity explicitly.** If complexity is a concern, include a deletion study or a stronger-but-bloated variant comparison.
 - **Defend frontier choices explicitly.** If a modern primitive is central, prove why it is better than the strongest simpler alternative.

@@ -270,5 +270,5 @@ claude
 > /rebuttal "paper/ + reviews" — venue: ICML          # Workflow 4: parse reviews → draft rebuttal → follow-up
 > /resubmit-pipeline "paper/" — venue: NeurIPS        # Workflow 5: port to new venue (text-only, no new experiments)
 > /paper-talk "paper/" — venue: ICLR                  # Workflow 6: paper → Beamer + PPTX talk + speaker notes + assurance audits
-> /research-pipeline "your research direction"       # Full pipeline: W1 → 1.5 → 2 → handoff; default stops at NARRATIVE_REPORT.md. Add `— auto_write: true, venue: ICLR` to chain W3 paper writing too
+> /research-pipeline "<canonical-run-id>"             # only after canonical method acceptance: bound validation planning and execution
 ```

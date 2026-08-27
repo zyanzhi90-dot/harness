@@ -259,22 +259,26 @@ enumeration with no grant needed.
 > the jury. Fixing this is part of fanning the skill out, not a separate
 > chore.
 
-### `/research-lit` — per-source fan-out, deterministic gate as "jury"
+### `/research-lit` — controlled extraction fan-out after discovery
 
-`/research-lit` fans out retrieval across sources (arXiv, Semantic
-Scholar, OpenAlex, Exa, DeepXiv, Zotero, web) under integration-contract
-**Policy D2** (multi-source aggregate: invoke every resolved source,
-warn-and-continue on per-source failure, proceed if ≥1 contributed).
-Here the "jury" is **not** an LLM at all — it is the **deterministic**
-`verify_papers.py` gate (Policy D1: 3-layer arXiv / CrossRef / S2
-cross-check), which decides KEEP / `[UNVERIFIED]` by mechanical
-cross-reference, not by taste. This is the **near-zero-risk** corner of
-the design space: the candidate generators are same-family (or just API
-fetchers), but the acceptance gate is a deterministic external verifier,
-so there is no same-family-self-judgment risk to begin with. When the
-"jury" is a deterministic check rather than a model verdict, the
-cross-model-family rule is automatically satisfied (a process is not a
-model family). Fan out freely.
+`/research-lit` uses SerpApi Google Scholar as its default discovery backbone.
+Only provider unavailability advances the fixed cascade to direct, serial,
+low-frequency `scholar.google.hk` through real browser/computer interaction,
+then to a deduplicated arXiv + IEEE Xplore fallback. Without that interaction
+capability the direct Scholar route is unavailable; no HTTP/HTML scraper may
+replace it. The final fallback enters `HUMAN_SEARCH_REQUIRED` when both sources
+are unavailable or when existing admission/coverage judgments remain
+insufficient after query refinement. Do not fan out overlapping providers merely to
+manufacture a sense of coverage, and never run concurrent Scholar queries.
+
+After the candidate union is deduplicated, independent metadata checks and
+post-admission per-paper extraction may fan out. Shards never decide admission,
+coverage sufficiency, or scientific importance. The deterministic
+`verify_papers.py` gate checks paper existence and tags unresolved candidates;
+it does not verify full bibliographic identity, scientific claims, or landscape
+saturation. Final identity checks and the shared landscape stopping rule remain
+separate gates. This preserves breadth without turning provider count or shard
+count into a quality signal.
 
 ## Shard safety invariants
 

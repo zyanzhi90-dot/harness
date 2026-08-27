@@ -61,7 +61,7 @@ def test_install_aris_codex_dry_run_has_no_project_writes(tmp_path: Path) -> Non
 
 
 def test_install_aris_codex_avoids_bash4_associative_arrays() -> None:
-    text = INSTALL_SCRIPT.read_text()
+    text = INSTALL_SCRIPT.read_text(encoding="utf-8")
     assert "declare -A" not in text
 
 
@@ -84,7 +84,7 @@ def test_install_aris_codex_reconcile_and_uninstall(tmp_path: Path) -> None:
     manifest = project / ".aris" / "installed-skills-codex.txt"
     assert manifest.exists()
     assert (project / "AGENTS.md").exists()
-    agents_text = (project / "AGENTS.md").read_text()
+    agents_text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "ARIS Codex Skill Scope" in agents_text
     assert f"ARIS repo root: `{repo}`" in agents_text
     assert "repo_root" in agents_text
@@ -148,7 +148,7 @@ def test_install_aris_codex_reconcile_and_uninstall(tmp_path: Path) -> None:
     assert (project / ".agents" / "skills" / "local-only").exists()
     assert not (project / ".agents" / "skills" / "beta").exists()
     assert (project / ".aris" / "installed-skills-codex.txt.prev").exists()
-    assert "ARIS Codex Skill Scope" not in (project / "AGENTS.md").read_text()
+    assert "ARIS Codex Skill Scope" not in (project / "AGENTS.md").read_text(encoding="utf-8")
 
 
 def test_install_aris_codex_uninstall_uses_manifest_repo_root(tmp_path: Path) -> None:
@@ -238,7 +238,7 @@ def test_install_aris_codex_reconcile_removes_stale_links_from_manifest_repo(tmp
     assert (project / ".agents" / "skills" / "gamma").resolve() == (
         new_repo / "skills" / "skills-codex" / "gamma"
     )
-    manifest = (project / ".aris" / "installed-skills-codex.txt").read_text()
+    manifest = (project / ".aris" / "installed-skills-codex.txt").read_text(encoding="utf-8")
     assert "\talpha\t" not in manifest
     assert f"repo_root\t{new_repo}" in manifest
 
@@ -279,7 +279,7 @@ def test_install_aris_codex_reconcile_accepts_already_deleted_stale_link(tmp_pat
         ]
     )
 
-    manifest = (project / ".aris" / "installed-skills-codex.txt").read_text()
+    manifest = (project / ".aris" / "installed-skills-codex.txt").read_text(encoding="utf-8")
     assert "\talpha\t" not in manifest
 
 
@@ -328,11 +328,11 @@ def test_smart_update_codex_copy_install_and_symlink_refusal(tmp_path: Path) -> 
             "--add-new",  # NEW skills now require confirmation/--add-new (#366-style policy)
         ]
     )
-    assert "# alpha-v1" in (local / "alpha" / "SKILL.md").read_text()
+    assert "# alpha-v1" in (local / "alpha" / "SKILL.md").read_text(encoding="utf-8")
     assert (local / "beta" / "SKILL.md").exists()
     assert (local / "gamma" / "SKILL.md").exists()
-    assert (local / "shared-references" / "integration-contract.md").read_text() == "integration\n"
-    assert (local / "shared-references" / "reviewer-routing.md").read_text() == "old\n"
+    assert (local / "shared-references" / "integration-contract.md").read_text(encoding="utf-8") == "integration\n"
+    assert (local / "shared-references" / "reviewer-routing.md").read_text(encoding="utf-8") == "old\n"
     assert (local / "local-only" / "SKILL.md").exists()
 
     managed_project = tmp_path / "managed-project"
@@ -429,15 +429,15 @@ def test_smart_update_codex_local_respects_overlay(tmp_path: Path) -> None:
         ]
     )
 
-    installed = (local / "auto-review-loop" / "SKILL.md").read_text()
+    installed = (local / "auto-review-loop" / "SKILL.md").read_text(encoding="utf-8")
     overlay = (
         REPO_ROOT
         / "skills"
         / "skills-codex-claude-review"
         / "auto-review-loop"
         / "SKILL.md"
-    ).read_text()
-    base = (REPO_ROOT / "skills" / "skills-codex" / "auto-review-loop" / "SKILL.md").read_text()
+    ).read_text(encoding="utf-8")
+    base = (REPO_ROOT / "skills" / "skills-codex" / "auto-review-loop" / "SKILL.md").read_text(encoding="utf-8")
 
     assert installed == overlay
     assert installed != base
@@ -481,9 +481,9 @@ def test_smart_update_codex_overlay_updates_existing_base_copy(tmp_path: Path) -
         ]
     )
 
-    assert (local / "auto-review-loop" / "SKILL.md").read_text() == (
+    assert (local / "auto-review-loop" / "SKILL.md").read_text(encoding="utf-8") == (
         overlay_skill / "SKILL.md"
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
 
 def test_smart_update_codex_overlay_preserves_custom_local_copy(tmp_path: Path) -> None:
@@ -492,7 +492,7 @@ def test_smart_update_codex_overlay_preserves_custom_local_copy(tmp_path: Path) 
     base_skill = REPO_ROOT / "skills" / "skills-codex" / "auto-review-loop"
 
     run(["cp", "-a", str(base_skill), str(local / "auto-review-loop")])
-    custom_text = (local / "auto-review-loop" / "SKILL.md").read_text() + "\n<!-- local customization -->\n"
+    custom_text = (local / "auto-review-loop" / "SKILL.md").read_text(encoding="utf-8") + "\n<!-- local customization -->\n"
     (local / "auto-review-loop" / "SKILL.md").write_text(custom_text)
 
     result = run(
@@ -508,4 +508,4 @@ def test_smart_update_codex_overlay_preserves_custom_local_copy(tmp_path: Path) 
     )
 
     assert "Needs merge: 1" in result.stdout
-    assert (local / "auto-review-loop" / "SKILL.md").read_text() == custom_text
+    assert (local / "auto-review-loop" / "SKILL.md").read_text(encoding="utf-8") == custom_text

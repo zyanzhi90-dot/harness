@@ -1,13 +1,14 @@
 ---
 name: novelty-check
-description: Verify research idea novelty against recent literature. Use when user says "查新", "novelty check", "有没有人做过", "check novelty", or wants to verify a research idea is novel before implementing.
-argument-hint: "[method-or-idea-description]"
-allowed-tools: WebSearch, WebFetch, Grep, Read, Glob, mcp__codex__codex
+description: Verify problem novelty, method novelty, or both against recent literature. Use when user says "查新", "novelty check", "有没有人做过", "check novelty", or wants to verify a research problem or method before committing.
+argument-hint: "[mode: problem|method|combined] [problem-or-method-description]"
+allowed-tools: Grep, Read, Glob, mcp__codex__codex
 ---
 
 # Novelty Check Skill
 
-Check whether a proposed method/idea has already been done in the literature: **$ARGUMENTS**
+Check whether a proposed problem framing and/or method has already been
+established in the literature: **$ARGUMENTS**
 
 ## Constants
 
@@ -15,30 +16,55 @@ Check whether a proposed method/idea has already been done in the literature: **
 
 ## Instructions
 
-Given a method description, systematically verify its novelty:
+Parse `mode: problem|method|combined` from the arguments. Default to `combined`
+when both a problem and method are present; otherwise infer the only applicable
+mode and state that inference. Follow
+[`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
+for problem mode and
+[`method-design-contract.md`](../shared-references/method-design-contract.md)
+for method mode. Never collapse problem novelty, scientific-delta novelty, and
+technical-route novelty.
+
+`mode: method-final` is an explicit final-method alias. It accepts only
+`refine-logs/FINAL_PROPOSAL.md`, runs after refinement, and must not be treated
+as the preliminary method-risk screen.
+
+For the formal final-method Gate, `idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md`
+must contain exactly one fenced JSON metadata block with `schema_version: 1`,
+the live `review_request_id`, `reviewer`, `verdict_id`, `decision: NOVEL`, and
+the exact `reviewed_artifact_hashes` map for `FINAL_PROPOSAL.md`.
+
+Apply
+[`source-admission-policy.md`](../shared-references/source-admission-policy.md)
+before reading or expanding any candidate paper.
 
 ### Phase A: Extract Key Claims
-1. Read the user's method description
-2. Identify 3-5 core technical claims that would need to be novel:
-   - What is the method?
-   - What problem does it solve?
-   - What is the mechanism?
-   - What makes it different from obvious baselines?
+1. Extract **problem claims** when mode is `problem` or `combined`:
+   phenomenon, setting/population, boundary or failure, causal framing,
+   importance, and the precise research question.
+2. Extract **method claims** when mode is `method` or `combined`: falsifiable
+   hypothesis, intended scientific delta, dominant method, reused backbone,
+   innovation carrier, supporting mechanisms, integration interfaces, targeted
+   evidence, and claimed technical-route delta.
+3. Keep separate claim IDs (`P1...` and `M1...`).
 
-### Phase B: Multi-Source Literature Search
-For EACH core claim, search using ALL available sources:
+### Phase B: Controller-Governed Literature Search
+For each applicable claim:
 
-1. **Web Search** (via `WebSearch`):
-   - Search arXiv, Google Scholar, Semantic Scholar
-   - Use specific technical terms from the claim
-   - Try at least 3 different query formulations per claim
-   - Include year filters for 2024-2026
-
-2. **Known paper databases**: Check against:
-   - ICLR 2025/2026, NeurIPS 2025, ICML 2025/2026
-   - Recent arXiv preprints (2025-2026)
-
-3. **Read abstracts**: For each potentially overlapping paper, WebFetch its abstract and related work section
+1. For a formal run, ask `arisctl allowed-actions`. If the pending phase exposes
+   `submit_query_plan`, submit the claim-specific formulations there, then use
+   only the existing Controller `query`, `admit`, `read-*`, and
+   `submit-evidence` actions. Do not use WebSearch, WebFetch, hosted pages, or
+   a private corpus/ledger.
+2. Problem novelty uses its pending `problem_novelty_gate`; final method novelty
+   uses its pending `final_method_novelty_gate`. Finish the existing reading
+   flow before starting that Gate. The Controller binds newly accepted Evidence
+   Card hashes to the live Gate request.
+3. Retrieve admission metadata only through that gateway. Read only
+   `ADMIT_DECISION_GRADE` or `USER_SUPPLIED_READ` content; retain discovery-only
+   and blocked records as metadata with uncertainty, never scientific evidence.
+4. For non-formal/ad-hoc work, state that web findings are provisional and
+   cannot be promoted into a formal ARIS artifact.
 
 ### Phase C: Cross-Model Verification
 Call REVIEWER_MODEL via Codex MCP (`mcp__codex__codex`) with xhigh reasoning.
@@ -56,9 +82,15 @@ mcp__codex__codex:
     follow all instructions in it.
 ```
 Dossier contents should include:
-- The proposed method description
-- All papers found in Phase B
-- Ask: "Is this method novel? What is the closest prior work? What is the delta?"
+- mode and the separate problem/method claim lists
+- all papers found in Phase B, with verified identifiers or `[UNVERIFIED]`
+- for problem mode: ask whether the phenomenon and research-question framing
+  are already established, and what unresolved delta remains
+- for method mode: ask separately whether the scientific delta and technical
+  route are established; assess any combination only as necessary support for a
+  declared residual `MUST` gap, never as evidence of novelty
+- for combined mode: require two independent verdicts; a novel method cannot
+  rescue a non-novel problem framing, and vice versa
 
 ### Phase D: Novelty Report
 Output a structured report:
@@ -66,35 +98,70 @@ Output a structured report:
 ```markdown
 ## Novelty Check Report
 
-### Proposed Method
-[1-2 sentence description]
+### Mode
+problem / method / combined
 
-### Core Claims
-1. [Claim 1] — Novelty: HIGH/MEDIUM/LOW — Closest: [paper]
-2. [Claim 2] — Novelty: HIGH/MEDIUM/LOW — Closest: [paper]
-...
+### Problem Novelty
+- **Problem statement**: [...]
+- **Problem claims**: [P1...]
+- **Closest existing framing**: [...]
+- **Residual unresolved delta**: [...]
+- **Verdict**: HIGH / MEDIUM / LOW / BLOCKED
+- **Confidence and evidence gaps**: [...]
+
+### Method Novelty
+- **Scientific hypothesis and intended delta**: [...]
+- **Method embodiment**: [dominant method + backbone + innovation carrier]
+- **Supporting-mechanism integration (if any)**: [residual MUST gap served,
+  Field-Map/same-field assessment, and for any cross-field support: structural
+  match, actual interface, targeted responsibility]
+- **Method claims**: [M1...]
+- **Closest existing route**: [...]
+- **Residual scientific delta**: [...]
+- **Residual technical-route delta**: [...]
+- **Scientific closure**: [single causal chain, capability-specific removal
+  failures, targeted evidence]
+- **Verdict**: HIGH / MEDIUM / LOW / BLOCKED
+- **Confidence and evidence gaps**: [...]
 
 ### Closest Prior Work
-| Paper | Year | Venue | Overlap | Key Difference |
-|-------|------|-------|---------|----------------|
+| Paper | Year | Venue | Overlap type | Claim IDs | Key difference |
+|-------|------|-------|--------------|-----------|----------------|
 
 ### Overall Novelty Assessment
-- Score: X/10
+- Problem novelty: X/10 or N/A
+- Method novelty: X/10 or N/A
 - Recommendation: PROCEED / PROCEED WITH CAUTION / ABANDON
-- Key differentiator: [what makes this unique, if anything]
+- Key differentiator(s): [problem and method stated separately]
 - Risk: [what a reviewer would cite as prior work]
 
 ### Suggested Positioning
-[How to frame the contribution to maximize novelty perception]
+[Accurate positioning without inflating either novelty dimension]
 ```
 
 ### Important Rules
 - Be BRUTALLY honest — false novelty claims waste months of research time
-- "Applying X to Y" is NOT novel unless the application reveals surprising insights
-- Check both the method AND the experimental setting for novelty
+- A supporting mechanism is justified only when it closes a declared residual
+  `MUST` gap after Field-Map and same-field options have been assessed;
+  combination itself is not a novelty claim.
+- "Applying X to Y" is novel only when structures match, integration is real,
+  and the route creates a scientific delta.
+- In combined mode, report problem and method novelty separately.
 - If the method is not novel but the FINDING would be, say so explicitly
-- Always check the most recent 6 months of arXiv — the field moves fast
-- **Anti-hallucination for Closest Prior Work.** Every paper in the prior-work table must pass pre-search verification via `verify_papers.py` (canonical name resolved per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md) §2; 3-layer arXiv / CrossRef / Semantic Scholar fallback inside the helper itself). Policy D1 (primary + degraded-output fallback): if the helper is unresolved **or** its invocation fails, tag candidate entries `[UNVERIFIED]` and surface the uncertainty rather than dropping them. Never fabricate arXiv IDs, DOIs, or titles from memory. Full protocol in [`shared-references/citation-discipline.md`](../shared-references/citation-discipline.md) § Pre-Search Verification Protocol.
+- Apply the Source Admission Gate without using recency as an eligibility gate.
+- If a low-citation, non-elite, or just-published paper is a potentially
+  decisive closest/concurrent prior, invoke the existing
+  `decisive_closest_prior_or_concurrent` admission exception and obtain its
+  decision-grade Evidence Card whose source ID is that same prior. If that verification cannot be completed, the
+  problem verdict is `UNCERTAIN`, never `NOVEL`.
+- **Anti-hallucination for Closest Prior Work.** The Source Admission Gate takes
+  precedence: if admission metadata cannot be verified, keep the paper
+  discovery-only or blocked. For an admitted paper, run `verify_papers.py` (canonical name resolved
+  per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md)
+  §2). If only this identifier helper fails, tag the citation `[UNVERIFIED]` and
+  surface the uncertainty. Never fabricate arXiv IDs, DOIs, or titles. Full
+  protocol:
+  [`citation-discipline.md`](../shared-references/citation-discipline.md).
 
 ## Review Tracing
 

@@ -1,0 +1,47 @@
+{
+  "description": "Defense-in-depth guard for Controller-owned ARIS paths and research gateways.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|WebSearch|WebFetch|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/pre_tool_use_policy.py",
+            "commandWindows": "python .codex/hooks/pre_tool_use_policy.py",
+            "timeout": 10,
+            "statusMessage": "Checking ARIS Controller boundary"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/subagent_attestation.py",
+            "commandWindows": "python .codex/hooks/subagent_attestation.py",
+            "timeout": 10,
+            "statusMessage": "Recording ARIS subagent provenance"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/subagent_attestation.py",
+            "commandWindows": "python .codex/hooks/subagent_attestation.py",
+            "timeout": 10,
+            "statusMessage": "Recording ARIS subagent provenance"
+          }
+        ]
+      }
+    ]
+  }
+}

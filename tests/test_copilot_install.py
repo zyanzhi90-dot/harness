@@ -70,7 +70,7 @@ def test_install_copilot_dry_run_has_no_project_writes(tmp_path: Path) -> None:
 
 
 def test_install_copilot_avoids_bash4_associative_arrays() -> None:
-    text = INSTALL_SCRIPT.read_text()
+    text = INSTALL_SCRIPT.read_text(encoding="utf-8")
     assert "declare -A" not in text
 
 
@@ -94,13 +94,13 @@ def test_install_copilot_creates_github_skills_symlinks(tmp_path: Path) -> None:
     # Verify manifest
     manifest = project / ".aris" / "installed-skills-copilot.txt"
     assert manifest.exists()
-    manifest_text = manifest.read_text()
+    manifest_text = manifest.read_text(encoding="utf-8")
     assert "repo_root" in manifest_text
     assert "installer\tinstall_aris_copilot.sh" in manifest_text
 
     # Verify AGENTS.md
     assert (project / "AGENTS.md").exists()
-    agents_text = (project / "AGENTS.md").read_text()
+    agents_text = (project / "AGENTS.md").read_text(encoding="utf-8")
     assert "ARIS Copilot CLI Skill Scope" in agents_text
     assert f"ARIS repo root: `{repo}`" in agents_text
 
@@ -233,7 +233,7 @@ def test_install_copilot_uninstall_removes_managed_only(tmp_path: Path) -> None:
     assert (project / ".aris" / "installed-skills-copilot.txt.prev").exists()
     assert not (project / ".aris" / "installed-skills-copilot.txt").exists()
     # AGENTS.md block removed
-    assert "ARIS Copilot CLI Skill Scope" not in (project / "AGENTS.md").read_text()
+    assert "ARIS Copilot CLI Skill Scope" not in (project / "AGENTS.md").read_text(encoding="utf-8")
 
 
 def test_install_copilot_uninstall_uses_manifest_repo_root(tmp_path: Path) -> None:
@@ -365,7 +365,7 @@ def test_install_copilot_reconcile_already_deleted_stale_link(tmp_path: Path) ->
         ]
     )
 
-    manifest = (project / ".aris" / "installed-skills-copilot.txt").read_text()
+    manifest = (project / ".aris" / "installed-skills-copilot.txt").read_text(encoding="utf-8")
     assert "\talpha\t" not in manifest
 
 
@@ -420,7 +420,7 @@ def test_smart_update_copilot_copy_install(tmp_path: Path) -> None:
     # Baseline file created with hashes for newly installed skills
     baseline_file = local / ".aris-copilot-baselines.sha256"
     assert baseline_file.exists()
-    baseline_text = baseline_file.read_text()
+    baseline_text = baseline_file.read_text(encoding="utf-8")
     assert "alpha" in baseline_text
     assert "beta" in baseline_text
     assert "gamma" in baseline_text
@@ -448,7 +448,7 @@ def test_smart_update_copilot_hash_based_customization(tmp_path: Path) -> None:
             "--add-new",  # NEW skills now require confirmation/--add-new (#366-style policy)
         ]
     )
-    assert (local / "alpha" / "SKILL.md").read_text() == "---\nname: alpha\n---\n# alpha-v1\n"
+    assert (local / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "---\nname: alpha\n---\n# alpha-v1\n"
 
     # User customizes alpha locally
     (local / "alpha" / "SKILL.md").write_text("---\nname: alpha\n---\n# alpha-v1 CUSTOMIZED\n")
@@ -473,9 +473,9 @@ def test_smart_update_copilot_hash_based_customization(tmp_path: Path) -> None:
     assert "Customized" in result.stdout
     assert "alpha" in result.stdout
     # alpha should NOT be updated (customized)
-    assert "CUSTOMIZED" in (local / "alpha" / "SKILL.md").read_text()
+    assert "CUSTOMIZED" in (local / "alpha" / "SKILL.md").read_text(encoding="utf-8")
     # beta should be updated (not customized)
-    assert "beta-v2" in (local / "beta" / "SKILL.md").read_text()
+    assert "beta-v2" in (local / "beta" / "SKILL.md").read_text(encoding="utf-8")
 
 
 def test_smart_update_copilot_refuses_symlink_managed(tmp_path: Path) -> None:

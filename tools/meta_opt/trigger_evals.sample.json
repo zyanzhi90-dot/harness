@@ -8,7 +8,26 @@
   "research-lit": [
     "find me recent papers on this topic",
     "what has been published about diffusion language models lately",
-    "pull together related work for my intro section"
+    "map the main problems, method families, failures, and disagreements in this field"
+  ],
+  "idea-discovery": [
+    "start from this broad robotics direction and take me through the full process of finding a worthwhile research problem",
+    "I need the complete workflow from field survey to a defensible question and method route",
+    "从零开始调研这个方向，找到真正值得做的问题，再形成方案"
+  ],
+  "idea-creator": [
+    "here is my field map; identify and certify the strongest research questions",
+    "find valuable problems from these failure cases and derive initial solution routes",
+    "我已经有领域调研结果了，帮我筛出好问题并形成候选方法"
+  ],
+  "research-refine": [
+    "this problem has passed our quality gate; turn it into one coherent method and validation story",
+    "refine this certified question without changing its scope",
+    "问题已经确认了，请把主方法、补充机制和验证闭环打磨好"
+  ],
+  "research-refine-pipeline": [
+    "the research problem is certified; give me both the refined method and experiment roadmap",
+    "chain method refinement with a claim-driven validation plan for this approved question"
   ],
   "novelty-check": [
     "has anyone already done this idea?",

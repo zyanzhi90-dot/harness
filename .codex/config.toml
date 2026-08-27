@@ -1,0 +1,39 @@
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+approvals_reviewer = "user"
+
+[features]
+hooks = true
+multi_agent = true
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 2
+
+[agents.paper_reader]
+description = "Read only Controller-supplied admitted content and return one schema-complete Evidence Card."
+config_file = "agents/paper_reader.toml"
+
+[agents.coverage_reviewer]
+description = "Independently review a Controller-issued Field Map request only for candidate sufficiency, major taxonomy change, or final acceptance."
+config_file = "agents/coverage_reviewer.toml"
+
+[agents.independent_problem_reviewer]
+description = "Independently review a Controller-issued problem-quality Gate request."
+config_file = "agents/independent_problem_reviewer.toml"
+
+[agents.independent_novelty_reviewer]
+description = "Independently review a Controller-issued problem or final-method novelty Gate request."
+config_file = "agents/independent_novelty_reviewer.toml"
+
+[agents.independent_root_cause_reviewer]
+description = "Independently review a Controller-issued root-cause Gate request."
+config_file = "agents/independent_root_cause_reviewer.toml"
+
+[agents.independent_method_reviewer]
+description = "Independently review a Controller-issued method-refinement Gate request."
+config_file = "agents/independent_method_reviewer.toml"
+
+[agents.result_to_claim_reviewer]
+description = "Independently own the existing Controller-issued result-to-claim judgment."
+config_file = "agents/result_to_claim_reviewer.toml"

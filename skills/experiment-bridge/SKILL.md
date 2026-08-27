@@ -33,7 +33,35 @@ refine-logs/FINAL_PROPOSAL.md
 
 ## Inputs
 
-This skill expects one or more of:
+## Execution Boundary
+
+### Formal / canonical run — fail closed
+
+When implementing a Controller-managed formal run, run this read-only preflight
+before reading any plan, proposal, old report, or fallback path:
+
+```bash
+python -m arisctl --root . validation-handoff <run_id>
+```
+
+Proceed only when it succeeds and the formal `EXPERIMENT_PLAN.md` records the
+same run ID, workflow hash, and artifact-hash map. Consume only the returned
+canonical artifacts and the bound plan. If the preflight fails or the plan's
+bindings differ, stop and report the missing, changed, or non-canonical
+artifact. Do not create `FINAL_PROPOSAL`, `RESEARCH_CONTRACT`, or any other
+upstream artifact from the prompt, an old report, `IDEA_REPORT`, a compatibility
+path, or a template. Do not run an experiment under this formal run.
+
+### Legacy / ad-hoc request — isolated
+
+If no Controller-managed run is being invoked, this skill may implement an
+explicitly user-supplied plan or method. Mark its tracker/log and any generated
+legacy claims source as `execution_context: NON_CANONICAL_AD_HOC`; retain the
+source path and do not invoke `arisctl` acceptance, write `.aris` state, or
+claim formal upstream certification.
+
+Only after the applicable boundary above is established, this skill expects one
+or more of:
 
 1. **`refine-logs/EXPERIMENT_PLAN.md`** (best) — claim-driven experiment roadmap from `/experiment-plan`
 2. **`refine-logs/EXPERIMENT_TRACKER.md`** — run-by-run execution table
@@ -41,7 +69,9 @@ This skill expects one or more of:
 4. **`idea-stage/IDEA_CANDIDATES.md`** — compact idea summary (preferred when `COMPACT: true`) *(fall back to `./IDEA_CANDIDATES.md` if not found)*
 5. **`idea-stage/IDEA_REPORT.md`** — full brainstorm output *(fall back to `./IDEA_REPORT.md` if not found)*
 
-If none exist, ask the user what experiments to implement.
+If none exist, ask the user what experiments to implement **only for a
+non-canonical ad-hoc request**. In a formal run, missing input is a refusal,
+not permission to infer it from the prompt.
 
 ## Workflow
 
@@ -72,12 +102,13 @@ Present a brief summary:
 Proceeding to implementation.
 ```
 
-**Research-contract fallback**: if `idea-stage/docs/research_contract.md` does
-not exist yet (idea selected outside `/idea-discovery`, or an older run),
-create it now from `templates/RESEARCH_CONTRACT_TEMPLATE.md` using the selected
-idea + claims from the experiment plan. Downstream `/result-to-claim` and
-`/ablation-planner` read this file as the claims source, and session recovery
-(`docs/SESSION_RECOVERY_GUIDE.md`) depends on it existing.
+**Legacy claims-source fallback only**: in an explicitly
+`NON_CANONICAL_AD_HOC` request, a missing legacy claims source may be created at
+`idea-stage/docs/research_contract.md` from the template, but it must begin
+with `execution_context: NON_CANONICAL_AD_HOC` and name its user/report source.
+It is never a canonical `idea-stage/RESEARCH_CONTRACT.md`, is never registered
+with the Controller, and cannot satisfy a formal preflight. In a formal run,
+this fallback is forbidden.
 
 ### Phase 2: Implement Experiment Code
 

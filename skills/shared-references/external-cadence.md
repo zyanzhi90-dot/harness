@@ -215,9 +215,16 @@ A `/loop` or `CronCreate` heartbeat is parasitic on a living session; if it dies
    unregistered. **It only DETECTS** — it never restarts the loop or re-runs a
    verdict-bearing skill; recovery stays a human/cron decision, per the fence above.
 
-## Stall detection & forced structural pivot
+## Legacy stall detection & forced structural pivot
 
-An overnight loop can spin: each iteration tries a near-variant of the last and gets
+`iteration_log.py` has **no active shipped consumer**. It is retained only for
+backward-compatible, user-owned custom loops. It must not be wired into the
+canonical Controller workflow, `/research-pipeline`, or `/idea-discovery`; a
+future consumer requires a separate Controller-aware design and an update to
+`integration-contract.md`. The material below documents that legacy helper; it
+is not an instruction to add an unattended scientific-decision loop.
+
+For a legacy custom loop, an overnight loop can spin: each iteration tries a near-variant of the last and gets
 diminishing returns. Detect it mechanically and force a *structural* change — not harder
 tuning of the same frame.
 

@@ -18,7 +18,7 @@ NON_SKILL_DIRS = {"shared-references"}
 
 def parse_catalog():
     groups, skills = {}, {}
-    for line in CATALOG.read_text().splitlines():
+    for line in CATALOG.read_text(encoding="utf-8").splitlines():
         if not line or line.startswith("#"):
             continue
         fields = line.split("\t")
@@ -97,7 +97,7 @@ class CatalogTest(unittest.TestCase):
         for name, (_, requires) in sorted(self.skills.items()):
             if requires == "-":
                 continue
-            text = (SKILLS_DIR / name / "SKILL.md").read_text()
+            text = (SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8")
             for dep in requires.split(","):
                 self.assertTrue(
                     re.search(r"/" + re.escape(dep) + r"\b", text),
@@ -105,6 +105,17 @@ class CatalogTest(unittest.TestCase):
                     f"skills/{name}/SKILL.md never references /{dep} — "
                     "stale edge or wrong dependency",
                 )
+
+    def test_core_idea_creator_declares_default_novelty_dependency(self):
+        _, requires = self.skills["idea-creator"]
+        self.assertIn("novelty-check", requires.split(","))
+
+    def test_research_pipeline_lists_only_canonical_validation_dependencies(self):
+        _, requires = self.skills["research-pipeline"]
+        self.assertEqual(
+            requires.split(","),
+            ["experiment-plan", "experiment-bridge", "result-to-claim"],
+        )
 
 
 if __name__ == "__main__":
