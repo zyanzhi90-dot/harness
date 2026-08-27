@@ -22,16 +22,20 @@ mode and state that inference. Follow
 [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
 for problem mode and
 [`method-design-contract.md`](../shared-references/method-design-contract.md)
-for method mode. Never collapse problem novelty, scientific-delta novelty, and
-technical-route novelty.
+for method mode. Never collapse problem novelty, Principle/Scientific-Delta
+novelty, and concrete Method embodiment novelty.
 
 `mode: method-final` is an explicit final-method alias. It accepts only
+the active Controller-materialized `SELECTED_PRINCIPLE.yaml` plus
 `refine-logs/FINAL_PROPOSAL.md`, runs after refinement, and must not be treated
-as the preliminary method-risk screen.
+as the preliminary method-risk screen. A non-final `mode: method` may assess a
+Candidate Principle's Provisional Scientific Delta as an advisory risk screen;
+it cannot emit the formal final-method verdict.
 
 For the formal final-method Gate, `idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md`
 must contain exactly one fenced JSON metadata block with `schema_version: 1`,
-the live `review_request_id`, `reviewer`, `verdict_id`, `decision: NOVEL`, and
+the live `review_request_id`, `reviewer`, `verdict_id`, a Controller-declared
+`decision: NOVEL | REVISE_METHOD_DELTA | RETHINK_PRINCIPLE_DELTA | HOLD`, and
 the exact `reviewed_artifact_hashes` map for `FINAL_PROPOSAL.md`.
 
 Apply
@@ -42,11 +46,17 @@ before reading or expanding any candidate paper.
 1. Extract **problem claims** when mode is `problem` or `combined`:
    phenomenon, setting/population, boundary or failure, causal framing,
    importance, and the precise research question.
-2. Extract **method claims** when mode is `method` or `combined`: falsifiable
-   hypothesis, intended scientific delta, dominant method, reused backbone,
-   innovation carrier, supporting mechanisms, integration interfaces, targeted
-   evidence, and claimed technical-route delta.
-3. Keep separate claim IDs (`P1...` and `M1...`).
+2. For non-final `mode: method`, extract Candidate Principle/version, RMC/
+   Capability/Obligation bindings, activation/failure conditions, and
+   Provisional Scientific Delta. Keep the result preliminary.
+3. For `mode: method-final` (or combined input containing the accepted final
+   artifacts), extract the Selected Principle and its Evidence-supported
+   conditions; target-domain adaptation; minimal faithful realization;
+   Principle-only closure; residual mechanism/adaptation gaps; minimal
+   necessary composition; core and reused implementation elements;
+   failure/applicability boundaries; Final Scientific Delta Claim;
+   claim-validation obligations; and claimed embodiment delta.
+4. Keep separate claim IDs (`P1...` and `M1...`).
 
 ### Phase B: Controller-Governed Literature Search
 For each applicable claim:
@@ -86,9 +96,12 @@ Dossier contents should include:
 - all papers found in Phase B, with verified identifiers or `[UNVERIFIED]`
 - for problem mode: ask whether the phenomenon and research-question framing
   are already established, and what unresolved delta remains
-- for method mode: ask separately whether the scientific delta and technical
-  route are established; assess any combination only as necessary support for a
-  declared residual `MUST` gap, never as evidence of novelty
+- for preliminary method mode: assess the Candidate Principle's Provisional
+  Scientific Delta without treating it as a final Claim; for final method mode:
+  ask separately whether novelty failure is at the Principle/Scientific-Delta
+  layer or only at the target adaptation, embodiment, Claim formulation, or
+  boundary layer; assess composition only as support for a demonstrated
+  residual adaptation/mechanism gap, never as novelty by itself
 - for combined mode: require two independent verdicts; a novel method cannot
   rescue a non-novel problem framing, and vice versa
 
@@ -110,17 +123,18 @@ problem / method / combined
 - **Confidence and evidence gaps**: [...]
 
 ### Method Novelty
-- **Scientific hypothesis and intended delta**: [...]
-- **Method embodiment**: [dominant method + backbone + innovation carrier]
-- **Supporting-mechanism integration (if any)**: [residual MUST gap served,
-  Field-Map/same-field assessment, and for any cross-field support: structural
-  match, actual interface, targeted responsibility]
+- **Candidate/Selected Principle and Evidence-supported scope**: [...]
+- **Target adaptation and minimal faithful realization**: [...]
+- **Principle-only closure and residual gaps**: [...]
+- **Minimal necessary composition (if any)**: [gap served, actual interface,
+  activation conditions, and removal/counterfactual responsibility]
+- **Final Scientific Delta Claim**: [...]
 - **Method claims**: [M1...]
-- **Closest existing route**: [...]
+- **Closest existing Principle / embodiment**: [...]
 - **Residual scientific delta**: [...]
-- **Residual technical-route delta**: [...]
-- **Scientific closure**: [single causal chain, capability-specific removal
-  failures, targeted evidence]
+- **Residual embodiment delta**: [...]
+- **Failure layer**: [none / Principle-Scientific-Delta / adaptation-embodiment-Claim / novelty-Evidence-only]
+- **Validation obligations and boundaries**: [...]
 - **Verdict**: HIGH / MEDIUM / LOW / BLOCKED
 - **Confidence and evidence gaps**: [...]
 
@@ -141,13 +155,18 @@ problem / method / combined
 
 ### Important Rules
 - Be BRUTALLY honest — false novelty claims waste months of research time
-- A supporting mechanism is justified only when it closes a declared residual
-  `MUST` gap after Field-Map and same-field options have been assessed;
-  combination itself is not a novelty claim.
-- "Applying X to Y" is novel only when structures match, integration is real,
-  and the route creates a scientific delta.
+- A supporting mechanism is justified only when it closes a demonstrated
+  residual mechanism/adaptation gap after the Principle-only closure attempt;
+  composition itself is not a novelty claim.
+- "Applying X to Y" is novel only when the selected Principle's structural
+  mapping and target adaptation create a real scientific or embodiment delta.
 - In combined mode, report problem and method novelty separately.
 - If the method is not novel but the FINDING would be, say so explicitly
+- For the formal final Gate, map adaptation/embodiment/Claim/boundary failure to
+  `REVISE_METHOD_DELTA`, Principle/Scientific-Delta failure to
+  `RETHINK_PRINCIPLE_DELTA`, and missing novelty Evidence or interpretation to
+  `HOLD`. Do not reject a Principle merely because its concrete realization is
+  insufficiently novel.
 - Apply the Source Admission Gate without using recency as an eligibility gate.
 - If a low-citation, non-elite, or just-published paper is a potentially
   decisive closest/concurrent prior, invoke the existing

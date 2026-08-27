@@ -13,9 +13,21 @@
 
 **Run ID**: [controller run ID]
 **Workflow hash**: [workflow SHA-256]
+**Validation handoff hash**: [handoff SHA-256]
 | Accepted artifact | SHA-256 | Producer phase |
 |-------------------|---------|----------------|
 | [path] | [hash] | [phase] |
+
+### Validation obligations
+
+- **Selected Principle ID/version and intervention**: [...]
+- **Causal-chain IDs**: [...]
+- **Required Mechanism Change IDs**: [...]
+- **Required Capability / Design Obligation IDs**: [...]
+- **Core Method changes**: [...]
+- **Final Scientific Delta Claim**: [validation target, not established fact]
+- **Claim-validation obligations**: [...]
+- **Failure conditions / applicability boundaries**: [...]
 
 ## Claim Map
 
@@ -26,9 +38,9 @@
 
 ## Mechanism Validation Map
 
-| Core change / causal-chain ID | Problem mechanism or failure addressed | Predicted observable change | Mechanism test / metric | Final performance evaluation | Needed control? |
-|-------------------------------|-----------------------------------------|-----------------------------|-------------------------|------------------------------|-----------------|
-| M1 / CC-1 | [What this change should fix] | [What should change] | [Measurement or controlled test] | [Primary outcome metric] | [yes / no; why] |
+| Principle / causal-chain / RMC / obligation / core change | Problem mechanism or failure addressed | Predicted observable change | Discriminating evidence | Performance consequence | Boundary / falsifier |
+|-----------------------------------------------------------|-----------------------------------------|-----------------------------|-------------------------|-------------------------|----------------------|
+| P1 / CC-1 / RMC-1 / OBL-1 / M1 | [What this change should fix] | [What should change] | [Measurement or controlled test] | [Primary outcome consequence] | [failure condition / limit] |
 
 ## Experiment Blocks
 
@@ -37,7 +49,7 @@
 - **Dataset / split / task**: [e.g., ImageNet val]
 - **Compared systems**: [Your method vs. Baseline A vs. Baseline B]
 - **Metrics**: [Primary: accuracy/PPL. Secondary: throughput]
-- **Causal link / core change**: [Causal-chain ID and method change]
+- **Principle / causal link / RMC / obligation / core change**: [bound IDs and Method change]
 - **Predicted mechanism or failure-phenomenon change**: [Expected direction/pattern]
 - **Mechanism observation**: [Measurement, diagnostic, or controlled comparison]
 - **Performance evaluation**: [Final outcome metric and baseline comparison]
@@ -72,3 +84,7 @@
 
 ## Risks
 - **Risk**: [What could go wrong] → **Mitigation**: [How to handle it]
+
+> Do not write `Established Scientific Delta` in this plan. That status exists
+> only after a Controller-accepted `VALIDATED` result closes the mechanism and
+> performance obligations.

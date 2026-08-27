@@ -15,7 +15,9 @@ allowed-tools: Bash(*), Read, Grep, Glob, Write, Edit, mcp__codex__codex, mcp__c
 > run this gate **once**. See
 > [`shared-references/external-cadence.md`](../shared-references/external-cadence.md).
 
-Experiments produce numbers; this gate decides what those numbers *mean*. Collect results from available sources, get a Codex judgment, then auto-route based on the verdict.
+Experiments produce numbers; this gate decides what those numbers *mean*.
+Collect results, obtain the independent judgment, and let the Controller apply
+the verdict's fixed return target.
 
 ## Context: $ARGUMENTS
 
@@ -23,12 +25,17 @@ Experiments produce numbers; this gate decides what those numbers *mean*. Collec
 
 When `$ARGUMENTS` includes a canonical Controller run ID and the output of
 `arisctl validation-handoff`, use that handoff as the sole formal context. Keep
-its `run_id`, `workflow_sha256`, and `handoff_sha256` unchanged. After judging
-the result, write `VALIDATION_RESULT.json` with this minimum contract:
+its `run_id`, `workflow_sha256`, `handoff_sha256`, artifact bindings, and
+`validation_obligations` unchanged. Those obligations recover the Selected
+Principle, causal chains, RMCs, Capabilities/Design Obligations, core Method
+changes, predicted mechanism changes, failure/applicability boundaries, Final
+Scientific Delta Claim, and claim-validation obligations. After judging the
+result, write `VALIDATION_RESULT.json` with this minimum contract:
 
 ```json
 {
   "schema_version": 1,
+  "validation_result_id": "<reviewer-generated result ID>",
   "run_id": "<handoff run_id>",
   "workflow_sha256": "<handoff workflow_sha256>",
   "handoff_sha256": "<handoff handoff_sha256>",
@@ -36,21 +43,35 @@ the result, write `VALIDATION_RESULT.json` with this minimum contract:
   "reviewed_artifact_hashes": {"<accepted artifact path>": "<handoff-bound sha256>"},
   "reviewer": "<exact Codex judgment model>",
   "verdict_id": "<reviewer-generated verdict ID>",
-  "decision": "VALIDATED | METHOD_REFINEMENT_REQUIRED | METHOD_ROUTE_REJECTED | ROOT_CAUSE_REJECTED | PROBLEM_PREMISE_REJECTED",
+  "decision": "VALIDATED | METHOD_REFINEMENT_REQUIRED | SELECTED_PRINCIPLE_REJECTED | ROOT_CAUSE_REJECTED | PROBLEM_PREMISE_REJECTED",
   "rationale": "evidence-grounded conclusion",
   "evidence_artifacts": [{"path": "project-relative-result-path", "sha256": "<sha256>"}],
+  "evidence_refs": ["<formal evidence or result reference>"],
+  "findings": [{"claim_or_binding": "<ID>", "assessment": "<finding>"}],
+  "return_guidance": {},
   "mechanism_evidence_closure": [{
-    "causal_chain_id": "<selected-route chain ID>",
-    "must_obligation_ids": ["<covered MUST obligation IDs>"],
+    "causal_chain_id": "<Selected Principle chain ID>",
+    "mechanism_change_ids": ["<covered RMC IDs>"],
+    "obligation_ids": ["<covered Design Obligation IDs>"],
     "predicted_mechanism_change": "<pre-registered prediction>",
     "observed_mechanism_change": "<actual observation>",
     "explanation_status": "EXPLANATION_SUPPORTED",
     "mechanism_match": "MATCHES_PREDICTION",
     "discriminating_evidence": {"method": "controlled_intervention | ablation | counterfactual | mechanism_measurement | joint_mechanism_experiment | theory", "artifact_paths": ["project-relative-result-path"]},
     "performance_consequence": "<effect on the original failure>"
-  }]
+  }],
+  "supported_claim_elements": ["<actually supported claim element>"],
+  "applicability_boundaries": ["<validated boundary>"],
+  "retained_limitations": ["<limitation>"],
+  "remaining_uncertainties": ["<uncertainty>"],
+  "established_scientific_delta": "<only for VALIDATED>"
 }
 ```
+
+For a non-`VALIDATED` decision, omit the validation-only closure/delta fields
+that are not supported and provide structured, non-empty `return_guidance`
+identifying the target phase's missing Evidence, decision target, and required
+checks. `VALIDATED` uses empty `return_guidance`.
 
 Dispatch only the Controller-allowed `result_to_claim_reviewer`; the existing
 Codex judgment, not Main, must emit this exact complete object. Give it
@@ -60,14 +81,16 @@ The Hook stores that reviewer-owned payload outside the project and Controller
 accepts only its exact hash-attested copy. Main must not parse, revise, or
 complete the scientific verdict.
 
-Choose `VALIDATED` only when every selected causal chain and MUST obligation has
-an `EXPLANATION_SUPPORTED` closure whose observed mechanism
-`MATCHES_PREDICTION`; a performance-only result, an untested mechanism, or a
-contradicted prediction must use the applicable return decision. Use
-`METHOD_REFINEMENT_REQUIRED` only when the
-selected route remains supported and its proposal needs within-route revision.
-Use `METHOD_ROUTE_REJECTED` when the route itself is falsified and the method
-must return to route design and Human selection. Use
+Choose `VALIDATED` only when every Selected Principle causal chain, Required
+Mechanism Change, and Design Obligation is covered by an
+`EXPLANATION_SUPPORTED` closure whose observed mechanism
+`MATCHES_PREDICTION`, with discriminating Evidence and its performance
+consequence. A performance-only result, untested mechanism, or contradicted
+prediction must use the applicable return decision. Use
+`METHOD_REFINEMENT_REQUIRED` only when the Selected Principle remains supported
+and the concrete adaptation, realization, Claim, or boundary needs revision.
+Use `SELECTED_PRINCIPLE_REJECTED` when Full Validation falsifies the selected
+Principle and method design must consume that rejection and Evidence. Use
 `ROOT_CAUSE_REJECTED` when the result falsifies the accepted causal diagnosis;
 use `PROBLEM_PREMISE_REJECTED` only when it falsifies the accepted problem
 premise. Do not choose a rollback target or edit canonical artifacts. The user
@@ -98,12 +121,13 @@ Assemble the key information:
 - The intended claim these experiments were designed to test
 - Any known confounds or caveats
 
-Also assemble a **mechanism evidence table** for every core method change in
-the experiment plan: causal-chain ID; targeted problem mechanism or failure;
-predicted observable change; actual observation with evidence path; and the
-performance comparison. A missing mechanism observation is `untested`, never
-evidence that the mechanism worked. Preserve anomalous observations as new
-research evidence rather than filtering them out.
+Also assemble a **mechanism evidence table** for every Selected Principle
+causal chain, RMC, Design Obligation, and core Method change in the validation
+handoff: predicted observable change; actual observation with Evidence path;
+discriminating control; performance consequence; failure condition; and
+applicability boundary. A missing mechanism observation is `untested`, never
+Evidence that the mechanism worked. Preserve anomalous observations as new
+research Evidence rather than filtering them out.
 
 ### Step 1.5: Deterministic evidence pre-check (before spending a Codex call)
 

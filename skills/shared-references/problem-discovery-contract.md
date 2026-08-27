@@ -55,6 +55,13 @@ defines 1a-2b and the independent diagnosis Gate. Only a validated
 [`method-design-contract.md`](method-design-contract.md). Do not duplicate
 either downstream contract here.
 
+When Full Validation returns `PROBLEM_PREMISE_REJECTED`, reopened problem
+generation must consume the Controller-linked validation-result ID, Evidence
+references/result paths, findings, and structured return guidance. Reassess the
+rejected premise and only its directly affected framing/evidence fields; do not
+silently preserve the rejected premise or inherit the former Method's
+interpretation of the Evidence.
+
 ## Phase contracts
 
 ### P0 — Research Frame
@@ -553,8 +560,9 @@ verdict_id:
 acceptance_authority: same_family_reviewer | cross_family_reviewer | human
 ```
 
-`CERTIFIED/provisional` may support further analysis but cannot authorize final
-route selection, experiment handoff, or a `READY` method. In the default
+`CERTIFIED/provisional` may support further analysis but cannot authorize a
+Principle/Test Human Gate, test execution, Principle convergence, or a
+`METHOD_READY` final Method. In the default
 half-autonomous workflow, an independent review remains advisory and explicit
 human confirmation is the sufficient and final acceptance authority. A
 cross-family reviewer may accept only when the user explicitly enabled an
@@ -565,8 +573,9 @@ autonomous acceptance mode.
 The accepted artifact from this contract is the Certified Problem Contract.
 Pass it unchanged with its evidence capsule to
 `root-cause-analysis-contract.md`. Keep problem novelty separate from the later
-root-cause verdict and all scientific-delta and technical-route novelty
-verdicts.
+root-cause verdict, Provisional Scientific Delta, Final Scientific Delta Claim,
+final Method novelty, and any Established Scientific Delta recorded only after
+`VALIDATED`.
 
 ## Failure paths
 

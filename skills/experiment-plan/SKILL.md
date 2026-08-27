@@ -15,14 +15,16 @@ Use this skill after the method is stable enough that the next question becomes:
 The goal is not to generate a giant benchmark wishlist. The goal is to turn a proposal into a **claim -> evidence -> run order** roadmap that supports four things:
 
 1. the method actually solves the anchored problem
-2. the dominant contribution is real and focused
+2. the primary claimed contribution is real and focused
 3. the method is elegant enough that extra complexity is unnecessary
 4. any frontier-model-era component is genuinely useful, not decorative
 
-For a formal ARIS method route, performance is necessary but not enough: the
+For a formal ARIS final Method, performance is necessary but not enough: the
 plan must also test the predicted mechanism or failure-phenomenon change that
-links each core method change to the validated root-cause analysis. This is an
-extension of the existing experiment blocks, not a new workflow stage or Gate.
+links the Selected Principle, each Required Mechanism Change and Design
+Obligation, and each core Method change to the validated RCA. This is Full
+Validation planning, not the pre-convergence Principle-discrimination cycle and
+not a new workflow phase or Gate.
 
 ## Execution Boundary
 
@@ -36,16 +38,21 @@ python -m arisctl --root . validation-handoff <run_id>
 ```
 
 The command verifies the current run, accepted problem contract, root-cause
-analysis and verdict, final proposal, final novelty verdict, human method
-confirmation, producer phases, provenance, and hashes. If it fails, stop and
+analysis and verdict, Controller-materialized Selected Principle, final
+proposal, final novelty verdict, human method confirmation, producer phases,
+provenance, and hashes. Consume its `validation_obligations`, including causal
+chains, RMCs, Capabilities/Design Obligations, selected Principle intervention,
+core Method changes, predicted mechanism changes, failure/applicability
+boundaries, Final Scientific Delta Claim, and claim-validation obligations. If
+it fails, stop and
 report its missing or invalid formal artifact. Do not derive `FINAL_PROPOSAL`,
 create a research contract, or substitute a prompt, old report, compatibility
 path, or other free text. This check is read-only and does not add a stage or
 Gate.
 
-For a successful formal handoff, record its run ID, workflow hash, and artifact
-hash map in `EXPERIMENT_PLAN.md`; a later `/experiment-bridge` must re-check the
-same handoff before implementation.
+For a successful formal handoff, record its run ID, workflow hash, handoff hash,
+artifact hash map, and validation obligations in `EXPERIMENT_PLAN.md`; a later
+`/experiment-bridge` must re-check the same handoff before implementation.
 
 ### Legacy / ad-hoc request — isolated
 
@@ -81,13 +88,16 @@ if they exist:
 Extract:
 
 - **Problem Anchor**
-- **Dominant contribution**
-- **Optional supporting contribution**
+- **Selected Principle and Evidence-supported conditions**
+- **Target-domain adaptation and minimal faithful realization**
+- **Residual gaps and minimal necessary composition**
+- **Final Scientific Delta Claim and claim-validation obligations**
 - **Critical reviewer concerns**
 - **Data / compute / timeline constraints**
 - **Which frontier primitive is central, if any**
 - **Primary causal-chain IDs, intervention targets, and expected observables**
-- **Each core method change and its claim-validation obligation**
+- **Each RMC, Capability/Design Obligation, core Method change, and its
+  claim-validation obligation**
 
 If these files do not exist, derive the same information from the user's prompt
 **only for an explicitly non-canonical ad-hoc request**. In a formal run,
@@ -103,7 +113,7 @@ non-canonical ad-hoc plan may mark an unavailable mechanism link as
 
 Before proposing experiments, write down the claims that must be defended.
 
-Use this structure:
+Use this structure. These are validation targets, not established facts:
 
 - **Primary claim**: the main mechanism-level contribution
 - **Supporting claim**: optional, only if it directly strengthens the main paper story
@@ -115,10 +125,11 @@ Do not exceed `MAX_PRIMARY_CLAIMS` unless the paper truly has multiple inseparab
 ### Phase 2: Build the Experimental Storyline
 
 Before choosing blocks, write a compact **Mechanism Validation Map**. For every
-core method change, record: the causal-chain ID or claim-validation obligation
-it traces to; the problem mechanism/failure it is intended to change; the
-predicted observable direction or failure-pattern change; the measurement or
-controlled experiment that can test it; and the final performance metric.
+Selected Principle causal chain, RMC, Design Obligation, and core Method change,
+record the claim-validation obligation it traces to; the problem mechanism or
+failure it is intended to change; the predicted observable direction or
+failure-pattern change; the discriminating measurement/control that can test
+it; the performance consequence; and the failure/applicability boundary.
 
 If multiple core changes need their individual roles distinguished, add the
 smallest necessary ablation or controlled comparison. Do not force a component
@@ -128,7 +139,7 @@ enough when the changes are not independently claimable.
 Design the paper around a compact set of experiment blocks. Default to the following blocks and delete any that are not needed:
 
 1. **Main anchor result** — does the method solve the actual bottleneck?
-2. **Novelty isolation** — does the dominant contribution itself matter?
+2. **Novelty isolation** — does the primary claimed contribution itself matter?
 3. **Simplicity / elegance check** — can a bigger or more fragmented version be avoided?
 4. **Frontier necessity check** — if an LLM / VLM / Diffusion / RL-era component is central, is it actually the right tool?
 5. **Failure analysis or qualitative diagnosis** — what does the method still miss?
@@ -150,7 +161,8 @@ For every kept block, fully specify:
 - **Dataset / split / task**
 - **Compared systems**: strongest baselines, ablations, and variants only
 - **Metrics**: decisive metrics first, secondary metrics second
-- **Causal link / core change**: which accepted mechanism or failure is targeted
+- **Principle / causal link / RMC / obligation / core change**: which accepted
+  binding is targeted
 - **Predicted mechanism or failure-phenomenon change**: what should change, in which direction
 - **Mechanism observation**: measurement, diagnostic, controlled comparison, or falsifier
 - **Performance evaluation**: final outcome metric and comparison that establishes utility
@@ -209,9 +221,18 @@ Use this structure:
 ## Formal Upstream Handoff (formal only)
 **Run ID**: [controller run ID]
 **Workflow hash**: [controller workflow SHA-256]
+**Validation handoff hash**: [controller handoff SHA-256]
 | Accepted artifact | SHA-256 | Producer phase |
 |-------------------|---------|----------------|
 | ...               | ...     | ...            |
+
+### Validation Obligations
+- Selected Principle ID/version and intervention:
+- Causal-chain / RMC / Capability / Design Obligation IDs:
+- Core Method changes and predicted mechanism changes:
+- Final Scientific Delta Claim:
+- Claim-validation obligations:
+- Failure conditions and applicability boundaries:
 
 ## Claim Map
 | Claim | Why It Matters | Minimum Convincing Evidence | Linked Blocks |
@@ -219,9 +240,9 @@ Use this structure:
 | C1    | ...             | ...                         | B1, B2        |
 
 ## Mechanism Validation Map
-| Core change / causal-chain ID | Problem mechanism or failure addressed | Predicted observable change | Mechanism test / metric | Final performance evaluation | Needed control? |
-|-------------------------------|-----------------------------------------|-----------------------------|-------------------------|------------------------------|-----------------|
-| M1 / CC-1                     | ...                                     | ...                         | ...                     | ...                          | yes / no        |
+| Principle / causal-chain / RMC / obligation / core change | Problem mechanism or failure addressed | Predicted observable change | Discriminating evidence | Performance consequence | Boundary / falsifier |
+|-----------------------------------------------------------|-----------------------------------------|-----------------------------|-------------------------|-------------------------|----------------------|
+| P1 / CC-1 / RMC-1 / OBL-1 / M1                            | ...                                     | ...                         | ...                     | ...                     | ...                  |
 
 ## Paper Storyline
 - Main paper must prove:
@@ -236,7 +257,7 @@ Use this structure:
 - Dataset / split / task:
 - Compared systems:
 - Metrics:
-- Causal link / core change:
+- Principle / causal link / RMC / obligation / core change:
 - Predicted mechanism or failure-phenomenon change:
 - Mechanism observation:
 - Performance evaluation:
@@ -270,6 +291,8 @@ Use this structure:
 - [ ] Simplicity is defended
 - [ ] Frontier contribution is justified or explicitly not claimed
 - [ ] Nice-to-have runs are separated from must-run runs
+- [ ] Every Selected Principle causal chain, RMC, and Design Obligation has a
+      discriminating mechanism-closure path and performance consequence
 ```
 
 #### Step 5.2: Write `refine-logs/EXPERIMENT_TRACKER.md`
@@ -331,6 +354,9 @@ Tracker file: refine-logs/EXPERIMENT_TRACKER.md
 - **Separate must-run from nice-to-have.** Do not let appendix ideas delay the core paper evidence.
 - **Reuse proposal constraints.** Do not invent unrealistic budgets or data assumptions.
 - **Do not fabricate results.** Plan evidence; do not claim evidence.
+- **Do not establish the delta in planning.** `Final Scientific Delta Claim`
+  remains a validation target; `Established Scientific Delta` exists only
+  after a Controller-accepted `VALIDATED` result.
 
 ## Composing with Other Skills
 

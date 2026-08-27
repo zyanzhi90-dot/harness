@@ -13,9 +13,21 @@
 
 **Run ID**: [Controller run ID]
 **Workflow hash**: [workflow SHA-256]
+**Validation handoff hash**: [handoff SHA-256]
 | 已验收 artifact | SHA-256 | 产生阶段 |
 |----------------|---------|----------|
 | [path] | [hash] | [phase] |
+
+### Validation obligations
+
+- **Selected Principle ID/version 与 intervention**: [...]
+- **Causal-chain IDs**: [...]
+- **Required Mechanism Change IDs**: [...]
+- **Required Capability / Design Obligation IDs**: [...]
+- **核心 Method 改动**: [...]
+- **Final Scientific Delta Claim**: [待验证目标，不是已建立事实]
+- **Claim-validation obligations**: [...]
+- **失败条件 / 适用边界**: [...]
 
 ## Claim 映射
 
@@ -26,9 +38,9 @@
 
 ## 机制验证映射
 
-| 核心改动 / 因果链 ID | 要解决的问题机制或失败现象 | 预期可观测变化 | 机制实验 / 指标 | 最终性能评价 | 是否需要对照？ |
-|---------------------|-----------------------------|----------------|---------------|--------------|----------------|
-| M1 / CC-1 | [该改动应解决什么] | [应出现什么变化] | [测量或受控实验] | [主要结果指标] | [是 / 否；原因] |
+| Principle / 因果链 / RMC / obligation / 核心改动 | 要解决的问题机制或失败现象 | 预期可观测变化 | 判别性 Evidence | 性能后果 | 边界 / falsifier |
+|--------------------------------------------------|-----------------------------|----------------|----------------|----------|------------------|
+| P1 / CC-1 / RMC-1 / OBL-1 / M1 | [该改动应解决什么] | [应出现什么变化] | [测量或受控实验] | [主要结果后果] | [失败条件 / 边界] |
 
 ## 实验块
 
@@ -37,7 +49,7 @@
 - **数据集 / 划分 / 任务**: [如：ImageNet val]
 - **对比系统**: [你的方法 vs. 基线 A vs. 基线 B]
 - **评估指标**: [主要：准确率/PPL。次要：吞吐量]
-- **因果链 / 核心改动**: [因果链 ID 与方法改动]
+- **Principle / 因果链 / RMC / obligation / 核心改动**: [绑定 ID 与 Method 改动]
 - **预期机制或失败现象变化**: [预期方向/模式]
 - **机制观测**: [测量、诊断或受控比较]
 - **性能评价**: [最终指标与基线比较]
@@ -74,3 +86,6 @@
 ## 风险
 
 - **风险**: [可能出什么问题] → **缓解措施**: [如何应对]
+
+> 本计划不得写 `Established Scientific Delta`；只有 Controller 正式接受
+> `VALIDATED`，并闭合机制 Evidence 与性能后果后，才允许使用该状态。

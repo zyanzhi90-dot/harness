@@ -1,43 +1,100 @@
-# Method Proposal: [Route / Proposal Name]
+# Method Proposal: [Proposal Name]
 
-- **Proposal status**: [route draft / refining / final]
-- **Problem ID**: [copy from the active accepted problem version]
-- **Problem version**: [copy from the active accepted problem version]
-- **Problem-contract SHA-256**: [copy from the Controller registry]
-- **Problem-evidence-capsule SHA-256**: [copy from the Controller registry]
-- **Root-cause analysis ID**: [copy from `ROOT_CAUSE_ANALYSIS.json`]
-- **Root-cause analysis SHA-256**: [copy from the Controller registry]
-- **Selected route ID**: [copy from `SELECTED_ROUTE.yaml`]
-- **Design-obligation set ID**: [copy from `SELECTED_ROUTE.yaml`]
-- **Causal-chain IDs**: [comma-separated IDs from the selected route]
-- **MUST design-obligation IDs**: [all selected-route MUST IDs]
-- **Design-obligation IDs**: [all MUST IDs plus retained SHOULD IDs]
-- **SHOULD obligation dispositions**: [ID=retained, ID=waived:reason, or ID=superseded:reason; use `none` if there are no SHOULD obligations]
+- **Proposal status**: [refining / final]
+- **Problem ID**: [active accepted problem ID]
+- **Problem version**: [active accepted problem version]
+- **Problem-contract SHA-256**: [Controller-registered hash]
+- **Problem-evidence-capsule SHA-256**: [Controller-registered hash]
+- **Root-cause analysis ID**: [accepted analysis ID]
+- **Root-cause analysis SHA-256**: [Controller-registered hash]
 
-> This is a method artifact, separate from `RESEARCH_CONTRACT.md`. It may be
-> revised during route design and refinement, but it cannot redefine the
-> accepted problem, diagnosis-derived obligation set, or obligation priority.
-> A material mismatch must stop the method phase and use the Controller's
-> existing method-design or upstream root-cause/problem revision route.
+> This is a post-convergence Method artifact. It adapts the active
+> Controller-materialized Selected Principle and must not redefine the accepted
+> Problem, RCA, Principle version, or their bindings. A test-only concrete
+> realization from Principle evaluation is not a Method commitment.
 
-## Scientific Mainline
+## Selected Principle binding
 
-- **Critical contradiction**: [...]
-- **Competing explanations / selected explanation**: [...]
-- **Claim type / falsifiable hypothesis / decisive falsifier**: [...]
-- **Intended scientific delta / operationalization**: [...]
+- **Selected Principle ID**: [exact `SELECTED_PRINCIPLE.yaml` value]
+- **Selected Principle version**: [exact value]
+- **Selected Principle statement**: [algorithm-independent intervention]
+- **Causal-chain IDs**: [all bound IDs]
+- **Required Mechanism Change IDs**: [all bound IDs]
+- **Required Capability IDs**: [all bound IDs]
+- **Design Obligation IDs**: [all bound IDs]
+- **Evidence closure**: [accepted convergence Evidence]
+- **Activation conditions**: [...]
+- **Remaining uncertainty**: [...]
 
-## Design Obligations and Route
+## Target-domain adaptation
 
-Record causal-chain-derived capabilities and the reason current methods fail;
-then the minimal sufficient dominant solution, its dominant-only closure,
-residual MUST gaps, and only the supporting mechanisms necessary to close those
-gaps (mechanism match, activation condition, integration interface, and
-removal-failure prediction). Transfer/combination is a search strategy, not a
-default outcome.
+Map the selected intervention to the target entities, relations, states or
+information structures, operating conditions, and every bound RMC/Capability/
+Obligation. Distinguish Evidence, inference, and proposed adaptation.
 
-## Scientific Closure and Claim Validation
+## Minimal faithful realization
 
-Record causal-chain links, expected boundaries, novelty evidence, and minimum
-claim-validation logic. Follow `method-design-contract.md` for the full
-required structure; this template does not create an experiment plan.
+Specify the smallest concrete realization that faithfully instantiates the
+Selected Principle. Identify reused implementation machinery separately from
+core Method changes. Do not inherit a pre-convergence test realization without
+independent post-convergence justification.
+
+## Principle-only closure attempt
+
+For every bound causal chain, RMC, Capability, Obligation, activation condition,
+failure condition, and boundary, record the selected intervention, concrete
+realization, predicted mechanism change, and `CLOSED` or `RESIDUAL_GAP` status.
+
+## Residual mechanism and adaptation gaps
+
+Give each real residual gap a stable ID, failed closure link, target condition,
+consequence, and acceptance condition. Use `none` when Principle-only closure is
+complete; do not invent gaps to justify composition.
+
+## Minimal necessary composition
+
+For each retained support, bind residual gap IDs, mechanism, activation
+conditions, actual integration interface, assumption compatibility, and the
+removal/counterfactual failure prediction. Use `none` when no support is needed.
+
+## Core method changes
+
+List the concrete changes that implement the Selected Principle or close a
+declared residual gap. For each, identify its binding IDs and distinguish core
+scientific change from ordinary implementation prerequisites.
+
+## Predicted mechanism changes
+
+For each causal chain/RMC/core change, state the predicted observable mechanism
+or failure-pattern change, activation conditions, discriminating observation,
+and expected performance consequence.
+
+## Failure conditions and applicability boundaries
+
+Carry forward the Selected Principle's failure conditions and boundaries, then
+state any target-adaptation-specific limits. Do not broaden scope beyond current
+Evidence.
+
+## Final Scientific Delta Claim
+
+State the bounded Claim that Full Validation will test. It is not an established
+fact. Identify its new mechanism, representation, boundary, or important
+capability and distinguish it from concrete embodiment novelty.
+
+## Claim-validation obligations
+
+For every Claim element record: claim-element ID; causal-chain, RMC, Capability,
+Obligation, and core-change IDs; predicted mechanism change; discriminating
+Evidence required; performance consequence required; falsifying pattern;
+failure conditions; and applicability boundary.
+
+Full causal closure requires:
+
+```text
+predicted mechanism change -> observed mechanism change
+  -> discriminating evidence -> performance consequence
+```
+
+Performance improvement alone cannot establish the Final Scientific Delta
+Claim. `Established Scientific Delta` is reserved for a Controller-accepted
+`VALIDATED` result.

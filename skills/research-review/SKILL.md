@@ -48,13 +48,14 @@ equally to both backends.
 
 ## Context: $ARGUMENTS
 
-Parse `stage: problem|method|project` from the arguments. Default to `project`
+Parse `stage: problem|principle|method|project` from the arguments. Default to `project`
 for an existing complete work. When an orchestrator passes an explicit stage,
 review only that stage's decision; do not ask a method to compensate for a weak
-problem or reject a certified problem merely because one method route is weak.
+problem, collapse Principle truth into Method novelty, or reject a certified
+problem merely because one Candidate Principle or Method adaptation is weak.
 Use the stage contracts in
 [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md).
-For `stage: method`, also load
+For `stage: principle` or `stage: method`, also load
 [`method-design-contract.md`](../shared-references/method-design-contract.md).
 
 ## Prerequisites
@@ -73,11 +74,15 @@ Before calling the external reviewer, compile a comprehensive briefing:
 2. Read any memory/notes files for key findings and experiment history
 3. For `stage: problem`, include the Evidence Map, exact research question,
    source class, scope, value if yes/no, decisive falsifier, and P3 gate record.
-4. For `stage: method`, include the Certified Problem Contract, scientific
-   mainline, obligations, dominant method, backbone, innovation carrier,
-   supporting-mechanism ledger, integration interfaces, scientific closure,
-   and separate scientific-delta/technical-route novelty results.
-5. For `stage: project`, identify core claims, methodology, key results, and
+4. For `stage: principle`, include the accepted RCA, RMC/Capability/Obligation
+   bindings, Principle Search record, Candidate versions, fatal assumptions,
+   Provisional Scientific Delta, multi-target predictions/tests, current
+   Evidence Context or Evidence Update when applicable, and return feedback.
+5. For `stage: method`, include the Controller-materialized Selected Principle,
+   target-domain adaptation, minimal faithful realization, Principle-only
+   closure, residual gaps, minimal necessary composition, Final Scientific
+   Delta Claim, boundaries, and claim-validation obligations.
+6. For `stage: project`, identify core claims, methodology, key results, and
    known weaknesses as before.
 
 ### Step 2: Initial Review (Round 1)
@@ -103,13 +108,17 @@ mcp__codex__codex:
     For stage=problem, score Reality, Importance, Unresolvedness, Precision,
     Falsifiability, and Answerability; return CERTIFIED / HOLD / REJECT /
     BLOCKED plus the decisive missing evidence.
-    For stage=method, judge hypothesis quality, dominant-method fit, separation
-    of reused backbone and innovation carrier, dominant-only closure, and each
-    declared residual MUST gap. Verify that the Field Map and same-field options
-    were assessed before any cross-field structural search, and that every
-    support has an actual integration interface, capability-specific removal
-    failure, targeted evidence, single causal closure, and scientific delta
-    beyond engineering integration. Combination is not the innovation verdict.
+     For stage=principle, judge the RCA-to-RMC-to-Capability/Obligation-to-
+     Principle closure, algorithm independence, four-dimension search,
+     cross-domain structural mappings, premature closure, fatal assumptions,
+     multi-target discriminating predictions/tests, Evidence currentness, and
+     whether an Evidence Update changes scientific understanding rather than
+     only performance ranking. Do not interpret NO_RESULT as support/rejection.
+     For stage=method, verify fidelity to the Controller-materialized Selected
+     Principle, target adaptation, minimal faithful realization,
+     Principle-only closure, named residual gaps, minimal necessary composition,
+     bounded Final Scientific Delta Claim, and mechanism-linked validation
+     obligations. Do not call the Claim established before VALIDATED.
     For stage=project, identify logical gaps, missing evidence, narrative
     weaknesses, and top-venue sufficiency as usual.
     Please be brutally honest.
@@ -160,8 +169,10 @@ Key follow-up patterns:
 Stop iterating when:
 - `stage: problem`: a stable P3 verdict and the evidence required to change it
   are explicit.
-- `stage: method`: the obligations, route verdict, weak assumptions, and
-  decisive validation are explicit.
+- `stage: principle`: Candidate status, unresolved assumptions, Evidence
+  interpretation, and the next discriminating decision are explicit.
+- `stage: method`: Selected-Principle fidelity, residual gaps, concrete Method
+  verdict, Claim boundaries, and decisive validation obligations are explicit.
 - `stage: project`: core claims, evidence requirements, experiment plan, and
   narrative structure are settled.
 

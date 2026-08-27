@@ -11,8 +11,10 @@ untrusted text, and [`review-tracing.md`](review-tracing.md) for provenance.
 Run only after a candidate packet has been mechanically consolidated. It may
 record proposed and eliminated candidates for later retrieval, but it must
 never record a candidate as human accepted unless the explicit human approval
-artifact already exists. Method routes are written only after the accepted
-problem contract and are not mixed with provisional problem ideas.
+artifact already exists. Candidate Principles and their test/evaluation records
+remain in the canonical method artifacts and ledgers; Wiki cards must not select
+a Principle, store test lifecycle, or substitute for Controller-materialized
+`SELECTED_PRINCIPLE.yaml`.
 
 If `research-wiki/` is absent, skip this module. If the helper is absent, use
 the caller-skill `warn + skip` policy from the resolver. Wiki failure must not
@@ -54,4 +56,3 @@ Wiki presence is memory, not acceptance. `stage: proposed` means “candidate
 exists”; `outcome: pending` means “no final decision recorded”. A downstream
 module must read `RESEARCH_CONTRACT.md` and the state ledger for acceptance,
 never infer it from a Wiki card.
-

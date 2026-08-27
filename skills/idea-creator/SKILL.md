@@ -1,6 +1,6 @@
 ---
 name: idea-creator
-description: "Run one independent problem-discovery, root-cause diagnosis, or method-design module. Use mode: problem to certify an evidence-grounded problem; mode: diagnosis to execute 1a-2b and obtain an independent root-cause verdict; mode: method only after DIAGNOSIS_READY."
+description: "Run one independent problem-discovery, root-cause diagnosis, or Principle formation/evaluation module. Use mode: problem to certify an evidence-grounded problem; mode: diagnosis to execute 1a-2b and obtain an independent root-cause verdict; mode: method only after DIAGNOSIS_READY."
 argument-hint: "mode: problem|diagnosis|method; direction or handoff path"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
@@ -77,7 +77,7 @@ different inputs, outputs, and stopping conditions:
 |---|---|---|---|
 | `problem` | Field Evidence Map and source records | `PROBLEM_CANDIDATES.*`, `PROBLEM_QUALITY_VERDICTS.jsonl`, `PROBLEM_NOVELTY_VERDICTS.jsonl`, then the separate `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` after user selection and before the Controller records human acceptance | human problem selection |
 | `diagnosis` | accepted `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` | `ROOT_CAUSE_ANALYSIS.json`, faithful `.md` view, independent `ROOT_CAUSE_VERDICT.json` | `DIAGNOSIS_READY` or return path |
-| `method` | accepted problem plus validated root-cause analysis/verdict | `METHOD_ROUTES.*`, `SELECTED_ROUTE.yaml` only after selection | human route selection |
+| `method` | accepted problem plus validated root-cause analysis/verdict; for evaluation, the Controller-formed Evidence Context | `METHOD_DESIGN_PACKET.json`, deterministic `METHOD_DESIGN.md`, or `PRINCIPLE_EVALUATION.json` according to the current phase; formal reviewer verdict artifacts | Principle/Test Human Gate or convergence return/acceptance |
 
 `IDEA_REPORT.md` is a final human-facing report only. It is never the machine
 handoff between these modes.
@@ -206,8 +206,8 @@ returning only to `problem_generation`.
 
 ### Problem-mode forbidden actions
 
-- Do not write a scientific method, method route, method novelty verdict, or
-  method review.
+- Do not write a Candidate Principle, Principle test packet, scientific Method,
+  method novelty verdict, or method review.
 - Do not turn a search gap into a novelty claim.
 - Do not treat an LLM jury score as acceptance.
 - Do not pass the full evidence registry or generator transcript downstream.
@@ -220,11 +220,12 @@ Require a human-accepted `RESEARCH_CONTRACT.md` and its unchanged
 `PROBLEM_EVIDENCE_CAPSULE.md`. Record both SHA-256 values, then follow
 [`root-cause-analysis-contract.md`](../shared-references/root-cause-analysis-contract.md):
 
-If this is a Method-triggered reopen, inspect the matching existing Controller
-return record (`method_design` → `root_cause_analysis`) before analysis. Use
-its scientific reason and any trigger Evidence IDs to reassess the diagnosis;
-formally re-adopt a cited method-stage Evidence Card through
-`readopt-evidence`, rather than copying or relabeling it.
+If this is a Method- or validation-triggered reopen, inspect the latest matching
+Controller return record directed to `root_cause_analysis` before analysis.
+Consume its decision, scientific reason, return guidance, validation-result ID,
+and linked Evidence/result paths as applicable. Formally re-adopt a cited
+phase-scoped Evidence Card through `readopt-evidence`, rather than copying or
+relabeling it.
 
 1. 1a collects and describes phenomenon evidence that directly represents the
    accepted problem/failure, from existing experiments, literature, datasets,
@@ -247,7 +248,7 @@ name, search, rank, or combine methods in diagnosis mode.
 
 ---
 
-## Mode: `method` — initial route design after diagnosis acceptance
+## Mode: `method` — Principle formation or Evidence evaluation
 
 ### M0. Preconditions
 
@@ -268,60 +269,79 @@ Also require `ROOT_CAUSE_ANALYSIS.json` and `ROOT_CAUSE_VERDICT.json` with:
 
 If any precondition is absent, return `BLOCKED_PRECONDITION` and do nothing.
 
-### M1. Scientific closure before technique search
+Inspect the Controller's current phase and execute exactly one of the following
+branches. Do not create a private lifecycle inside the skill.
 
-Using the accepted problem and validated primary causal chains, derive the
-falsifiable scientific mainline, decisive falsifier, claim type, and design
-obligations. Preserve each chain's competing explanations and discriminating
-evidence; do not invent a replacement diagnosis to justify a preferred
-technique. The method is a consequence of the problem contract, not a
-free-standing list of fashionable components. If method reasoning reveals that
-the accepted diagnosis itself needs re-analysis, first finish any active
-method literature session, then invoke the Controller's unique
-`reopen-root-cause` action with a specific reason and any triggering formal
-method Evidence IDs. Do not silently rewrite the diagnosis or continue route
-design after that request.
+### M1. `method_design` — form the Principle/Test packet
 
-### M2. Necessary completion decision
+Follow `method-design-contract.md` in order:
 
-Start the running `method_design` phase from the Controller-accepted
-`ACTIVE_FIELD_MAP.md` and its Evidence Registry. First derive one canonical
-Design Obligation set from the accepted primary chains and their intervention
-targets. If current knowledge cannot support a credible dominant mechanism,
-use `DOMINANT_SOLUTION_SEARCH` through the existing incremental gateway. Its
-Query Plan is the formal pre-route binding: every query names current
-obligation IDs and their derived chains, without requiring a dominant solution,
-closure, or residual gap. Search same-field mechanisms first, then causally
-isomorphic mechanisms, and cross-field mechanisms only when necessary.
+1. consume the accepted RCA causal chains, all Controller-associated
+   cross-cycle Principle/Test history, and the latest return guidance, Human
+   feedback, or validation feedback;
+2. derive machine-resolvable Required Mechanism Changes, Required Capabilities,
+   and Design Obligations before naming any concrete technique;
+3. execute Principle Search across first principles, representation
+   transformation, same-field mechanisms, and cross-domain structural
+   isomorphisms for every RMC;
+4. form algorithm-independent Candidate Principles with lineage, bindings,
+   activation/failure conditions, fatal assumptions, target-domain
+   operationalization, Provisional Scientific Delta, and discriminating
+   predictions;
+5. define multi-target discriminating tests and the cheapest informative atomic
+   execution set with per-test and total cost.
 
-After that evidence is sufficient to choose a dominant carrier, derive the
-minimal dominant solution and its dominant-only closure. Only a specific
-residual `MUST` obligation may use `RESIDUAL_MUST_GAP_SEARCH`; every query then
-binds a non-empty decision target and declared residual `MUST` IDs. Do not
-repeat mapped knowledge, use unregistered web evidence, or add support except
-to close that recorded residual gap.
+Use only Controller-current Evidence. Cross-cycle history must be consumed, but
+its Evidence is not current unless it is accepted landscape Evidence, current
+cycle Evidence, formally re-adopted in the current RMC context, or returned by
+the Controller from Full Validation.
 
-### M3. Route synthesis and preliminary risk
+If new literature is necessary, use only `PRINCIPLE_SEARCH` through the
+existing incremental gateway. Its Query Plan binds the full RMC/Capability/
+Obligation/causal-chain context and covers all four search dimensions for every
+RMC. Cross-domain search may validly conclude that no credible isomorphism was
+found; do not force a transferred Candidate.
 
-Produce at most three routes. Each route must specify dominant method,
-backbone, innovation carrier, mechanism chain, integration, expected failure
-mode, minimum validation logic, feasibility, and separate scientific-delta vs
-technical-route novelty hypotheses. `/novelty-check "mode: method | preliminary
-route"` may be used as a risk screen; it is not the final method novelty gate.
+Write `METHOD_DESIGN_PACKET.json` and its exact deterministic
+`METHOD_DESIGN.md` view. The packet contains no lifecycle status. Finish all
+Evidence acquisition/re-adoption, then run `refresh-review-request` so the
+formal review binds the current inputs and final packet. The independent
+reviewer writes `METHOD_DESIGN_REVIEW.json` and returns only
+`PRINCIPLE_PACKET_READY`, `REVISE_PRINCIPLES`, or `RCA_CONFLICT`.
 
-Write `METHOD_ROUTES.jsonl` and `METHOD_ROUTES.md`, each bound in Controller
-state to the current problem ID/version/contract hash. The latter is a compact
-decision packet, not the final proposal.
+At `principle_test_human_approval`, present the complete recommended execution
+set and total cost. Human `approve` approves the whole set and does not select
+a Principle. Any test-set or cost change uses `request_revision` with concrete
+feedback and returns to `method_design`.
 
-### M4. Human route selection
+### M2. `principle_evaluation` — interpret the approved Evidence
 
-Present ranked routes with evidence, unresolved risks, and the cheapest
-discriminating test. Stop for explicit selection or revision. On selection,
-write `SELECTED_ROUTE.yaml` with route ID, problem ID/version, problem-contract
-hash, selected dominant method, innovation carrier, unresolved risks, and user
-decision. A requested revision uses the live `route_selection` Human Gate with
-decision `request_revision`; the Controller returns only to `method_design`.
-Do not call `/research-refine` until that file exists.
+Do not start this phase until the Controller exposes `start_phase`. The pending
+window belongs to `/method-test`, which executes only the Controller-approved
+handoff and submits terminal results. Main must not create or modify
+`PRINCIPLE_EVIDENCE_CONTEXT.json`.
+
+When the phase starts, read the current Evidence Context, accepted
+Principle/Test packet, all Controller-associated cross-cycle history, and the
+latest return feedback. For every active Candidate version, assess
+operationalization fidelity, test validity/discriminativeness, activation
+conditions, and the observations relative to every competing prediction.
+Update Principles, assumptions, boundaries, or the RCA interpretation; do not
+reduce Evidence Update to performance ranking. `NO_RESULT` can expose an
+operationalization or feasibility problem but cannot support or reject a
+Principle.
+
+Write `PRINCIPLE_EVALUATION.json`, updating every active Candidate and citing
+only Evidence current in the supplied Context. After the final evaluation is
+written, run `refresh-review-request` and dispatch the declared independent
+reviewer. Its formal outcomes are `PRINCIPLE_CONVERGED`,
+`REVISE_EVALUATION`, `MORE_EVIDENCE`, or `RCA_CONFLICT`.
+
+`REVISE_EVALUATION` preserves the cycle and terminal results and revises only
+interpretation. `MORE_EVIDENCE` creates a new design/test cycle and repeats the
+Human test Gate. On convergence, the verdict names one Principle ID/version;
+only the Controller materializes `SELECTED_PRINCIPLE.yaml`. Main never writes
+that artifact.
 
 ### Method-mode forbidden actions
 
@@ -329,7 +349,10 @@ Do not call `/research-refine` until that file exists.
   explicit `arisctl revise-problem`, which creates a draft next version and
   restarts the existing problem quality, novelty, and human-acceptance sequence.
 - Do not run the final method novelty gate before refinement.
-- Do not plan or execute experiments; hand validation obligations downstream.
+- Do not execute a test outside the approved `/method-test` window or treat a
+  test-only realization as a Candidate Method or final implementation.
+- Do not perform Method adaptation, residual-gap composition, or final Claim
+  construction before accepted Principle convergence.
 - Do not call `research-review` as a mandatory core stage. It remains an
   optional external challenge after the relevant artifact exists.
 
@@ -352,9 +375,9 @@ python3 "$WIKI_SCRIPT" upsert_idea research-wiki/ --slug <stable-id> \
   --title <title> --stage proposed --outcome pending --thesis <problem-thesis>
 ```
 
-The old single-report interface is retained for compatibility: after the human
-accepts a route, the orchestrator may compose `IDEA_REPORT.md` from the compact
-handoff artifacts. It must not use that report as a prompt-sized state store.
+The final report is composed from the compact accepted artifacts for the final
+Human Method checkpoint. It must not use `IDEA_REPORT.md` as a prompt-sized
+state store or as a scientific handoff.
 Follow [`idea-output-composition.md`](../shared-references/idea-output-composition.md)
 for explicit standalone/composed mode, versioning, compact output, and render
 timing.
@@ -365,25 +388,12 @@ timing.
 /research-lit -> /idea-creator "mode: problem" -> /novelty-check "mode: problem"
                  -> human acceptance
                  -> /idea-creator "mode: diagnosis" -> root-cause Gate
-                 -> /idea-creator "mode: method" -> human route selection
+                 -> /idea-creator "mode: method" -> Principle packet review
+                 -> human test approval -> /method-test
+                 -> /idea-creator "mode: method" -> Principle convergence
                  -> /research-refine -> /novelty-check "mode: method-final"
 ```
 
-`/research-review` is optional and may challenge a specific problem or route;
+`/research-review` is optional and may challenge a specific problem, Principle
+packet/evaluation, or final Method;
 it is not a duplicate acceptance gate in the default pipeline.
-
-## Compatibility fields retained in the handoff
-
-The final human-facing **Problem-First Ranked Idea Report** contains
-**Certified Problems and Derived Routes**. Its route entries retain the fields
-**Design obligations**, **Scientific mainline**, **dominant-only closure and
-residual MUST gaps**, **necessary supporting-mechanism ledger**,
-**Scientific-delta novelty**, and **minimal sufficient dominant solution**. Problem juries and generators run in fresh contexts; **do
-not reuse** a generator context for the jury. A problem is
-`CERTIFIED/provisional` until explicit human confirmation creates
-`CERTIFIED/accepted`. The route may then be handed to `/experiment-plan` only
-as an optional downstream action.
-
-Transfer/combination may appear only as the necessary support for a recorded
-residual MUST gap; assess the Field Map and same-field options before any
-cross-field search. It is neither an innovation verdict nor a default route.

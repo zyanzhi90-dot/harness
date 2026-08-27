@@ -1,6 +1,6 @@
 ---
 name: idea-discovery
-description: "Orchestrate the problem-first research workflow from a bounded field map to a human-selected problem, initial method route, refinement, and final method decision. Each scientific module runs independently with explicit handoff artifacts."
+description: "Orchestrate the problem-first research workflow from a bounded field map through accepted RCA, Principle formation/testing/convergence, Method adaptation, and final method decision. Each scientific module runs independently with explicit handoff artifacts."
 argument-hint: "[research-direction]"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
@@ -25,8 +25,12 @@ research-lit
   -> idea-creator(mode: diagnosis)
   -> independent root-cause gate
   -> idea-creator(mode: method)
-  -> human route selection
-  -> research-refine
+  -> independent Principle packet review
+  -> human approval of the atomic test execution set
+  -> method-test
+  -> idea-creator(mode: method) Principle Evidence Update
+  -> independent Principle convergence review
+  -> research-refine from the Controller-materialized Selected Principle
   -> novelty-check(mode: method-final)
   -> human final method acceptance
   -> METHOD_CONFIRMED_AWAITING_USER_VALIDATION
@@ -49,8 +53,12 @@ sequence before method work may resume.
   `acceptance_status: human_accepted`.
 - No method design before `ROOT_CAUSE_VERDICT.json` is validated as
   `DIAGNOSIS_READY` against the current problem, evidence, and analysis hashes.
+- No approved test execution before the Principle/Test Human Gate, and no
+  Principle interpretation inside `/method-test`.
+- No Method adaptation or final implementation commitment before accepted
+  Principle convergence and Controller materialization of
+  `SELECTED_PRINCIPLE.yaml`.
 - No final method novelty verdict before `refine-logs/FINAL_PROPOSAL.md`.
-- No experiment planning or execution in this scope.
 - Final method acceptance does not start validation. It creates a blocked
   validation entry that only the user may initiate after understanding and
   confirming the method.
@@ -220,7 +228,7 @@ generation, quality, novelty, and human-acceptance sequence. The Controller
 executes non-accepting paths via `return-phase`; the Agent cannot select a
 different target.
 
-## Phase 4 — Method module and route selection
+## Phase 4 — Principle formation, test approval, and convergence
 
 Start a new module execution with the accepted contract:
 
@@ -228,15 +236,51 @@ Start a new module execution with the accepted contract:
 /idea-creator "mode: method | contract: idea-stage/RESEARCH_CONTRACT.md | evidence: idea-stage/PROBLEM_EVIDENCE_CAPSULE.md | diagnosis: idea-stage/ROOT_CAUSE_ANALYSIS.json | verdict: idea-stage/ROOT_CAUSE_VERDICT.json"
 ```
 
-The module derives the scientific mainline and obligations, chooses a dominant
-method, searches for precise completion mechanisms, and produces at most three
-initial routes. Preliminary method novelty is a risk screen only. Present the
-routes and persist the human route choice in `idea-stage/SELECTED_ROUTE.yaml`.
+The module derives Required Mechanism Changes, Required Capabilities, and Design
+Obligations from every accepted primary causal chain. It then executes all four
+Principle Search dimensions, forms algorithm-independent Candidate Principles,
+states fatal assumptions and Provisional Scientific Delta, and builds
+multi-target discriminating tests plus one atomic recommended execution set.
+It consumes all Controller-associated cross-cycle Principle/Test history and
+the latest directed return feedback without treating historical Evidence as
+automatically current.
+
+Require `METHOD_DESIGN_PACKET.json`, its deterministic `METHOD_DESIGN.md` view,
+and the formal `METHOD_DESIGN_REVIEW.json`. All legal Evidence acquisition or
+re-adoption must finish before `refresh-review-request` binds the final packet
+for independent review. `PRINCIPLE_PACKET_READY` advances to the Human test
+Gate; `REVISE_PRINCIPLES` returns to this phase; `RCA_CONFLICT` returns linked
+Evidence and guidance to RCA.
+
+At `principle_test_human_approval`, present the full recommended execution set
+and total cost. Approval is atomic and does not select a Principle. A change to
+tests or cost uses `request_revision -> method_design`.
+
+After approval, while `principle_evaluation` is pending, invoke `/method-test`.
+It reads `method-test-handoff`, runs only approved tests through existing
+execution capabilities or creates a physical-human handoff, and submits each
+terminal `RESULT_AVAILABLE` or `NO_RESULT` record. It performs no scientific
+interpretation. The Controller forms `PRINCIPLE_EVIDENCE_CONTEXT.json` only
+after every approved test is terminal.
+
+Then invoke `idea-creator(mode: method)` again for `principle_evaluation`. Main
+must compare observations with every competing prediction, assess
+operationalization fidelity/test validity/activation conditions, and update
+Principles, assumptions, boundaries, or RCA understanding—not only performance
+rankings. Refresh the review request against the final
+`PRINCIPLE_EVALUATION.json`. `PRINCIPLE_CONVERGED` names one Principle
+ID/version and causes the Controller to materialize `SELECTED_PRINCIPLE.yaml`;
+`REVISE_EVALUATION` preserves the same cycle/results, `MORE_EVIDENCE` opens a
+new design/test cycle and repeats Human approval, and `RCA_CONFLICT` returns to
+RCA.
 
 ## Phase 5 — Refinement and final gates
 
-Invoke `/research-refine` only with the accepted problem contract and selected
-route. It owns iterative refinement; the Controller-issued
+Invoke `/research-refine` only with the accepted problem/RCA handoff and active
+Controller-materialized `SELECTED_PRINCIPLE.yaml`. It performs target-domain
+adaptation, a minimal faithful realization, Principle-only closure, and only
+then minimal composition for demonstrated residual mechanism/adaptation gaps.
+It owns iterative refinement; the Controller-issued
 `independent_method_reviewer` performs the one fresh final independent Gate in
 a new context. Its score is a progress signal, never a readiness rule. Require:
 
@@ -252,14 +296,14 @@ Then invoke the final method novelty gate against the final proposal:
 ```
 
 Only after this gate present the final human decision. Compose
-`idea-stage/IDEA_REPORT.md` from the compact artifacts, verdicts, and selected
-route by following
+`idea-stage/IDEA_REPORT.md` from the compact accepted artifacts, Principle
+convergence, Selected Principle, final proposal, and verdicts by following
 [`idea-output-composition.md`](../shared-references/idea-output-composition.md).
 Set the explicit signal `--composed: idea-stage/IDEA_REPORT.md` for this final
 composition step; all earlier module runs remain standalone stage handoffs.
 The report is a readable record, not a hidden state database. If `COMPACT` is
 enabled, emit the short `idea-stage/IDEA_CANDIDATES.md` index only after the
-human problem or route decision. If the user requests an HTML view, invoke
+human problem decision or accepted Principle convergence. If the user requests an HTML view, invoke
 `/render-html` only after the report is complete; rendering is presentation,
 not a scientific gate.
 
@@ -268,7 +312,7 @@ not a scientific gate.
 Start one Controller-managed run from the checked-in workflow spec, for example:
 
 ```text
-python -m arisctl --root . start idea-v2-001 --executor codex-gpt-5.6-sol
+python -m arisctl --root . start idea-v3-001 --executor codex-gpt-5.6-sol
 ```
 
 Use `start-phase -> complete-phase` for execution and `accept-phase` only for
@@ -294,7 +338,8 @@ both generator and final acceptance authority.
 **Direction**: ...
 **Scope status**: SUFFICIENT / PARTIAL / INSUFFICIENT
 **Accepted problem**: link to `RESEARCH_CONTRACT.md`
-**Selected initial route**: link to `SELECTED_ROUTE.yaml`
+**Principle packet and test cycle**: links to `METHOD_DESIGN_PACKET.json` and `PRINCIPLE_EVALUATION.json`
+**Selected Principle**: link to `SELECTED_PRINCIPLE.yaml`
 **Refined proposal**: link to `refine-logs/FINAL_PROPOSAL.md`
 **Problem novelty**: verdict ID + uncertainty
 **Final method novelty**: verdict ID + uncertainty
