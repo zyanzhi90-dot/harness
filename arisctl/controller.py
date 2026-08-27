@@ -41,7 +41,9 @@ from .project_setup import (
 )
 from .validators import (
     ValidationError,
-    validate_design_obligation_set,
+    validate_method_test_result,
+    validate_principle_evidence_context,
+    validate_selected_principle,
     render_field_map,
     sha256_file,
     validate_canonical_registry,
@@ -142,14 +144,13 @@ def _merge_discovery_metadata(
 # This is a Controller-issued validation handoff, not an additional workflow
 # phase. The current canonical workflow ends with method confirmation and
 # deliberately leaves experiment initiation to the user; a downstream skill
-# must nevertheless prove that it is consuming that confirmed route rather
+# must nevertheless prove that it is consuming that confirmed Principle/Method rather
 # than reconstructing one from free text or historical files.
 FORMAL_VALIDATION_HANDOFF_ARTIFACTS = {
     "idea-stage/RESEARCH_CONTRACT.md": ("problem_human_acceptance", "human_accepted"),
     "idea-stage/ROOT_CAUSE_ANALYSIS.json": ("root_cause_analysis", "done"),
     "idea-stage/ROOT_CAUSE_VERDICT.json": ("root_cause_gate", "accepted"),
-    "idea-stage/METHOD_ROUTES.jsonl": ("method_design", "done"),
-    "idea-stage/SELECTED_ROUTE.yaml": ("route_human_selection", "human_accepted"),
+    "idea-stage/SELECTED_PRINCIPLE.yaml": ("principle_evaluation", "accepted"),
     "refine-logs/FINAL_PROPOSAL.md": ("method_refinement", "accepted"),
     "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": (
         "final_method_novelty_gate",
@@ -165,7 +166,7 @@ FORMAL_VALIDATION_HANDOFF_ARTIFACTS = {
 # fixed target so a downstream result cannot choose an arbitrary rollback.
 VALIDATION_RESULT_RETURN_TARGETS = {
     "METHOD_REFINEMENT_REQUIRED": "method_refinement",
-    "METHOD_ROUTE_REJECTED": "method_design",
+    "SELECTED_PRINCIPLE_REJECTED": "method_design",
     "ROOT_CAUSE_REJECTED": "root_cause_analysis",
     "PROBLEM_PREMISE_REJECTED": "problem_generation",
 }
@@ -344,6 +345,7 @@ class ARISController:
                 "active_problem_version": None,
                 "pending_problem_revision": None,
                 "problem_revision_request": None,
+                "method_test_cycle": None,
                 "validation_entry": {
                     "status": "BLOCKED_UNTIL_METHOD_CONFIRMATION",
                     "entry_policy": "human_initiated_only",
@@ -740,12 +742,67 @@ class ARISController:
                 "formal validation handoff final method is not bound to the active accepted problem version"
             )
 
+        selected_path = self.root / str(
+            self.workflow["artifact_manifest"]["selected_principle"]
+        )
+        proposal_path = self.root / str(
+            self.workflow["artifact_manifest"]["final_proposal"]
+        )
+        try:
+            selected = yaml.safe_load(selected_path.read_text(encoding="utf-8"))
+            proposal_text = proposal_path.read_text(encoding="utf-8")
+        except (OSError, yaml.YAMLError) as exc:
+            raise ControllerError("formal validation obligations cannot be recovered") from exc
+        if not isinstance(selected, dict):
+            raise ControllerError("formal validation Selected Principle is invalid")
+        required_sections = list(
+            self.workflow["artifact_contracts"]["final_proposal"]["required_sections"]
+        )
+        section_matches = list(
+            re.finditer(r"(?m)^#{1,6}\s+(.+?)\s*$", proposal_text)
+        )
+        canonical_sections = {title.casefold(): title for title in required_sections}
+        sections: dict[str, str] = {}
+        for index, match in enumerate(section_matches):
+            title = match.group(1).strip()
+            end = (
+                section_matches[index + 1].start()
+                if index + 1 < len(section_matches)
+                else len(proposal_text)
+            )
+            body = proposal_text[match.end():end].strip()
+            canonical_title = canonical_sections.get(title.casefold())
+            if canonical_title is not None:
+                if not body:
+                    raise ControllerError(
+                        f"formal validation proposal section is empty: {title}"
+                    )
+                sections[canonical_title] = body
+        if set(sections) != set(required_sections):
+            raise ControllerError("formal validation proposal sections are incomplete")
+        validation_obligations = {
+            "selected_principle": {
+                key: deepcopy(selected.get(key))
+                for key in (
+                    "principle_id", "principle_version", "principle", "intervention",
+                    "changed_structure", "activation_conditions", "failure_conditions",
+                    "applicability_boundaries",
+                )
+            },
+            "causal_chain_ids": list(selected.get("causal_chain_ids") or []),
+            "mechanism_change_ids": list(selected.get("mechanism_change_ids") or []),
+            "capability_ids": list(selected.get("capability_ids") or []),
+            "obligation_ids": list(selected.get("obligation_ids") or []),
+            "final_proposal_sections": sections,
+        }
+
         handoff = {
             "handoff_type": "FORMAL_CANONICAL_VALIDATION",
             "run_id": self.run_id,
             "workflow_sha256": self.workflow_sha256,
             "problem_version": expected_binding,
             "artifacts": handoff,
+            "validation_obligations": validation_obligations,
         }
         canonical = json.dumps(handoff, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         handoff["handoff_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -864,18 +921,25 @@ class ARISController:
             raise ControllerError("validation result must be a JSON object")
         required = (
             "schema_version",
+            "validation_result_id",
             "run_id",
             "workflow_sha256",
             "handoff_sha256",
             "decision",
             "rationale",
             "evidence_artifacts",
+            "evidence_refs",
+            "findings",
+            "return_guidance",
         )
         missing = [name for name in required if name not in result]
         if missing:
             raise ControllerError("validation result is missing required fields: " + ", ".join(missing))
         if result.get("schema_version") != 1:
             raise ControllerError("validation result schema_version must be 1")
+        validation_result_id = result.get("validation_result_id")
+        if not isinstance(validation_result_id, str) or not validation_result_id.strip():
+            raise ControllerError("validation result validation_result_id must be a non-empty string")
         if result.get("run_id") != self.run_id:
             raise ControllerError("validation result run_id does not match this Controller run")
         if result.get("workflow_sha256") != self.workflow_sha256:
@@ -914,6 +978,7 @@ class ARISController:
             normalized_evidence.append({"path": stored_path, "sha256": digest})
         normalized: dict[str, Any] = {
             "schema_version": 1,
+            "validation_result_id": validation_result_id.strip(),
             "run_id": self.run_id,
             "workflow_sha256": self.workflow_sha256,
             "handoff_sha256": handoff["handoff_sha256"],
@@ -921,42 +986,46 @@ class ARISController:
             "rationale": rationale.strip(),
             "evidence_artifacts": normalized_evidence,
         }
+        evidence_refs = result.get("evidence_refs")
+        if (
+            not isinstance(evidence_refs, list)
+            or not evidence_refs
+            or any(not isinstance(value, str) or not value.strip() for value in evidence_refs)
+            or len(evidence_refs) != len(set(evidence_refs))
+        ):
+            raise ControllerError("validation result evidence_refs must be a non-empty unique string list")
+        findings = result.get("findings")
+        if not isinstance(findings, list) or not findings:
+            raise ControllerError("validation result findings must be a non-empty list")
+        return_guidance = result.get("return_guidance")
+        if decision != "VALIDATED" and not isinstance(return_guidance, dict):
+            raise ControllerError("validation return decisions require structured return_guidance")
+        if decision == "VALIDATED" and return_guidance not in (None, {}):
+            raise ControllerError("VALIDATED return_guidance must be empty")
+        normalized["evidence_refs"] = [value.strip() for value in evidence_refs]
+        normalized["findings"] = deepcopy(findings)
+        normalized["return_guidance"] = deepcopy(return_guidance)
         if decision == "VALIDATED":
             closure = result.get("mechanism_evidence_closure")
             if not isinstance(closure, list) or not closure:
                 raise ControllerError(
                     "VALIDATED requires non-empty mechanism_evidence_closure; performance alone is insufficient"
                 )
-            selected_path = self.root / "idea-stage" / "SELECTED_ROUTE.yaml"
-            routes_path = self.root / "idea-stage" / "METHOD_ROUTES.jsonl"
+            selected_path = self.root / str(
+                self.workflow["artifact_manifest"]["selected_principle"]
+            )
             try:
                 selected = yaml.safe_load(selected_path.read_text(encoding="utf-8"))
-                route_id = selected["route_id"]
-                records = [
-                    json.loads(line)
-                    for line in routes_path.read_text(encoding="utf-8").splitlines()
-                    if line.strip()
-                ]
-                route = next(
-                    record for record in records if record.get("route_id") == route_id
-                )
-                obligation_set = next(
-                    record
-                    for record in records
-                    if record.get("record_type") == "design_obligation_set"
-                    and record.get("design_obligation_set_id")
-                    == route["design_obligation_set_id"]
-                )
-            except (OSError, KeyError, StopIteration, json.JSONDecodeError, yaml.YAMLError) as exc:
-                raise ControllerError("VALIDATED cannot resolve the Controller-accepted selected route") from exc
-            required_chains = set(route.get("causal_chain_ids") or [])
-            required_must = {
-                item.get("obligation_id")
-                for item in obligation_set.get("design_obligations") or []
-                if isinstance(item, dict) and item.get("priority") == "MUST"
-            }
+            except (OSError, yaml.YAMLError) as exc:
+                raise ControllerError("VALIDATED cannot resolve the Controller-accepted Selected Principle") from exc
+            if not isinstance(selected, dict):
+                raise ControllerError("VALIDATED Selected Principle is invalid")
+            required_chains = set(selected.get("causal_chain_ids") or [])
+            required_mechanisms = set(selected.get("mechanism_change_ids") or [])
+            required_obligations = set(selected.get("obligation_ids") or [])
             closure_chains: set[str] = set()
-            closure_must: set[str] = set()
+            closure_mechanisms: set[str] = set()
+            closure_obligations: set[str] = set()
             normalized_closure: list[dict[str, Any]] = []
             evidence_paths = {item["path"] for item in normalized_evidence}
             allowed_methods = {
@@ -967,7 +1036,8 @@ class ARISController:
                 if not isinstance(item, dict):
                     raise ControllerError("mechanism_evidence_closure entries must be objects")
                 required_fields = (
-                    "causal_chain_id", "must_obligation_ids", "predicted_mechanism_change",
+                    "causal_chain_id", "mechanism_change_ids", "obligation_ids",
+                    "predicted_mechanism_change",
                     "observed_mechanism_change", "explanation_status", "mechanism_match",
                     "discriminating_evidence", "performance_consequence",
                 )
@@ -976,13 +1046,20 @@ class ARISController:
                 chain_id = item["causal_chain_id"]
                 if not isinstance(chain_id, str) or chain_id not in required_chains:
                     raise ControllerError("mechanism_evidence_closure references an unknown causal chain")
-                must_ids = item["must_obligation_ids"]
-                if not isinstance(must_ids, list) or any(
-                    not isinstance(value, str) or value not in required_must for value in must_ids
+                mechanism_ids = item["mechanism_change_ids"]
+                obligation_ids = item["obligation_ids"]
+                if not isinstance(mechanism_ids, list) or any(
+                    not isinstance(value, str) or value not in required_mechanisms
+                    for value in mechanism_ids
                 ):
-                    raise ControllerError("mechanism_evidence_closure MUST obligation IDs are invalid")
-                if len(must_ids) != len(set(must_ids)):
-                    raise ControllerError("mechanism_evidence_closure MUST obligation IDs must be unique")
+                    raise ControllerError("mechanism_evidence_closure mechanism-change IDs are invalid")
+                if not isinstance(obligation_ids, list) or any(
+                    not isinstance(value, str) or value not in required_obligations
+                    for value in obligation_ids
+                ):
+                    raise ControllerError("mechanism_evidence_closure obligation IDs are invalid")
+                if len(mechanism_ids) != len(set(mechanism_ids)) or len(obligation_ids) != len(set(obligation_ids)):
+                    raise ControllerError("mechanism_evidence_closure IDs must be unique")
                 for field in ("predicted_mechanism_change", "observed_mechanism_change", "performance_consequence"):
                     if not isinstance(item[field], str) or not item[field].strip():
                         raise ControllerError(f"mechanism_evidence_closure.{field} must be non-empty")
@@ -1004,10 +1081,12 @@ class ARISController:
                 if any(not isinstance(path, str) or path not in evidence_paths for path in paths):
                     raise ControllerError("discriminating evidence artifacts must be declared validation evidence")
                 closure_chains.add(chain_id)
-                closure_must.update(must_ids)
+                closure_mechanisms.update(mechanism_ids)
+                closure_obligations.update(obligation_ids)
                 normalized_closure.append({
                     "causal_chain_id": chain_id,
-                    "must_obligation_ids": must_ids,
+                    "mechanism_change_ids": mechanism_ids,
+                    "obligation_ids": obligation_ids,
                     "predicted_mechanism_change": item["predicted_mechanism_change"].strip(),
                     "observed_mechanism_change": item["observed_mechanism_change"].strip(),
                     "explanation_status": "EXPLANATION_SUPPORTED",
@@ -1015,11 +1094,27 @@ class ARISController:
                     "discriminating_evidence": {"method": method, "artifact_paths": paths},
                     "performance_consequence": item["performance_consequence"].strip(),
                 })
-            if closure_chains != required_chains or closure_must != required_must:
+            if (
+                closure_chains != required_chains
+                or closure_mechanisms != required_mechanisms
+                or closure_obligations != required_obligations
+            ):
                 raise ControllerError(
-                    "VALIDATED requires evidence closure for every selected-route causal chain and MUST obligation"
+                    "VALIDATED requires evidence closure for every Selected Principle causal chain, mechanism change, and obligation"
                 )
             normalized["mechanism_evidence_closure"] = normalized_closure
+            for field in (
+                "supported_claim_elements", "applicability_boundaries",
+                "established_scientific_delta",
+            ):
+                value = result.get(field)
+                if value in (None, "", [], {}):
+                    raise ControllerError(f"VALIDATED requires non-empty {field}")
+                normalized[field] = deepcopy(value)
+            for field in ("retained_limitations", "remaining_uncertainties"):
+                if field not in result or result[field] is None:
+                    raise ControllerError(f"VALIDATED requires {field}")
+                normalized[field] = deepcopy(result[field])
         return normalized
 
     def submit_validation_result(self, result: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1040,8 +1135,10 @@ class ARISController:
             normalized["verdict_id"] = verdict["verdict_id"]
             normalized["reviewer_agent_id"] = attestation["agent_id"]
             normalized["verdict_payload_sha256"] = attestation["payload_sha256"]
-            result_id = f"validation-{uuid.uuid4().hex}"
-            result_path = self._canonical_path(f"{result_id}.json")
+            result_id = normalized["validation_result_id"]
+            if any(item.get("id") == result_id for item in state["scientific_core"].get("validation_results") or []):
+                raise ControllerError("validation result ID has already been registered")
+            result_path = self._canonical_path(result_id)
             result_path.parent.mkdir(parents=True, exist_ok=True)
             result_path.write_text(
                 json.dumps(normalized, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -1075,6 +1172,37 @@ class ARISController:
                 )
                 return state
             target = VALIDATION_RESULT_RETURN_TARGETS[normalized["decision"]]
+            if normalized["decision"] == "SELECTED_PRINCIPLE_REJECTED":
+                selected_path = self.root / str(
+                    self.workflow["artifact_manifest"]["selected_principle"]
+                )
+                try:
+                    selected = yaml.safe_load(selected_path.read_text(encoding="utf-8"))
+                except (OSError, yaml.YAMLError) as exc:
+                    raise ControllerError("validation rejection cannot resolve Selected Principle") from exc
+                self._append_method_history_event(
+                    "method_principles",
+                    {
+                        "schema_version": 1,
+                        "event_id": f"principle-{uuid.uuid4().hex}",
+                        "event_type": "VALIDATION_REJECTED",
+                        "cycle_id": str(
+                            (core.get("method_test_cycle") or {}).get("cycle_id") or "validation"
+                        ),
+                        "principle_id": str(selected["principle_id"]),
+                        "principle_version": str(selected["principle_version"]),
+                        "parent_version": None,
+                        "scientific_context_refs": [
+                            *list(selected.get("mechanism_change_ids") or []),
+                            *list(selected.get("obligation_ids") or []),
+                            *list(selected.get("causal_chain_ids") or []),
+                        ],
+                        "evidence_refs": list(normalized["evidence_refs"]),
+                        "reason": normalized["rationale"],
+                        "recorded_at": record["registered_at"],
+                        "record_refs": [{"path": record["path"], "sha256": record["sha256"]}],
+                    },
+                )
             final_phase = self.workflow["scientific_core"]["phases"][-1]
             self._return_to_phase(
                 state,
@@ -1086,6 +1214,9 @@ class ARISController:
                     "validation_result_id": result_id,
                     "validation_result_sha256": record["sha256"],
                     "handoff_sha256": handoff["handoff_sha256"],
+                    "return_guidance": deepcopy(normalized["return_guidance"]),
+                    "evidence_refs": list(normalized["evidence_refs"]),
+                    "findings": deepcopy(normalized["findings"]),
                 },
             )
             return state
@@ -1130,6 +1261,12 @@ class ARISController:
             if spec.get("human_checkpoint"):
                 return ["human_approve", *revision_action]
             if phase["status"] == "pending":
+                if phase["phase"] == "principle_evaluation":
+                    cycle = core.get("method_test_cycle") or {}
+                    approved = set(cycle.get("approved_test_ids") or [])
+                    terminal = set((cycle.get("terminal_outcomes") or {}).keys())
+                    if not approved or terminal != approved or not cycle.get("evidence_context"):
+                        return ["method_test_handoff", "submit_method_test_result", *revision_action]
                 actions = ["start_phase", *revision_action]
                 if self._incremental_literature_phase_allowed(state, phase):
                     actions.insert(0, "submit_query_plan")
@@ -1137,7 +1274,17 @@ class ARISController:
                     actions.insert(0, "readopt_evidence")
                 return actions
             if phase["status"] == "running":
-                actions = ["complete_phase"]
+                reviewed = self._resolved_phase_paths(
+                    state, str(phase["phase"]), "reviewed_artifacts"
+                )
+                request = phase.get("review_request")
+                actions = (
+                    ["refresh_review_request"]
+                    if reviewed
+                    and isinstance(request, dict)
+                    and request.get("reviewed_artifacts_pending")
+                    else ["complete_phase", *( ["refresh_review_request"] if reviewed else [] )]
+                )
                 if phase["phase"] == "method_design":
                     actions.insert(0, "reopen_root_cause")
                 if self._incremental_literature_phase_allowed(state, phase):
@@ -1290,13 +1437,17 @@ class ARISController:
             phase_name in allowed
             and state["research_lit"].get("current_stage") == "LANDSCAPE_ACCEPTED"
             and (
-                (status == "pending" and phase_name not in {"problem_generation", "method_design"})
-                # Diagnosis and method design are deliberately iterative.  In
-                # method design the Controller admits re-entry only after the
-                # Agent has derived obligations and recorded a dominant-only
-                # residual MUST gap in the gateway plan.
+                (
+                    status == "pending"
+                    and phase_name not in {
+                        "problem_generation", "method_design", "method_refinement"
+                    }
+                )
                 or (
-                    phase_name in {"problem_generation", "root_cause_analysis", "method_design"}
+                    phase_name in {
+                        "problem_generation", "root_cause_analysis",
+                        "method_design", "method_refinement",
+                    }
                     and status == "running"
                 )
             )
@@ -1360,6 +1511,28 @@ class ARISController:
                 "contract_sha256": active["contract_sha256"],
                 "evidence_capsule_sha256": active["evidence_capsule_sha256"],
             },
+        }
+
+    def _method_refinement_query_context(self, state: dict[str, Any]) -> dict[str, Any]:
+        raw_path = str(self.workflow["artifact_manifest"]["selected_principle"])
+        record = self._registered_artifact_by_path(state, raw_path)
+        path = self.root / raw_path
+        if (
+            not isinstance(record, dict)
+            or not path.is_file()
+            or record.get("sha256") != sha256_file(path)
+        ):
+            raise ControllerError("adaptation-gap search requires the active Selected Principle")
+        try:
+            selected = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise ControllerError("Selected Principle is invalid") from exc
+        if not isinstance(selected, dict):
+            raise ControllerError("Selected Principle is invalid")
+        return {
+            "principle_id": str(selected.get("principle_id") or ""),
+            "principle_version": str(selected.get("principle_version") or ""),
+            "selected_principle_sha256": str(record["sha256"]),
         }
 
     def _incremental_literature_active(self, research: dict[str, Any]) -> dict[str, Any] | None:
@@ -1647,67 +1820,54 @@ class ARISController:
                 raise ControllerError("accepted method-design query plan is invalid") from exc
             if not isinstance(context, dict):
                 return None
-            try:
-                method_context = self._method_design_query_context(state)
-                obligation_set = validate_design_obligation_set(
-                    context,
-                    label="accepted method-design query context",
-                    problem_version=method_context["problem_version"],
-                    root_cause_analysis_id=method_context["root_cause_analysis_id"],
-                    root_cause_analysis_sha256=method_context["root_cause_analysis_sha256"],
-                    primary_causal_chain_ids=method_context["primary_causal_chain_ids"],
-                )
-            except ValidationError as exc:
-                raise ControllerError(f"method-design obligation context is invalid: {exc}") from exc
-            canonical = json.dumps(
-                {
-                    "design_obligation_set_id": obligation_set["design_obligation_set_id"],
-                    "causal_chain_ids": obligation_set["causal_chain_ids"],
-                    "design_obligations": obligation_set["design_obligations"],
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
+            mechanism_ids = [
+                item.get("mechanism_change_id")
+                for item in context.get("required_mechanism_changes") or []
+                if isinstance(item, dict)
+            ]
+            capability_ids = [
+                item.get("capability_id")
+                for item in context.get("required_capabilities") or []
+                if isinstance(item, dict)
+            ]
+            obligation_ids = [
+                item.get("obligation_id")
+                for item in context.get("design_obligations") or []
+                if isinstance(item, dict)
+            ]
+            if any(
+                not values or any(not isinstance(value, str) or not value for value in values)
+                for values in (mechanism_ids, capability_ids, obligation_ids)
+            ):
+                raise ControllerError("accepted method-design Principle-search context is invalid")
             return {
                 "source": "method_design_query_context",
-                "design_obligation_set_id": obligation_set["design_obligation_set_id"],
-                "obligation_ids": obligation_set["obligation_ids"],
-                "obligation_context_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+                "mechanism_change_ids": sorted(mechanism_ids),
+                "capability_ids": sorted(capability_ids),
+                "obligation_ids": sorted(obligation_ids),
+                "principle_search_context_sha256": hashlib.sha256(
+                    json.dumps(context, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest(),
             }
 
-        routes_path = "idea-stage/METHOD_ROUTES.jsonl"
-        route_record = self._registered_artifact_by_path(state, routes_path)
-        selected_path = "idea-stage/SELECTED_ROUTE.yaml"
+        selected_path = str(self.workflow["artifact_manifest"]["selected_principle"])
         selected_record = self._registered_artifact_by_path(state, selected_path)
-        if not isinstance(route_record, dict) or not isinstance(selected_record, dict):
+        if not isinstance(selected_record, dict):
             return None
         try:
             selected = yaml.safe_load((self.root / selected_path).read_text(encoding="utf-8"))
-            rows = [
-                json.loads(line)
-                for line in (self.root / routes_path).read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-            route = next(item for item in rows if item.get("route_id") == selected.get("route_id"))
-            obligation_set = next(
-                item for item in rows
-                if item.get("record_type") == "design_obligation_set"
-                and item.get("design_obligation_set_id") == route.get("design_obligation_set_id")
-            )
-        except (json.JSONDecodeError, OSError, StopIteration, yaml.YAMLError, AttributeError) as exc:
+        except (OSError, yaml.YAMLError, AttributeError) as exc:
             raise ControllerError("current method obligation binding is invalid") from exc
-        obligations = obligation_set.get("design_obligations")
-        obligation_ids = [item.get("obligation_id") for item in obligations or [] if isinstance(item, dict)]
+        obligation_ids = selected.get("obligation_ids") if isinstance(selected, dict) else None
         if not obligation_ids or any(not isinstance(item, str) or not item for item in obligation_ids):
-            raise ControllerError("current method obligation set has invalid obligation IDs")
+            raise ControllerError("Selected Principle has invalid obligation IDs")
         return {
-            "source": "accepted_method_route",
-            "design_obligation_set_id": obligation_set.get("design_obligation_set_id"),
+            "source": "selected_principle",
             "obligation_ids": sorted(obligation_ids),
-            "route_id": route.get("route_id"),
-            "method_routes": self._binding_artifact_identity(route_record),
-            "selected_route": self._binding_artifact_identity(selected_record),
+            "principle_id": selected.get("principle_id"),
+            "principle_version": selected.get("principle_version"),
+            "mechanism_change_ids": list(selected.get("mechanism_change_ids") or []),
+            "selected_principle": self._binding_artifact_identity(selected_record),
         }
 
     def _registered_evidence_card(
@@ -1773,7 +1933,7 @@ class ARISController:
     def _evidence_has_method_context(
         research: dict[str, Any], evidence_key: str, card: dict[str, Any]
     ) -> bool:
-        if "method_design_search_context" in card:
+        if "method_design_search_context" in card or "method_refinement_search_context" in card:
             return True
         method_phases = {"method_design", "method_refinement", "final_method_novelty_gate"}
         return any(
@@ -2248,7 +2408,30 @@ class ARISController:
         """Ensure the candidate judgments which drive the next phase are reviewer-owned."""
 
         role = str(request["required_reviewer_role"])
-        if str(phase["phase"]) not in {"problem_quality_gate", "problem_novelty_gate"}:
+        phase_name = str(phase["phase"])
+        if phase_name in {"method_design", "principle_evaluation"}:
+            payload = self._attested_reviewer_payload(
+                role=role,
+                request_id=str(request["id"]),
+                reviewer=str(result["reviewer"]),
+                verdict_id=str(result["verdict_id"]),
+                decision=str(result["gate_verdict"]),
+                artifact_bindings=dict(request["artifact_bindings"]),
+            )
+            manifest_name = (
+                "method_design_review"
+                if phase_name == "method_design"
+                else "principle_evaluation_verdict"
+            )
+            path = self.root / str(self.workflow["artifact_manifest"][manifest_name])
+            try:
+                actual = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ControllerError("formal method verdict artifact is not valid JSON") from exc
+            if actual != payload:
+                raise ControllerError("formal method verdict artifact differs from the attested reviewer payload")
+            return
+        if phase_name not in {"problem_quality_gate", "problem_novelty_gate"}:
             return
         payload = self._attested_reviewer_payload(
             role=role, request_id=str(request["id"]), reviewer=str(result["reviewer"]),
@@ -2381,7 +2564,8 @@ class ARISController:
                     )
         if phase_name in {
             "method_design",
-            "route_human_selection",
+            "principle_test_human_approval",
+            "principle_evaluation",
             "method_refinement",
             "final_method_novelty_gate",
             "final_method_human_acceptance",
@@ -2682,6 +2866,15 @@ class ARISController:
         if phase_name == "problem_novelty_gate":
             bindings.update(self._novelty_coverage_bindings())
         bindings.update(self._incremental_evidence_bindings(state, phase_name))
+        spec = self._phase_spec(state, phase_name)
+        for raw_path in run_state._resolve_artifact_refs(
+            state.get("workflow") or {},
+            list(spec.get("scientific_history_inputs") or []),
+            phase_name,
+        ):
+            path = self.root / raw_path
+            if path.is_file():
+                bindings[str(raw_path)] = sha256_file(path)
         if not bindings:
             raise ControllerError(f"formal Gate {phase_name!r} has no bindable reviewed artifact")
         return bindings
@@ -2741,7 +2934,7 @@ class ARISController:
         """Bind the accepted problem handoffs into its one-time UI receipt."""
 
         bindings = self._phase_input_bindings(state, phase_name)
-        if phase_name not in {"problem_human_acceptance", "route_human_selection"}:
+        if phase_name != "problem_human_acceptance":
             return bindings
         try:
             run_state._assert_outputs(str(self.root), state, spec, phase_name)
@@ -2771,6 +2964,24 @@ class ARISController:
             bindings[str(raw_path)] = sha256_file(path)
         return bindings
 
+    @staticmethod
+    def _current_return_feedback(
+        state: dict[str, Any], phase_name: str
+    ) -> dict[str, Any] | None:
+        for event in reversed((state.get("scientific_core") or {}).get("return_history") or []):
+            if isinstance(event, dict) and event.get("return_target") == phase_name:
+                return {
+                    key: deepcopy(value)
+                    for key, value in event.items()
+                    if key in {
+                        "id", "at", "from_phase", "return_target", "decision",
+                        "reason", "return_guidance", "human_feedback",
+                        "validation_result_id", "trigger_evidence_ids",
+                        "evidence_refs", "findings",
+                    }
+                }
+        return None
+
     def _new_core_review_request(self, state: dict, phase: dict, spec: dict) -> dict[str, Any]:
         role = spec.get("reviewer_role")
         allowed = spec.get("accepted_verdicts")
@@ -2790,6 +3001,9 @@ class ARISController:
             "issued_by": "ARISController",
             "created_at": now(),
         }
+        feedback = self._current_return_feedback(state, str(phase["phase"]))
+        if feedback is not None:
+            request["return_feedback"] = feedback
         reviewed_artifacts = self._resolved_phase_paths(state, phase["phase"], "reviewed_artifacts")
         if reviewed_artifacts:
             # Method refinement creates the proposal before it can be reviewed.
@@ -2798,19 +3012,681 @@ class ARISController:
             request["reviewed_artifacts_pending"] = reviewed_artifacts
         return request
 
-    def _refresh_completed_review_request(
-        self, state: dict, phase: dict, spec: dict
+    def _method_packet(self, state: dict[str, Any], *, accepted: bool) -> dict[str, Any]:
+        raw_path = str(self.workflow["artifact_manifest"]["method_design_packet"])
+        path = self.root / raw_path
+        if accepted:
+            record = (state["scientific_core"].get("accepted_artifacts") or {}).get(raw_path)
+            if (
+                not isinstance(record, dict)
+                or not path.is_file()
+                or record.get("sha256") != sha256_file(path)
+            ):
+                raise ControllerError("current method design packet is not Controller-accepted")
+        try:
+            packet = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ControllerError("method design packet is not valid JSON") from exc
+        if not isinstance(packet, dict):
+            raise ControllerError("method design packet must be a JSON object")
+        return packet
+
+    def _append_method_history_event(self, manifest_name: str, event: dict[str, Any]) -> None:
+        path = self.root / str(self.workflow["artifact_manifest"][manifest_name])
+        append_jsonl(path, event)
+
+    @staticmethod
+    def _candidate_scientific_context_refs(candidate: dict[str, Any]) -> list[str]:
+        refs: set[str] = set()
+        for field in (
+            "mechanism_change_ids", "capability_ids", "obligation_ids", "causal_chain_ids",
+            "proposed_test_ids",
+        ):
+            refs.update(str(value) for value in candidate.get(field) or [])
+        for item in candidate.get("fatal_assumptions") or []:
+            if isinstance(item, dict) and isinstance(item.get("assumption_id"), str):
+                refs.add(item["assumption_id"])
+        for item in candidate.get("predictions") or []:
+            if isinstance(item, dict) and isinstance(item.get("prediction_id"), str):
+                refs.add(item["prediction_id"])
+        return sorted(refs)
+
+    def _record_reviewed_artifact_history(
+        self, state: dict[str, Any], phase: dict[str, Any]
     ) -> None:
-        request = self._assert_core_review_request_current(
-            state, phase, spec, allow_pending_reviewed_artifacts=True
-        )
-        pending = self._resolved_phase_paths(state, phase["phase"], "reviewed_artifacts")
-        if not pending:
+        phase_name = str(phase["phase"])
+        reviewed = self._resolved_phase_paths(state, phase_name, "reviewed_artifacts")
+        if len(reviewed) != 1:
             return
-        if request.get("reviewed_artifacts_pending") != pending:
-            raise ControllerError("formal review request has invalid pending reviewed artifacts")
-        request["artifact_bindings"] = self._phase_review_bindings(state, phase["phase"])
-        request.pop("reviewed_artifacts_pending", None)
+        path = self.root / reviewed[0]
+        digest = sha256_file(path)
+        if phase.get("history_recorded_for_reviewed_sha256") == digest:
+            return
+        recorded_at = now()
+        if phase_name == "method_design":
+            packet = self._method_packet(state, accepted=False)
+            cycle_id = str(packet["cycle_id"])
+            for candidate in packet["candidate_principles"]:
+                event = {
+                    "schema_version": 1,
+                    "event_id": f"principle-{uuid.uuid4().hex}",
+                    "event_type": "REVISED" if candidate.get("parent_version") is not None else "PROPOSED",
+                    "cycle_id": cycle_id,
+                    "principle_id": str(candidate["principle_id"]),
+                    "principle_version": str(candidate["principle_version"]),
+                    "parent_version": candidate.get("parent_version"),
+                    "scientific_context_refs": self._candidate_scientific_context_refs(candidate),
+                    "evidence_refs": list(candidate.get("evidence_refs") or []),
+                    "reason": str(candidate["status_rationale"]),
+                    "recorded_at": recorded_at,
+                    "record_refs": [{"path": reviewed[0], "sha256": digest}],
+                }
+                self._append_method_history_event("method_principles", event)
+            for test in packet["discriminating_tests"]:
+                self._append_method_history_event(
+                    "method_test_evidence",
+                    {
+                        "schema_version": 1,
+                        "event_id": f"method-test-{uuid.uuid4().hex}",
+                        "event_type": "PROPOSED",
+                        "cycle_id": cycle_id,
+                        "execution_set_id": str(packet["execution_set_id"]),
+                        "test_id": str(test["test_id"]),
+                        "targets": deepcopy(test["targets"]),
+                        "record_refs": [{"path": reviewed[0], "sha256": digest}],
+                        "reason": "candidate discriminating test proposed in reviewed packet",
+                        "recorded_at": recorded_at,
+                    },
+                )
+        elif phase_name == "principle_evaluation":
+            packet = self._method_packet(state, accepted=True)
+            evaluation = json.loads(path.read_text(encoding="utf-8"))
+            for update in evaluation["principle_updates"]:
+                candidate = next(
+                    item
+                    for item in packet["candidate_principles"]
+                    if str(item["principle_id"]) == str(update["principle_id"])
+                    and str(item["principle_version"]) == str(update["principle_version"])
+                )
+                self._append_method_history_event(
+                    "method_principles",
+                    {
+                        "schema_version": 1,
+                        "event_id": f"principle-{uuid.uuid4().hex}",
+                        "event_type": "EVIDENCE_UPDATED",
+                        "cycle_id": str(evaluation["cycle_id"]),
+                        "principle_id": str(update["principle_id"]),
+                        "principle_version": str(update["principle_version"]),
+                        "parent_version": candidate.get("parent_version"),
+                        "scientific_context_refs": self._candidate_scientific_context_refs(candidate),
+                        "evidence_refs": list(update.get("evidence_refs") or []),
+                        "reason": str(update["rationale"]),
+                        "decision": str(update["decision"]),
+                        "recorded_at": recorded_at,
+                        "record_refs": [{"path": reviewed[0], "sha256": digest}],
+                    },
+                )
+            cycle = state["scientific_core"].get("method_test_cycle") or {}
+            for test_id, outcome in (cycle.get("terminal_outcomes") or {}).items():
+                test = cycle["tests"][test_id]
+                self._append_method_history_event(
+                    "method_test_evidence",
+                    {
+                        "schema_version": 1,
+                        "event_id": f"method-test-{uuid.uuid4().hex}",
+                        "event_type": "EVIDENCE_UPDATED",
+                        "cycle_id": str(cycle["cycle_id"]),
+                        "execution_set_id": str(cycle["execution_set_id"]),
+                        "test_id": test_id,
+                        "targets": deepcopy(test["targets"]),
+                        "record_refs": [
+                            *deepcopy(outcome.get("result_refs") or []),
+                            {"path": reviewed[0], "sha256": digest},
+                        ],
+                        "reason": "Principle evaluation consumed the terminal test outcome",
+                        "recorded_at": recorded_at,
+                    },
+                )
+        phase["history_recorded_for_reviewed_sha256"] = digest
+
+    def refresh_current_review_request(self) -> dict[str, Any]:
+        """Finalize the live formal request after Main's reviewed artifact is current."""
+
+        with self._store.mutate() as state:
+            if state["research_lit"]["current_stage"] != "LANDSCAPE_ACCEPTED":
+                raise ControllerError("complete the active incremental literature session before review finalization")
+            phase = self._current_core_phase(state)
+            spec = self._phase_spec(state, str(phase["phase"]))
+            reviewed = self._resolved_phase_paths(state, str(phase["phase"]), "reviewed_artifacts")
+            if phase.get("status") != "running" or not spec.get("formal_gate") or not reviewed:
+                raise ControllerError("current phase has no running Main artifact review to finalize")
+            try:
+                run_state._validate_method_main_artifact(
+                    str(self.root),
+                    state,
+                    spec,
+                    str(phase["phase"]),
+                    current_phase_evidence_ids=self._current_phase_evidence_ids(
+                        state, str(phase["phase"])
+                    ),
+                )
+            except ValueError as exc:
+                raise ControllerError(str(exc)) from exc
+            self._record_reviewed_artifact_history(state, phase)
+            expected = self._phase_review_bindings(state, str(phase["phase"]))
+            request = phase.get("review_request")
+            static_valid = (
+                isinstance(request, dict)
+                and request.get("run_id") == self.run_id
+                and request.get("phase") == phase["phase"]
+                and request.get("gate") == spec.get("gate_id")
+                and request.get("required_reviewer_role") == spec.get("reviewer_role")
+            )
+            if not static_valid:
+                raise ControllerError("formal Gate has no current Controller-issued review request")
+            if not request.get("reviewed_artifacts_pending") and request.get("artifact_bindings") == expected:
+                return dict(request)
+            if not request.get("reviewed_artifacts_pending"):
+                request = self._new_core_review_request(state, phase, spec)
+                phase["review_request"] = request
+            if request.get("reviewed_artifacts_pending") != reviewed:
+                raise ControllerError("formal review request has invalid pending reviewed artifacts")
+            request["artifact_bindings"] = expected
+            request.pop("reviewed_artifacts_pending", None)
+            request["finalized_at"] = now()
+            return dict(request)
+
+    def _initialize_method_test_cycle(self, state: dict[str, Any]) -> dict[str, Any]:
+        packet = self._method_packet(state, accepted=True)
+        execution = packet["recommended_execution_set"]
+        previous_cycle_id = state["scientific_core"].get("last_method_test_cycle_id")
+        if previous_cycle_id is not None and str(packet["cycle_id"]) == str(previous_cycle_id):
+            raise ControllerError("a reopened method design must establish a new test cycle")
+        approved_ids = list(execution["test_ids"])
+        tests = {
+            str(item["test_id"]): deepcopy(item)
+            for item in packet["discriminating_tests"]
+            if item["test_id"] in set(approved_ids)
+        }
+        if set(tests) != set(approved_ids):
+            raise ControllerError("approved execution set cannot resolve every test from the packet")
+        cycle = {
+            "cycle_id": str(packet["cycle_id"]),
+            "execution_set_id": str(packet["execution_set_id"]),
+            "approved_test_ids": approved_ids,
+            "estimated_total_cost": packet["estimated_total_cost"],
+            "tests": tests,
+            "terminal_outcomes": {},
+            "handoff_issued": False,
+            "evidence_context": None,
+            "status": "APPROVED",
+            "approved_at": now(),
+        }
+        state["scientific_core"]["method_test_cycle"] = cycle
+        packet_path = str(self.workflow["artifact_manifest"]["method_design_packet"])
+        packet_record = state["scientific_core"]["accepted_artifacts"][packet_path]
+        for test_id in approved_ids:
+            self._append_method_history_event(
+                "method_test_evidence",
+                {
+                    "schema_version": 1,
+                    "event_id": f"method-test-{uuid.uuid4().hex}",
+                    "event_type": "EXECUTION_SET_APPROVED",
+                    "cycle_id": cycle["cycle_id"],
+                    "execution_set_id": cycle["execution_set_id"],
+                    "test_id": test_id,
+                    "targets": deepcopy(tests[test_id]["targets"]),
+                    "record_refs": [{"path": packet_path, "sha256": packet_record["sha256"]}],
+                    "reason": "Human approved the complete atomic execution set",
+                    "recorded_at": cycle["approved_at"],
+                },
+            )
+        return cycle
+
+    def _require_method_test_window(self, state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        phase = self._current_core_phase(state)
+        if phase["phase"] != "principle_evaluation" or phase["status"] != "pending":
+            raise ControllerError("method-test actions require pending principle_evaluation")
+        cycle = state["scientific_core"].get("method_test_cycle")
+        if not isinstance(cycle, dict) or cycle.get("status") not in {"APPROVED", "EXECUTING", "TERMINAL"}:
+            raise ControllerError("no Human-approved method test cycle is active")
+        return phase, cycle
+
+    def method_test_handoff(self) -> dict[str, Any]:
+        with self._store.mutate() as state:
+            _, cycle = self._require_method_test_window(state)
+            handoff = {
+                "handoff_type": "APPROVED_METHOD_TEST_EXECUTION_SET",
+                "run_id": self.run_id,
+                "cycle_id": cycle["cycle_id"],
+                "execution_set_id": cycle["execution_set_id"],
+                "approved_test_ids": list(cycle["approved_test_ids"]),
+                "estimated_total_cost": cycle["estimated_total_cost"],
+                "tests": [deepcopy(cycle["tests"][test_id]) for test_id in cycle["approved_test_ids"]],
+            }
+            canonical = json.dumps(handoff, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            handoff["handoff_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+            if not cycle.get("handoff_issued"):
+                for test_id in cycle["approved_test_ids"]:
+                    self._append_method_history_event(
+                        "method_test_evidence",
+                        {
+                            "schema_version": 1,
+                            "event_id": f"method-test-{uuid.uuid4().hex}",
+                            "event_type": "EXECUTION_HANDED_OFF",
+                            "cycle_id": cycle["cycle_id"],
+                            "execution_set_id": cycle["execution_set_id"],
+                            "test_id": test_id,
+                            "targets": deepcopy(cycle["tests"][test_id]["targets"]),
+                            "record_refs": [],
+                            "reason": "Controller issued the approved execution handoff",
+                            "recorded_at": now(),
+                        },
+                    )
+                cycle["handoff_issued"] = True
+                cycle["handoff_sha256"] = handoff["handoff_sha256"]
+                cycle["status"] = "EXECUTING"
+            return handoff
+
+    def _materialize_principle_evidence_context(
+        self, state: dict[str, Any]
+    ) -> dict[str, Any]:
+        core = state["scientific_core"]
+        cycle = core.get("method_test_cycle")
+        if not isinstance(cycle, dict):
+            raise ControllerError("cannot form Evidence Context without an approved test cycle")
+        approved = set(cycle["approved_test_ids"])
+        terminal = cycle.get("terminal_outcomes") or {}
+        if set(terminal) != approved:
+            raise ControllerError("cannot form Evidence Context before every approved test is terminal")
+        packet = self._method_packet(state, accepted=True)
+        active_principles = [
+            {
+                "principle_id": str(item["principle_id"]),
+                "principle_version": str(item["principle_version"]),
+            }
+            for item in packet["candidate_principles"]
+            if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+        ]
+        targets = [
+            {"test_id": test_id, **deepcopy(target)}
+            for test_id in cycle["approved_test_ids"]
+            for target in cycle["tests"][test_id]["targets"]
+        ]
+        history_evidence: set[str] = set()
+        for event in run_state._relevant_scientific_history_events(
+            str(self.root), state, packet
+        ):
+            history_evidence.update(
+                value for value in event.get("evidence_refs") or [] if isinstance(value, str)
+            )
+        result_refs = [
+            deepcopy(ref)
+            for test_id in cycle["approved_test_ids"]
+            for ref in terminal[test_id].get("result_refs") or []
+        ]
+        current_evidence = set(self._current_phase_evidence_ids(state, "principle_evaluation"))
+        current_evidence.update(
+            ref["path"] for ref in result_refs if isinstance(ref, dict) and isinstance(ref.get("path"), str)
+        )
+        unresolved = sorted(
+            {
+                assumption["assumption_id"]
+                for item in packet["candidate_principles"]
+                if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+                for assumption in item["fatal_assumptions"]
+            }
+        )
+        context = {
+            "schema_version": 1,
+            "cycle_id": cycle["cycle_id"],
+            "execution_set_id": cycle["execution_set_id"],
+            "active_principles": active_principles,
+            "test_targets": targets,
+            "approved_test_ids": list(cycle["approved_test_ids"]),
+            "terminal_outcomes": [
+                {
+                    "test_id": test_id,
+                    "outcome": terminal[test_id]["outcome"],
+                    "reason": terminal[test_id].get("reason"),
+                }
+                for test_id in cycle["approved_test_ids"]
+            ],
+            "result_refs": result_refs,
+            "historical_evidence_refs": sorted(history_evidence),
+            "current_evidence_refs": sorted(current_evidence),
+            "unresolved_assumption_ids": unresolved,
+            "execution_metadata": {
+                test_id: deepcopy(terminal[test_id].get("execution_metadata") or {})
+                for test_id in cycle["approved_test_ids"]
+            },
+        }
+        return self._register_principle_evidence_context(state, cycle, context)
+
+    def _register_principle_evidence_context(
+        self,
+        state: dict[str, Any],
+        cycle: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        approved = set(cycle["approved_test_ids"])
+        terminal = cycle.get("terminal_outcomes") or {}
+        packet = self._method_packet(state, accepted=True)
+        expected_active_principles = {
+            (str(item["principle_id"]), str(item["principle_version"]))
+            for item in packet["candidate_principles"]
+            if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+        }
+        expected_test_targets = [
+            {"test_id": test_id, **deepcopy(target)}
+            for test_id in cycle["approved_test_ids"]
+            for target in cycle["tests"][test_id]["targets"]
+        ]
+        try:
+            validate_principle_evidence_context(
+                context,
+                contract=self.workflow["artifact_contracts"]["principle_evidence_context"],
+                cycle_id=cycle["cycle_id"],
+                execution_set_id=cycle["execution_set_id"],
+                approved_test_ids=approved,
+                terminal_outcomes=terminal,
+                expected_active_principles=expected_active_principles,
+                expected_test_targets=expected_test_targets,
+            )
+        except ValidationError as exc:
+            raise ControllerError(str(exc)) from exc
+        raw_path = str(self.workflow["artifact_manifest"]["principle_evidence_context"])
+        path = self.root / raw_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(json.dumps(context, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(temporary, path)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        record = self._artifact_record(
+            raw_path,
+            producer_phase="principle_evaluation",
+            provenance={
+                "controller": "ARISController",
+                "run_id": self.run_id,
+                "cycle_id": cycle["cycle_id"],
+                "execution_set_id": cycle["execution_set_id"],
+            },
+            upstream_snapshot=self._upstream_snapshot(state, "principle_evaluation"),
+        )
+        active = self._assert_active_problem_version_current(state)
+        record["problem_version_binding"] = {
+            "problem_id": active["problem_id"],
+            "version": active["version"],
+            "contract_sha256": active["contract_sha256"],
+            "evidence_capsule_sha256": active["evidence_capsule_sha256"],
+        }
+        state["scientific_core"]["accepted_artifacts"][raw_path] = record
+        cycle["evidence_context"] = {"path": raw_path, "sha256": record["sha256"]}
+        cycle["status"] = "TERMINAL"
+        return record
+
+    def _assert_principle_evaluation_ready(self, state: dict[str, Any]) -> None:
+        _, cycle = self._require_method_test_window(state)
+        approved = set(cycle["approved_test_ids"])
+        terminal = cycle.get("terminal_outcomes") or {}
+        if set(terminal) != approved:
+            raise ControllerError("all approved tests must be terminal before principle_evaluation starts")
+        context_ref = cycle.get("evidence_context")
+        if not isinstance(context_ref, dict):
+            raise ControllerError("principle_evaluation requires an active Evidence Context")
+        raw_path = str(self.workflow["artifact_manifest"]["principle_evidence_context"])
+        record = state["scientific_core"]["accepted_artifacts"].get(raw_path)
+        path = self.root / raw_path
+        if (
+            not isinstance(record, dict)
+            or context_ref != {"path": raw_path, "sha256": record.get("sha256")}
+            or not path.is_file()
+            or sha256_file(path) != record.get("sha256")
+        ):
+            raise ControllerError("active Evidence Context is missing or stale")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            packet = self._method_packet(state, accepted=True)
+            validate_principle_evidence_context(
+                payload,
+                contract=self.workflow["artifact_contracts"]["principle_evidence_context"],
+                cycle_id=cycle["cycle_id"],
+                execution_set_id=cycle["execution_set_id"],
+                approved_test_ids=approved,
+                terminal_outcomes=terminal,
+                expected_active_principles={
+                    (str(item["principle_id"]), str(item["principle_version"]))
+                    for item in packet["candidate_principles"]
+                    if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+                },
+                expected_test_targets=[
+                    {"test_id": test_id, **deepcopy(target)}
+                    for test_id in cycle["approved_test_ids"]
+                    for target in cycle["tests"][test_id]["targets"]
+                ],
+            )
+        except (OSError, json.JSONDecodeError, ValidationError) as exc:
+            raise ControllerError(f"active Evidence Context is invalid: {exc}") from exc
+
+    def _deactivate_principle_evidence_context(
+        self, state: dict[str, Any], *, reason: str
+    ) -> None:
+        core = state["scientific_core"]
+        raw_path = str(self.workflow["artifact_manifest"]["principle_evidence_context"])
+        record = (core.get("accepted_artifacts") or {}).pop(raw_path, None)
+        path = self.root / raw_path
+        if not isinstance(record, dict) and not path.is_file():
+            return
+        event_id = f"context-{uuid.uuid4().hex}"
+        target = self.root / ".aris" / "archive" / self.run_id / event_id / "artifacts" / raw_path
+        archive_path: str | None = None
+        if path.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(target))
+            archive_path = str(target.relative_to(self.root))
+        invalidated = deepcopy(record or {})
+        invalidated.update(
+            {
+                "path": raw_path,
+                "status": "invalidated",
+                "invalidated_at": now(),
+                "invalidation": {"reason": reason, "context_event_id": event_id},
+                "archive_path": archive_path,
+                "archive_status": "archived" if archive_path else "missing_at_invalidation",
+            }
+        )
+        core.setdefault("invalidated_artifacts", []).append(invalidated)
+        cycle = core.get("method_test_cycle")
+        if isinstance(cycle, dict):
+            cycle["evidence_context"] = None
+            if reason == "PRINCIPLE_CONVERGED":
+                cycle["status"] = "CONVERGED"
+
+    def submit_method_test_result(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._store.mutate() as state:
+            _, cycle = self._require_method_test_window(state)
+            if not cycle.get("handoff_issued"):
+                raise ControllerError("method test result requires the Controller-issued approved execution handoff")
+            try:
+                result = validate_method_test_result(
+                    payload,
+                    cycle_id=str(cycle["cycle_id"]),
+                    execution_set_id=str(cycle["execution_set_id"]),
+                    approved_test_ids=set(cycle["approved_test_ids"]),
+                    no_result_reasons=set(
+                        self.workflow["artifact_contracts"]["method_test_evidence"]["no_result_reasons"]
+                    ),
+                    root=self.root,
+                )
+            except ValidationError as exc:
+                raise ControllerError(str(exc)) from exc
+            test_id = result["test_id"]
+            if test_id in cycle["terminal_outcomes"]:
+                raise ControllerError("approved method test already has a terminal outcome")
+            recorded = {**deepcopy(result), "recorded_at": now()}
+            cycle["terminal_outcomes"][test_id] = recorded
+            cycle["status"] = "EXECUTING"
+            self._append_method_history_event(
+                "method_test_evidence",
+                {
+                    "schema_version": 1,
+                    "event_id": f"method-test-{uuid.uuid4().hex}",
+                    "event_type": result["outcome"],
+                    "cycle_id": cycle["cycle_id"],
+                    "execution_set_id": cycle["execution_set_id"],
+                    "test_id": test_id,
+                    "targets": deepcopy(cycle["tests"][test_id]["targets"]),
+                    "record_refs": deepcopy(result["result_refs"]),
+                    "reason": result.get("reason") or "result available",
+                    "recorded_at": recorded["recorded_at"],
+                },
+            )
+            if set(cycle["terminal_outcomes"]) == set(cycle["approved_test_ids"]):
+                self._materialize_principle_evidence_context(state)
+            return deepcopy(cycle)
+
+    def _materialize_selected_principle(
+        self,
+        state: dict[str, Any],
+        phase: dict[str, Any],
+        acceptance: dict[str, Any],
+    ) -> dict[str, Any]:
+        principle_id = str(phase.get("selected_principle_id") or "")
+        principle_version = str(phase.get("selected_principle_version") or "")
+        if not principle_id or not principle_version:
+            raise ControllerError("accepted convergence has no unique selected Principle ID/version")
+        packet = self._method_packet(state, accepted=True)
+        candidate = next(
+            (
+                item
+                for item in packet["candidate_principles"]
+                if str(item["principle_id"]) == principle_id
+                and str(item["principle_version"]) == principle_version
+                and item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+            ),
+            None,
+        )
+        if candidate is None:
+            raise ControllerError("accepted convergence selected an unreviewed Principle version")
+        evaluation_path = str(self.workflow["artifact_manifest"]["principle_evaluation"])
+        verdict_path = str(self.workflow["artifact_manifest"]["principle_evaluation_verdict"])
+        try:
+            evaluation = json.loads((self.root / evaluation_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ControllerError("cannot materialize Selected Principle from the accepted evaluation") from exc
+        update = next(
+            (
+                item
+                for item in evaluation["principle_updates"]
+                if str(item["principle_id"]) == principle_id
+                and str(item["principle_version"]) == principle_version
+            ),
+            None,
+        )
+        if update is None:
+            raise ControllerError("selected Principle has no reviewed Evidence Update")
+        if update["decision"] in {"MERGED", "RETIRED", "REJECTED"}:
+            raise ControllerError("accepted convergence selected a non-surviving Principle update")
+        selected = {
+            "schema_version": 1,
+            "principle_id": principle_id,
+            "principle_version": principle_version,
+            "principle": deepcopy(candidate["principle"]),
+            "intervention": deepcopy(candidate["intervention"]),
+            "changed_structure": deepcopy(candidate["changed_structure"]),
+            "problem_binding": deepcopy(packet["problem_binding"]),
+            "root_cause_binding": deepcopy(packet["root_cause_binding"]),
+            "causal_chain_ids": deepcopy(candidate["causal_chain_ids"]),
+            "mechanism_change_ids": deepcopy(candidate["mechanism_change_ids"]),
+            "capability_ids": deepcopy(candidate["capability_ids"]),
+            "obligation_ids": deepcopy(candidate["obligation_ids"]),
+            "evidence_closure": {
+                "evidence_refs": deepcopy(update.get("evidence_refs") or []),
+                "evaluation": {
+                    "path": evaluation_path,
+                    "sha256": sha256_file(self.root / evaluation_path),
+                },
+                "convergence_verdict": {
+                    "path": verdict_path,
+                    "sha256": sha256_file(self.root / verdict_path),
+                },
+            },
+            "activation_conditions": deepcopy(candidate["activation_conditions"]),
+            "failure_conditions": deepcopy(candidate["failure_conditions"]),
+            "applicability_boundaries": {
+                "activation_conditions": deepcopy(candidate["activation_conditions"]),
+                "failure_conditions": deepcopy(candidate["failure_conditions"]),
+                "updated_boundary_or_assumption_refs": deepcopy(
+                    update.get("updated_boundary_or_assumption_refs") or []
+                ),
+            },
+            "remaining_uncertainty": deepcopy(evaluation.get("remaining_uncertainties") or []),
+        }
+        try:
+            validate_selected_principle(
+                selected,
+                contract=self.workflow["artifact_contracts"]["selected_principle"],
+                expected_principle_id=principle_id,
+                expected_principle_version=principle_version,
+                packet=packet,
+            )
+        except ValidationError as exc:
+            raise ControllerError(str(exc)) from exc
+        raw_path = str(self.workflow["artifact_manifest"]["selected_principle"])
+        path = self.root / raw_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(
+                yaml.safe_dump(selected, sort_keys=False, allow_unicode=True),
+                encoding="utf-8",
+            )
+            os.replace(temporary, path)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        record = self._artifact_record(
+            raw_path,
+            producer_phase="principle_evaluation",
+            provenance={
+                "controller": "ARISController",
+                "run_id": self.run_id,
+                "accepted_convergence_verdict_id": phase["verdict_id"],
+            },
+            upstream_snapshot=self._upstream_snapshot(state, "principle_evaluation"),
+        )
+        active = self._assert_active_problem_version_current(state)
+        record["problem_version_binding"] = {
+            "problem_id": active["problem_id"],
+            "version": active["version"],
+            "contract_sha256": active["contract_sha256"],
+            "evidence_capsule_sha256": active["evidence_capsule_sha256"],
+        }
+        record["acceptance"] = deepcopy(acceptance)
+        state["scientific_core"]["accepted_artifacts"][raw_path] = record
+        phase.setdefault("acceptance_artifacts", {})[raw_path] = record
+        for event_type in ("CONVERGED", "SELECTED"):
+            self._append_method_history_event(
+                "method_principles",
+                {
+                    "schema_version": 1,
+                    "event_id": f"principle-{uuid.uuid4().hex}",
+                    "event_type": event_type,
+                    "cycle_id": str(evaluation["cycle_id"]),
+                    "principle_id": principle_id,
+                    "principle_version": principle_version,
+                    "parent_version": candidate.get("parent_version"),
+                    "scientific_context_refs": self._candidate_scientific_context_refs(candidate),
+                    "evidence_refs": deepcopy(update.get("evidence_refs") or []),
+                    "reason": "independent convergence verdict accepted by the Controller",
+                    "recorded_at": acceptance["accepted_at"],
+                    "record_refs": [{"path": raw_path, "sha256": record["sha256"]}],
+                },
+            )
+        return record
 
     def _materialize_root_cause_verdict(self, state: dict, phase: dict, spec: dict) -> None:
         """Persist the reviewer-owned root-cause verdict through the Controller.
@@ -2921,7 +3797,10 @@ class ARISController:
                 phase_name,
                 current_phase_evidence_ids=(
                     self._current_phase_evidence_ids(state, phase_name)
-                    if phase_name in {"problem_generation", "root_cause_analysis"}
+                    if phase_name in {
+                        "problem_generation", "root_cause_analysis",
+                        "method_design", "principle_evaluation",
+                    }
                     else None
                 ),
             )
@@ -2937,7 +3816,8 @@ class ARISController:
                 "reviewed_artifact_hashes",
                 "candidate_ids", "survivor_ids",
                 "diagnostic_pilot_artifacts",
-                "route_ids", "selected_route_id",
+                "cycle_id", "execution_set_id", "test_ids",
+                "selected_principle_id", "selected_principle_version",
             ):
                 if key in validation_result:
                     phase[key] = validation_result[key]
@@ -2953,7 +3833,8 @@ class ARISController:
             )
             if phase_name in {
                 "method_design",
-                "route_human_selection",
+                "principle_test_human_approval",
+                "principle_evaluation",
                 "method_refinement",
                 "final_method_novelty_gate",
                 "final_method_human_acceptance",
@@ -3060,15 +3941,33 @@ class ARISController:
         }
         for phase_name in phase_names:
             phase = run_state._find_phase(state, phase_name)
-            for raw_path, record in (phase.get("handoff_artifacts") or {}).items():
-                if isinstance(record, dict):
-                    records_by_path.setdefault(str(raw_path), record)
+            for field in ("handoff_artifacts", "acceptance_artifacts"):
+                for raw_path, record in (phase.get(field) or {}).items():
+                    if isinstance(record, dict):
+                        records_by_path.setdefault(str(raw_path), record)
 
         output_paths: list[str] = []
         for phase_name in phase_names:
             for raw_path in self._resolved_phase_paths(state, phase_name, "produced_artifacts"):
                 if raw_path not in output_paths:
                     output_paths.append(raw_path)
+            for raw_path in self._resolved_phase_paths(state, phase_name, "acceptance_artifacts"):
+                if raw_path not in output_paths:
+                    output_paths.append(raw_path)
+        if "principle_evaluation" in reset_names:
+            context_path = str(
+                self.workflow.get("artifact_manifest", {}).get("principle_evidence_context") or ""
+            )
+            context_file = self.root / context_path if context_path else None
+            if (
+                context_path
+                and context_path not in output_paths
+                and (
+                    context_path in (core.get("accepted_artifacts") or {})
+                    or (context_file is not None and context_file.is_file())
+                )
+            ):
+                output_paths.append(context_path)
 
         moves: list[tuple[Path, Path, str]] = []
         for raw_path in output_paths:
@@ -3290,6 +4189,8 @@ class ARISController:
                     f"phase {phase['phase']} must be pending before start; current={phase['status']}"
                 )
             self._assert_phase_inputs_current(state, phase["phase"])
+            if phase["phase"] == "principle_evaluation":
+                self._assert_principle_evaluation_ready(state)
             if spec.get("formal_gate"):
                 phase["review_request"] = self._new_core_review_request(state, phase, spec)
             phase["status"] = "running"
@@ -3312,7 +4213,6 @@ class ARISController:
                     state,
                     phase,
                     spec,
-                    allow_pending_reviewed_artifacts=True,
                 )
                 if phase["phase"] == "root_cause_gate":
                     self._materialize_root_cause_verdict(state, phase, spec)
@@ -3329,7 +4229,6 @@ class ARISController:
             phase["artifact"] = next(iter(registered), None)
             phase["handoff_artifacts"] = registered
             if spec.get("formal_gate"):
-                self._refresh_completed_review_request(state, phase, spec)
                 try:
                     validation_result = run_state._assert_outputs(
                         str(self.root), state, spec, phase["phase"]
@@ -3349,7 +4248,8 @@ class ARISController:
                         "reviewed_analysis_sha256", "review_request_id",
                         "reviewed_artifact_hashes",
                         "candidate_ids", "survivor_ids", "return_guidance",
-                        "route_ids", "selected_route_id",
+                        "cycle_id", "execution_set_id", "test_ids",
+                        "selected_principle_id", "selected_principle_version",
                     ):
                         if key in validation_result:
                             phase[key] = validation_result[key]
@@ -3431,6 +4331,11 @@ class ARISController:
                         f"formal Gate output is not registered: {raw_path}"
                     )
                 accepted_record["acceptance"] = dict(acceptance)
+            if phase["phase"] == "principle_evaluation":
+                self._materialize_selected_principle(state, phase, acceptance)
+                self._deactivate_principle_evidence_context(
+                    state, reason="PRINCIPLE_CONVERGED"
+                )
             phase.update(
                 {
                     "status": "accepted",
@@ -3469,6 +4374,21 @@ class ARISController:
             raise ControllerError("return target cannot be downstream of its source phase")
         reset_phases = phases[target_index : from_index + 1]
         reset_names = set(reset_phases)
+        rebuild_evidence_context = (
+            decision == "REVISE_EVALUATION"
+            and from_phase == "principle_evaluation"
+            and target == "principle_evaluation"
+            and isinstance(core.get("method_test_cycle"), dict)
+        )
+        rebuilt_context_payload: dict[str, Any] | None = None
+        if rebuild_evidence_context:
+            context_path = self.root / str(
+                self.workflow["artifact_manifest"]["principle_evidence_context"]
+            )
+            try:
+                rebuilt_context_payload = json.loads(context_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ControllerError("REVISE_EVALUATION requires the current Evidence Context") from exc
         invalidated_at = now()
         return_event_id = f"return-{uuid.uuid4().hex}"
         invalidation = {
@@ -3522,10 +4442,10 @@ class ARISController:
         clear_fields = (
             "artifact", "verdict_id", "reviewer", "reviewer_family",
             "review_independence", "acceptance_status", "human_decision",
-            "handoff_artifacts", "validated_artifacts", "analysis_id",
+            "handoff_artifacts", "acceptance_artifacts", "validated_artifacts", "analysis_id",
             "problem_contract_sha256", "evidence_capsule_sha256",
             "gate_verdict", "reviewed_analysis_sha256", "review_request",
-            "return_guidance",
+            "return_guidance", "history_recorded_for_reviewed_sha256",
         )
         for name in reset_names:
             item = run_state._find_phase(state, name)
@@ -3538,8 +4458,24 @@ class ARISController:
         core["current_phase"] = target
         core["approval_request"] = None
         core["problem_revision_request"] = None
+        if "method_design" in reset_names:
+            prior_cycle = core.get("method_test_cycle")
+            if isinstance(prior_cycle, dict) and prior_cycle.get("cycle_id"):
+                core["last_method_test_cycle_id"] = prior_cycle["cycle_id"]
+            core["method_test_cycle"] = None
+        elif "principle_evaluation" in reset_names:
+            cycle = core.get("method_test_cycle")
+            if isinstance(cycle, dict):
+                cycle["evidence_context"] = None
         if returning_from_validation:
             core["validation_entry"] = None
+        if rebuild_evidence_context:
+            assert rebuilt_context_payload is not None
+            cycle = core.get("method_test_cycle")
+            assert isinstance(cycle, dict)
+            self._register_principle_evidence_context(
+                state, cycle, rebuilt_context_payload
+            )
         target_spec = self._phase_spec(state, target)
         if target_spec.get("human_checkpoint"):
             core["approval_request"] = {
@@ -3753,10 +4689,10 @@ class ARISController:
             clear_fields = (
                 "artifact", "verdict_id", "reviewer", "reviewer_family",
                 "review_independence", "acceptance_status", "human_decision",
-                "handoff_artifacts", "validated_artifacts", "analysis_id",
+                "handoff_artifacts", "acceptance_artifacts", "validated_artifacts", "analysis_id",
                 "problem_contract_sha256", "evidence_capsule_sha256",
                 "gate_verdict", "reviewed_analysis_sha256", "review_request",
-                "return_guidance",
+                "return_guidance", "history_recorded_for_reviewed_sha256",
             )
             for name in reset_names:
                 item = run_state._find_phase(state, name)
@@ -3767,6 +4703,10 @@ class ARISController:
             core["current_phase"] = target
             core["approval_request"] = None
             core["problem_revision_request"] = None
+            prior_cycle = core.get("method_test_cycle")
+            if isinstance(prior_cycle, dict) and prior_cycle.get("cycle_id"):
+                core["last_method_test_cycle_id"] = prior_cycle["cycle_id"]
+            core["method_test_cycle"] = None
             core["approvals"].append(
                 {
                     "gate": "problem_revision",
@@ -3934,10 +4874,10 @@ class ARISController:
         clear_fields = (
             "artifact", "verdict_id", "reviewer", "reviewer_family",
             "review_independence", "acceptance_status", "human_decision",
-            "handoff_artifacts", "validated_artifacts", "analysis_id",
+            "handoff_artifacts", "acceptance_artifacts", "validated_artifacts", "analysis_id",
             "problem_contract_sha256", "evidence_capsule_sha256",
             "gate_verdict", "reviewed_analysis_sha256", "review_request",
-            "return_guidance",
+            "return_guidance", "history_recorded_for_reviewed_sha256",
         )
         for name in reset_names:
             item = run_state._find_phase(state, name)
@@ -3948,6 +4888,11 @@ class ARISController:
         core["current_phase"] = target
         core["approval_request"] = None
         core["problem_revision_request"] = None
+        if "method_design" in reset_names:
+            prior_cycle = core.get("method_test_cycle")
+            if isinstance(prior_cycle, dict) and prior_cycle.get("cycle_id"):
+                core["last_method_test_cycle_id"] = prior_cycle["cycle_id"]
+            core["method_test_cycle"] = None
         core["approvals"].append(
             {
                 "gate": request["gate"],
@@ -4087,14 +5032,6 @@ class ARISController:
                     )
                 except ValueError as exc:
                     raise ControllerError(str(exc)) from exc
-                if (
-                    phase["phase"] == "route_human_selection"
-                    and selected_id is not None
-                    and (output_result or {}).get("selected_route_id") != selected_id
-                ):
-                    raise ControllerError(
-                        "selected route artifact does not match the Human selected_id"
-                    )
             result = dict(request)
             if require_outputs:
                 result["artifact_bindings"] = self._human_approval_bindings(
@@ -4289,6 +5226,8 @@ class ARISController:
                         registered=registered,
                         acceptance=phase["human_decision"],
                     )
+                elif phase["phase"] == "principle_test_human_approval":
+                    self._initialize_method_test_cycle(state)
                 phase["artifact"] = next(iter(registered), None)
                 phase["handoff_artifacts"] = registered
                 phase["updated"] = now()
@@ -4456,7 +5395,7 @@ class ARISController:
                 if not self._incremental_literature_phase_allowed(state, phase):
                     raise ControllerError(
                         "incremental literature is allowed only before an eligible phase, "
-                        "or while root_cause_analysis or method_design is running"
+                        "or while an iterative Problem/RCA/Method phase is running"
                     )
                 incremental_phase = str(phase["phase"])
             else:
@@ -4480,6 +5419,12 @@ class ARISController:
                     and phase.get("status") == "running"
                     else None
                 )
+                refinement_context = (
+                    self._method_refinement_query_context(state)
+                    if incremental_phase == "method_refinement"
+                    and phase.get("status") == "running"
+                    else None
+                )
                 problem_lead_context = (
                     {
                         "active_field_map_sha256": str(
@@ -4495,6 +5440,7 @@ class ARISController:
                 plan = validate_query_plan(
                     payload,
                     method_design_context=method_context,
+                    method_refinement_context=refinement_context,
                     problem_lead_context=problem_lead_context,
                 )
             except ValidationError as exc:
@@ -4516,97 +5462,13 @@ class ARISController:
                 validate_query_plan(
                     plan,
                     method_design_context=method_context,
+                    method_refinement_context=refinement_context,
                     problem_lead_context=problem_lead_context,
                     required_coverage_gaps=required_gaps,
                 )
             except ValidationError as exc:
                 self._record_validation(research, "query_plan", "FAIL", [str(exc)])
                 raise ControllerError(str(exc)) from exc
-            if incremental_phase == "method_design":
-                assert method_context is not None
-                try:
-                    current_set = validate_design_obligation_set(
-                        plan["method_design_context"],
-                        label="query plan method_design_context",
-                        problem_version=method_context["problem_version"],
-                        root_cause_analysis_id=method_context["root_cause_analysis_id"],
-                        root_cause_analysis_sha256=method_context["root_cause_analysis_sha256"],
-                        primary_causal_chain_ids=method_context["primary_causal_chain_ids"],
-                    )
-                except ValidationError as exc:
-                    self._record_validation(research, "query_plan", "FAIL", [str(exc)])
-                    raise ControllerError(str(exc)) from exc
-
-                historical_records: list[dict[str, Any]] = []
-                previous_record = (research.get("accepted_artifacts") or {}).get(
-                    "incremental-query-plan-method_design"
-                )
-                if isinstance(previous_record, dict):
-                    historical_records.append({
-                        "path": previous_record.get("path"),
-                        "sha256": previous_record.get("sha256"),
-                    })
-                for history in research.get("query_plan_history") or []:
-                    if isinstance(history, dict):
-                        historical_records.append({
-                            "path": history.get("archive_path"),
-                            "sha256": history.get("sha256"),
-                        })
-
-                for historical in historical_records:
-                    previous_path = self.root / str(historical.get("path") or "")
-                    try:
-                        previous_context = json.loads(
-                            previous_path.read_text(encoding="utf-8")
-                        ).get("method_design_context")
-                    except (OSError, json.JSONDecodeError):
-                        previous_context = None
-                    if isinstance(previous_context, dict) and isinstance(
-                        previous_context.get("design_obligation_set_id"), str
-                    ):
-                        if (
-                            not previous_path.is_file()
-                            or sha256_file(previous_path) != historical.get("sha256")
-                        ):
-                            raise ControllerError(
-                                "accepted method-design query-plan history changed after acceptance"
-                            )
-                        try:
-                            previous_set = validate_design_obligation_set(
-                                previous_context,
-                                label="historical method-design query context",
-                                problem_version={
-                                    "problem_id": previous_context.get("problem_id"),
-                                    "version": previous_context.get("problem_version"),
-                                    "contract_sha256": previous_context.get("problem_contract_sha256"),
-                                    "evidence_capsule_sha256": previous_context.get("evidence_capsule_sha256"),
-                                },
-                                root_cause_analysis_id=previous_context.get("root_cause_analysis_id"),
-                                root_cause_analysis_sha256=previous_context.get(
-                                    "root_cause_analysis_sha256"
-                                ),
-                                primary_causal_chain_ids=set(
-                                    previous_context.get("causal_chain_ids") or []
-                                ),
-                            )
-                        except ValidationError as exc:
-                            self._record_validation(research, "query_plan", "FAIL", [str(exc)])
-                            raise ControllerError(str(exc)) from exc
-                        if (
-                            previous_set["design_obligation_set_id"]
-                            == current_set["design_obligation_set_id"]
-                            and {
-                                key: previous_set[key]
-                                for key in ("causal_chain_ids", "design_obligations")
-                            }
-                            != {
-                                key: current_set[key]
-                                for key in ("causal_chain_ids", "design_obligations")
-                            }
-                        ):
-                            raise ControllerError(
-                                "method-design obligation definitions changed; derive a new design_obligation_set_id"
-                            )
             self._record_validation(research, "query_plan", "PASS")
             artifact_name = (
                 f"incremental-query-plan-{incremental_phase}"
@@ -4618,7 +5480,10 @@ class ARISController:
             # as discovery provenance.  Unlike the ordinary current-plan slot,
             # this plan can be followed by another running-phase search, so its
             # accepted bytes need a stable path from the first acceptance.
-            if artifact_name == "incremental-query-plan-method_design":
+            if artifact_name in {
+                "incremental-query-plan-method_design",
+                "incremental-query-plan-method_refinement",
+            }:
                 plan_sha256 = hashlib.sha256(serialized_plan.encode("utf-8")).hexdigest()
                 canonical = (
                     self.root
@@ -5486,7 +6351,7 @@ class ARISController:
                 if session.get("phase") == "method_design":
                     plan = self._active_query_plan(research)
                     context = plan.get("method_design_context")
-                    if isinstance(context, dict) and context.get("search_mode") == "DOMINANT_SOLUTION_SEARCH":
+                    if isinstance(context, dict) and context.get("search_mode") == "PRINCIPLE_SEARCH":
                         plan_sha256 = str(session.get("query_plan_sha256") or "")
                         current_query_ids = {
                             query_id
@@ -5497,7 +6362,7 @@ class ARISController:
                         }
                         if not supplied_query_ids or not set(supplied_query_ids) <= current_query_ids:
                             raise ControllerError(
-                                "Mode-A user source requires explicit current completed query associations"
+                                "Principle-search user source requires explicit current completed query associations"
                             )
                         row["found_by_query_ids"] = sorted(supplied_query_ids)
                 session.setdefault("paper_ids", []).append(paper_id)
@@ -7117,9 +7982,8 @@ class ARISController:
                     "root_cause_analysis_sha256": context["root_cause_analysis_sha256"],
                     "active_field_map_sha256": context["active_field_map_sha256"],
                     "search_mode": mode,
-                    "design_obligation_set_id": context["design_obligation_set_id"],
                 }
-                if mode == "DOMINANT_SOLUTION_SEARCH":
+                if mode == "PRINCIPLE_SEARCH":
                     current_query_ids = {
                         query_id
                         for query_id, event in research.get("query_events", {}).items()
@@ -7132,9 +7996,15 @@ class ARISController:
                     )
                     if not actual_query_ids:
                         raise ControllerError(
-                            "Mode-A Evidence requires an explicit hit from the current method-search session"
+                            "Principle-search Evidence requires an explicit hit from the current session"
                         )
-                    actual_obligation_ids: set[str] = set()
+                    actual_bindings = {
+                        "mechanism_change_ids": set(),
+                        "capability_ids": set(),
+                        "obligation_ids": set(),
+                        "causal_chain_ids": set(),
+                        "search_dimensions": set(),
+                    }
                     for query_id in actual_query_ids:
                         event = research["query_events"][query_id]
                         planned = next(
@@ -7150,43 +8020,77 @@ class ARISController:
                             None,
                         )
                         if not isinstance(planned, dict):
-                            raise ControllerError("Mode-A Evidence cannot resolve its accepted query-plan item")
-                        actual_obligation_ids.update(planned.get("design_obligation_ids") or [])
-                    obligations = {
-                        item.get("obligation_id"): item
-                        for item in context.get("design_obligations", [])
-                        if isinstance(item, dict) and isinstance(item.get("obligation_id"), str)
-                    }
-                    if not actual_obligation_ids or not actual_obligation_ids <= set(obligations):
-                        raise ControllerError("Mode-A Evidence has invalid actual-hit obligation bindings")
-                    chain_ids = sorted(
-                        {
-                            chain_id
-                            for obligation_id in actual_obligation_ids
-                            for chain_id in obligations[obligation_id].get(
-                                "derived_from_causal_chain_ids", []
-                            )
-                        }
-                    )
+                            raise ControllerError("Principle-search Evidence cannot resolve its accepted query-plan item")
+                        for field in (
+                            "mechanism_change_ids", "capability_ids",
+                            "obligation_ids", "causal_chain_ids",
+                        ):
+                            actual_bindings[field].update(planned.get(field) or [])
+                        actual_bindings["search_dimensions"].add(planned["search_dimension"])
                     card = {
                         **card,
                         "method_design_search_context": {
                             **common_context,
                             "actual_hit_query_ids": actual_query_ids,
-                            "design_obligation_ids": sorted(actual_obligation_ids),
-                            "causal_chain_ids": chain_ids,
-                        },
-                    }
-                elif mode == "RESIDUAL_MUST_GAP_SEARCH":
-                    card = {
-                        **card,
-                        "method_design_search_context": {
-                            **common_context,
-                            "dominant_only_closure": context["dominant_only_closure"],
+                            **{
+                                field: sorted(values)
+                                for field, values in actual_bindings.items()
+                            },
                         },
                     }
                 else:
                     raise ControllerError("method-design incremental query plan has an invalid search mode")
+            if session is not None and session.get("phase") == "method_refinement":
+                plan = self._active_query_plan(research)
+                plan_path = str(session.get("query_plan_path") or "")
+                plan_sha256 = str(session.get("query_plan_sha256") or "")
+                candidate = self.root / plan_path
+                if not plan_path or not plan_sha256 or not candidate.is_file() or sha256_file(candidate) != plan_sha256:
+                    raise ControllerError("adaptation-gap query plan changed after Controller acceptance")
+                context = plan.get("method_refinement_context")
+                if not isinstance(context, dict) or context.get("search_mode") != "ADAPTATION_GAP_SEARCH":
+                    raise ControllerError("adaptation-gap query plan lost its search context")
+                current_query_ids = {
+                    query_id
+                    for query_id, event in research.get("query_events", {}).items()
+                    if isinstance(event, dict)
+                    and event.get("query_plan_sha256") == plan_sha256
+                    and event.get("status") in {"complete", "complete_human"}
+                }
+                actual_query_ids = sorted(current_query_ids & set(paper.get("found_by_query_ids") or []))
+                if not actual_query_ids:
+                    raise ControllerError("adaptation-gap Evidence requires an explicit current-session query hit")
+                gap_ids: set[str] = set()
+                for query_id in actual_query_ids:
+                    event = research["query_events"][query_id]
+                    planned = next(
+                        (
+                            item
+                            for item in plan.get("queries", [])
+                            if (
+                                item.get("plan_item_id") == event.get("plan_item_id")
+                                if event.get("plan_item_id") is not None
+                                else item.get("query") == event.get("query")
+                            )
+                        ),
+                        None,
+                    )
+                    if not isinstance(planned, dict):
+                        raise ControllerError("adaptation-gap Evidence cannot resolve its query-plan item")
+                    gap_ids.update(planned.get("residual_adaptation_gap_ids") or [])
+                card = {
+                    **card,
+                    "method_refinement_search_context": {
+                        "query_plan_path": plan_path,
+                        "query_plan_sha256": plan_sha256,
+                        "search_mode": "ADAPTATION_GAP_SEARCH",
+                        "principle_id": context["principle_id"],
+                        "principle_version": context["principle_version"],
+                        "selected_principle_sha256": context["selected_principle_sha256"],
+                        "actual_hit_query_ids": actual_query_ids,
+                        "residual_adaptation_gap_ids": sorted(gap_ids),
+                    },
+                }
             canonical = self._canonical_path(artifact_name)
             canonical.parent.mkdir(parents=True, exist_ok=True)
             canonical.write_text(

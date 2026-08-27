@@ -93,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
         "finish-reading",
         "start-phase",
         "complete-phase",
+        "refresh-review-request",
+        "method-test-handoff",
     ):
         command = sub.add_parser(name)
         command.add_argument("run_id")
@@ -105,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
             "source_policy_approval",
             "scope_human_approval",
             "problem_acceptance",
-            "route_selection",
+            "principle_test_approval",
             "method_acceptance",
         ),
     )
@@ -141,6 +143,10 @@ def build_parser() -> argparse.ArgumentParser:
             "evidence_refs, and future_check; use only for reusable lessons"
         ),
     )
+
+    method_test_result = sub.add_parser("submit-method-test-result")
+    method_test_result.add_argument("run_id")
+    method_test_result.add_argument("json_file")
 
     policy = sub.add_parser("submit-source-policy")
     policy.add_argument("run_id")
@@ -416,6 +422,12 @@ def main() -> int:
                 result = controller.start_current_phase()
             elif args.command == "complete-phase":
                 result = controller.complete_current_phase()
+            elif args.command == "refresh-review-request":
+                result = controller.refresh_current_review_request()
+            elif args.command == "method-test-handoff":
+                result = controller.method_test_handoff()
+            elif args.command == "submit-method-test-result":
+                result = controller.submit_method_test_result(_json_file(args.json_file))
             elif args.command == "accept-phase":
                 result = controller.accept_current_phase(
                     args.verdict_id,

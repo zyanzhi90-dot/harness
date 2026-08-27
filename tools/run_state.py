@@ -777,6 +777,338 @@ def _validate_method_route_outputs(
     return None
 
 
+def _method_principle_context(root: str, state: dict) -> dict:
+    core = state.get("scientific_core") or {}
+    active = core.get("active_problem_version")
+    required = ("problem_id", "version", "contract_sha256", "evidence_capsule_sha256")
+    if not isinstance(active, dict) or any(active.get(field) in (None, "") for field in required):
+        raise ValueError("method work requires an active accepted Problem version")
+    workflow = state.get("workflow") or {}
+    try:
+        raw_path = workflow["artifact_manifest"]["root_cause_analysis"]
+        analysis_path = _artifact_path(root, raw_path)
+        analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+    except (KeyError, OSError, json.JSONDecodeError) as exc:
+        raise ValueError("method work cannot read the accepted root-cause analysis") from exc
+    analysis_id = analysis.get("analysis_id") if isinstance(analysis, dict) else None
+    chains = analysis.get("primary_causal_chain_ids") if isinstance(analysis, dict) else None
+    if not isinstance(analysis_id, str) or not analysis_id or not isinstance(chains, list) or not chains:
+        raise ValueError("method work has no machine-resolvable accepted RCA handoff")
+    if any(not isinstance(item, str) or not item for item in chains):
+        raise ValueError("accepted RCA primary causal-chain IDs are invalid")
+    return {
+        "problem_version": dict(active),
+        "root_cause_analysis_id": analysis_id,
+        "root_cause_analysis_sha256": _sha256(analysis_path),
+        "primary_causal_chain_ids": set(chains),
+    }
+
+
+def _latest_return_feedback_ref(state: dict, phase: str) -> str | None:
+    for event in reversed((state.get("scientific_core") or {}).get("return_history") or []):
+        if isinstance(event, dict) and event.get("return_target") == phase:
+            event_id = event.get("id")
+            return event_id if isinstance(event_id, str) and event_id else None
+    return None
+
+
+def _load_scientific_history(root: str, state: dict) -> list[dict]:
+    workflow = state.get("workflow") or {}
+    manifest = workflow.get("artifact_manifest") or {}
+    events: list[dict] = []
+    for name in ("method_principles", "method_test_evidence"):
+        raw_path = manifest.get(name)
+        if not isinstance(raw_path, str):
+            continue
+        path = _artifact_path(root, raw_path)
+        if not path.is_file():
+            continue
+        try:
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{name} must remain valid JSONL") from exc
+        if any(not isinstance(row, dict) or not isinstance(row.get("event_id"), str) for row in rows):
+            raise ValueError(f"{name} contains an invalid history event")
+        events.extend(rows)
+    return events
+
+
+def _relevant_scientific_history_events(root: str, state: dict, packet: dict) -> list[dict]:
+    context_ids: set[str] = set()
+    for field, identifier in (
+        ("required_mechanism_changes", "mechanism_change_id"),
+        ("required_capabilities", "capability_id"),
+        ("design_obligations", "obligation_id"),
+        ("candidate_principles", "principle_id"),
+        ("discriminating_tests", "test_id"),
+    ):
+        for item in packet.get(field) or []:
+            if isinstance(item, dict) and isinstance(item.get(identifier), str):
+                context_ids.add(item[identifier])
+    for item in packet.get("candidate_principles") or []:
+        if not isinstance(item, dict):
+            continue
+        principle_id = item.get("principle_id")
+        principle_version = item.get("principle_version")
+        if isinstance(principle_id, str) and isinstance(principle_version, (str, int)):
+            context_ids.add(f"principle:{principle_id}@{principle_version}")
+        for assumption in item.get("fatal_assumptions") or []:
+            if isinstance(assumption, dict) and isinstance(assumption.get("assumption_id"), str):
+                context_ids.add(assumption["assumption_id"])
+        for prediction in item.get("predictions") or []:
+            if isinstance(prediction, dict) and isinstance(prediction.get("prediction_id"), str):
+                context_ids.add(prediction["prediction_id"])
+    context_ids.update((packet.get("root_cause_binding") or {}).get("causal_chain_ids") or [])
+    relevant: list[dict] = []
+    for event in _load_scientific_history(root, state):
+        if event.get("cycle_id") == packet.get("cycle_id"):
+            continue
+        event_ids: set[str] = set()
+        for field in ("principle_id", "test_id", "cycle_id", "execution_set_id"):
+            value = event.get(field)
+            if isinstance(value, str):
+                event_ids.add(value)
+        if isinstance(event.get("principle_id"), str) and isinstance(
+            event.get("principle_version"), (str, int)
+        ):
+            event_ids.add(
+                f"principle:{event['principle_id']}@{event['principle_version']}"
+            )
+        event_ids.update(
+            value
+            for value in event.get("scientific_context_refs") or []
+            if isinstance(value, str)
+        )
+        for target in event.get("targets") or []:
+            if isinstance(target, dict):
+                event_ids.update(str(value) for value in target.values() if isinstance(value, (str, int)))
+        if event_ids & context_ids:
+            relevant.append(event)
+    return relevant
+
+
+def _relevant_scientific_history_refs(root: str, state: dict, packet: dict) -> set[str]:
+    return {
+        event["event_id"]
+        for event in _relevant_scientific_history_events(root, state, packet)
+    }
+
+
+def _accepted_json_artifact(root: str, state: dict, manifest_name: str) -> tuple[dict, str]:
+    workflow = state.get("workflow") or {}
+    raw_path = str(workflow["artifact_manifest"][manifest_name])
+    record = ((state.get("scientific_core") or {}).get("accepted_artifacts") or {}).get(raw_path)
+    path = _artifact_path(root, raw_path)
+    if (
+        not isinstance(record, dict)
+        or not path.is_file()
+        or record.get("sha256") != _sha256(path)
+    ):
+        raise ValueError(f"{manifest_name} is not a current Controller-accepted artifact")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{manifest_name} must be valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{manifest_name} must be a JSON object")
+    return payload, raw_path
+
+
+def _validate_method_main_artifact(
+    root: str,
+    state: dict,
+    spec: dict,
+    phase: str,
+    *,
+    current_phase_evidence_ids: set[str] | None = None,
+) -> dict:
+    from arisctl.validators import (
+        ValidationError,
+        validate_final_proposal_for_principle,
+        validate_method_design_packet,
+        validate_principle_evaluation,
+    )
+
+    workflow = state.get("workflow") or {}
+    contracts = workflow.get("artifact_contracts") or {}
+    output_paths = _resolve_artifact_refs(workflow, spec.get("produced_artifacts", []), phase)
+    context = _method_principle_context(root, state)
+    try:
+        if phase == "method_design":
+            packet_path = str(workflow["artifact_manifest"]["method_design_packet"])
+            packet = json.loads(_artifact_path(root, packet_path).read_text(encoding="utf-8"))
+            search_record = ((state.get("research_lit") or {}).get("accepted_artifacts") or {}).get(
+                "incremental-query-plan-method_design"
+            )
+            if isinstance(search_record, dict):
+                search_path = _artifact_path(root, str(search_record.get("path") or ""))
+                if not search_path.is_file() or search_record.get("sha256") != _sha256(search_path):
+                    raise ValidationError("current Principle-search Query Plan is not a registered artifact")
+                search_context = json.loads(search_path.read_text(encoding="utf-8")).get(
+                    "method_design_context"
+                )
+                if not isinstance(search_context, dict) or any(
+                    packet.get(field) != search_context.get(field)
+                    for field in (
+                        "required_mechanism_changes", "required_capabilities", "design_obligations"
+                    )
+                ):
+                    raise ValidationError(
+                        "method design packet does not preserve the accepted Principle-search RMC binding"
+                    )
+            return validate_method_design_packet(
+                packet,
+                contract=contracts["method_design_packet"],
+                problem_version=context["problem_version"],
+                root_cause_analysis_id=context["root_cause_analysis_id"],
+                root_cause_analysis_sha256=context["root_cause_analysis_sha256"],
+                primary_causal_chain_ids=context["primary_causal_chain_ids"],
+                current_evidence_ids=current_phase_evidence_ids,
+                required_history_refs=_relevant_scientific_history_refs(root, state, packet),
+                required_return_ref=_latest_return_feedback_ref(state, phase),
+            )
+        if phase == "principle_evaluation":
+            packet, _ = _accepted_json_artifact(root, state, "method_design_packet")
+            evidence_context, evidence_path = _accepted_json_artifact(
+                root, state, "principle_evidence_context"
+            )
+            evaluation_path = str(workflow["artifact_manifest"]["principle_evaluation"])
+            evaluation = json.loads(
+                _artifact_path(root, evaluation_path).read_text(encoding="utf-8")
+            )
+            cycle = (state.get("scientific_core") or {}).get("method_test_cycle") or {}
+            evidence_record = ((state.get("scientific_core") or {}).get("accepted_artifacts") or {}).get(evidence_path)
+            evidence_ref = {
+                "path": evidence_path,
+                "sha256": str((evidence_record or {}).get("sha256") or ""),
+            }
+            current_refs = set(evidence_context.get("current_evidence_refs") or [])
+            for item in evidence_context.get("result_refs") or []:
+                if isinstance(item, dict) and isinstance(item.get("path"), str):
+                    current_refs.add(item["path"])
+            candidate_keys = {
+                (str(item["principle_id"]), str(item["principle_version"]))
+                for item in packet.get("candidate_principles") or []
+                if isinstance(item, dict) and item.get("status") in {"ACTIVE", "REVISED", "WEAKENED"}
+            }
+            return {
+                "evaluation": validate_principle_evaluation(
+                    evaluation,
+                    contract=contracts["principle_evaluation"],
+                    cycle_id=str(cycle.get("cycle_id") or ""),
+                    execution_set_id=str(cycle.get("execution_set_id") or ""),
+                    evidence_context_ref=evidence_ref,
+                    candidate_principles=candidate_keys,
+                    current_evidence_refs=current_refs,
+                    required_history_refs=_relevant_scientific_history_refs(root, state, packet),
+                    required_return_ref=_latest_return_feedback_ref(state, phase),
+                )
+            }
+        if phase == "method_refinement":
+            selected_path = str(workflow["artifact_manifest"]["selected_principle"])
+            selected_record = ((state.get("scientific_core") or {}).get("accepted_artifacts") or {}).get(selected_path)
+            path = _artifact_path(root, selected_path)
+            if not isinstance(selected_record, dict) or not path.is_file() or selected_record.get("sha256") != _sha256(path):
+                raise ValidationError("method refinement requires the active Controller-selected Principle")
+            selected = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if not isinstance(selected, dict):
+                raise ValidationError("Selected Principle must be a YAML object")
+            proposal_path = str(workflow["artifact_manifest"]["final_proposal"])
+            text = _artifact_path(root, proposal_path).read_text(encoding="utf-8")
+            validate_final_proposal_for_principle(
+                text,
+                selected_principle=selected,
+                required_sections=list(contracts["final_proposal"]["required_sections"]),
+            )
+            return {"selected_principle": selected}
+    except (ValidationError, OSError, json.JSONDecodeError, yaml.YAMLError, KeyError) as exc:
+        raise ValueError(f"phase {phase!r} has an invalid Principle-first method artifact: {exc}") from exc
+    return {}
+
+
+def _validate_principle_method_outputs(
+    root: str,
+    state: dict,
+    spec: dict,
+    phase: str,
+    output_paths: list[str],
+    *,
+    current_phase_evidence_ids: set[str] | None = None,
+) -> dict | None:
+    if phase not in {"method_design", "principle_evaluation", "method_refinement"}:
+        return None
+    from arisctl.validators import (
+        ValidationError,
+        validate_json_review_verdict_artifact,
+        validate_method_design_view,
+    )
+
+    main = _validate_method_main_artifact(
+        root,
+        state,
+        spec,
+        phase,
+        current_phase_evidence_ids=current_phase_evidence_ids,
+    )
+    workflow = state.get("workflow") or {}
+    request = _find_phase(state, phase).get("review_request")
+    if not isinstance(request, dict) or request.get("reviewed_artifacts_pending"):
+        return None
+    result: dict = {}
+    try:
+        if phase == "method_design":
+            packet = main["packet"]
+            view_path = str(workflow["artifact_manifest"]["method_design_view"])
+            validate_method_design_view(_artifact_path(root, view_path).read_text(encoding="utf-8"), packet)
+            verdict_path = str(workflow["artifact_manifest"]["method_design_review"])
+            verdict = validate_json_review_verdict_artifact(
+                json.loads(_artifact_path(root, verdict_path).read_text(encoding="utf-8")),
+                label="method design review",
+                request_id=request["id"],
+                artifact_bindings=request["artifact_bindings"],
+                decisions=set(request["allowed_review_verdicts"]),
+                reviewed_artifact_path=str(workflow["artifact_manifest"]["method_design_packet"]),
+            )
+            result.update(
+                cycle_id=main["cycle_id"],
+                execution_set_id=main["execution_set_id"],
+                test_ids=main["test_ids"],
+            )
+        elif phase == "principle_evaluation":
+            verdict_path = str(workflow["artifact_manifest"]["principle_evaluation_verdict"])
+            verdict = validate_json_review_verdict_artifact(
+                json.loads(_artifact_path(root, verdict_path).read_text(encoding="utf-8")),
+                label="Principle convergence review",
+                request_id=request["id"],
+                artifact_bindings=request["artifact_bindings"],
+                decisions=set(request["allowed_review_verdicts"]),
+                reviewed_artifact_path=str(workflow["artifact_manifest"]["principle_evaluation"]),
+            )
+            if verdict["decision"] == "PRINCIPLE_CONVERGED":
+                _require = ("selected_principle_id", "selected_principle_version")
+                if any(not isinstance(verdict.get(field), (str, int)) or str(verdict[field]).strip() == "" for field in _require):
+                    raise ValidationError("PRINCIPLE_CONVERGED requires one selected Principle ID/version")
+                result["selected_principle_id"] = str(verdict["selected_principle_id"])
+                result["selected_principle_version"] = str(verdict["selected_principle_version"])
+        else:
+            return None
+    except (ValidationError, OSError, json.JSONDecodeError, KeyError) as exc:
+        raise ValueError(f"phase {phase!r} has an invalid formal method review: {exc}") from exc
+    result.update(
+        gate_verdict=verdict["decision"],
+        verdict_id=verdict["verdict_id"],
+        reviewer=verdict["reviewer"],
+        review_request_id=verdict["review_request_id"],
+        reviewed_artifact_hashes=verdict["reviewed_artifact_hashes"],
+        return_guidance=verdict.get("return_guidance"),
+    )
+    return result
+
+
 def _assert_outputs(
     root: str,
     state: dict,
@@ -793,10 +1125,13 @@ def _assert_outputs(
         "required handoff",
         phase,
     )
-    method_route_result = (
-        _validate_method_route_outputs(root, state, spec, phase, output_paths)
-        if phase in {"method_design", "route_human_selection", "method_refinement"}
-        else None
+    method_result = _validate_principle_method_outputs(
+        root,
+        state,
+        spec,
+        phase,
+        output_paths,
+        current_phase_evidence_ids=current_phase_evidence_ids,
     )
     if phase == "problem_generation":
         from arisctl.validators import validate_problem_candidates_artifact
@@ -925,7 +1260,8 @@ def _assert_outputs(
         ),
         "method_novelty_final": (
             "markdown",
-            {"NOVEL", "UNCERTAIN", "NOT_NOVEL", "BLOCKED"},
+            set(spec.get("accepted_verdicts") or [])
+            | set((spec.get("return_targets") or {}).keys()),
             None,
             "final method novelty verdict",
         ),
@@ -1005,9 +1341,9 @@ def _assert_outputs(
                 if kind == "candidate"
                 else {}
             ),
-            **(method_route_result or {}),
+            **(method_result or {}),
         }
-    return method_route_result
+    return method_result
 
 
 def _current_formal_evidence_paths(root: str, state: dict) -> dict[str, str]:
