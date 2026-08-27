@@ -87,7 +87,7 @@ agent at that file.
 
 ```
 mcp__claude-review__review_start:
-  task: |
+  prompt: |
     Read the review brief at <absolute path to RESEARCH_REVIEW_REQUEST.md>.
     Executor notes are not evidence beyond the files they cite, so verify the
     referenced artifacts before judging.
@@ -185,7 +185,7 @@ Update project memory/notes with key review conclusions.
 
 ## Key Rules
 
-- ALWAYS pin `model: the claude-review model` + `config: {"model_reasoning_effort": "ultra"}` for reviews (deep-audit tier; capability fallback per `reviewer-routing.md`, never below `xhigh`)
+- **Always ask the Claude reviewer for strict, high-rigor feedback** in every review round.
 - Put comprehensive context in the review brief. Codex can read local files
   when you pass an absolute path; manual reviewers usually cannot, so attach or
   paste the same brief there.

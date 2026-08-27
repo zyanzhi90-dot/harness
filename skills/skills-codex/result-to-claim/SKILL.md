@@ -152,16 +152,12 @@ is unresolved — never block the audit):
 # Policy B = warn-and-skip: nothing here may abort the audit. cd is non-fatal, the
 # helper run is explicitly non-blocking, no pipefail-fragile pipe.
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" 2>/dev/null || true
-if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills.txt ]; then
-    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null) || true
+if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills-codex.txt ]; then
+    ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills-codex.txt 2>/dev/null) || true
 fi
-if [ -z "${ARIS_REPO:-}" ] && [ -f "$HOME/.aris/repo" ]; then
-    ARIS_REPO=$(cat "$HOME/.aris/repo" 2>/dev/null) || true
-fi
-EVIDENCE_CHECK=".aris/tools/evidence_check.py"
-[ -f "$EVIDENCE_CHECK" ] || EVIDENCE_CHECK="tools/evidence_check.py"
-[ -f "$EVIDENCE_CHECK" ] || { [ -n "${ARIS_REPO:-}" ] && EVIDENCE_CHECK="$ARIS_REPO/tools/evidence_check.py"; }
-[ -f "$EVIDENCE_CHECK" ] || EVIDENCE_CHECK=""
+EVIDENCE_CHECK=""
+[ -n "${ARIS_REPO:-}" ] && [ -f "$ARIS_REPO/tools/evidence_check.py" ] && EVIDENCE_CHECK="$ARIS_REPO/tools/evidence_check.py"
+[ -z "$EVIDENCE_CHECK" ] && [ -f tools/evidence_check.py ] && EVIDENCE_CHECK="tools/evidence_check.py"
 
 mkdir -p .aris
 if [ -n "$EVIDENCE_CHECK" ]; then
@@ -176,9 +172,7 @@ if [ -n "$EVIDENCE_CHECK" ]; then
         echo "      pre-check skipped (Policy B); the Codex jury still runs." >&2
     fi
 else
-    echo "WARN: evidence_check.py not resolved at .aris/tools/, tools/, \$ARIS_REPO/tools/, or via ~/.aris/repo." >&2
-    echo "      Pre-check skipped (Policy B); the Codex jury still runs. Fix: rerun" >&2
-    echo "      bash tools/install_aris.sh, export ARIS_REPO, or copy the helper to tools/." >&2
+    echo "WARN: evidence_check.py unresolved; pre-check skipped (Policy B); the Codex jury still runs." >&2
 fi
 ```
 
@@ -333,7 +327,7 @@ silently rerun, pivot, or rewrite the causal explanation.
 1. Record postmortem in findings.md (Research Findings section):
    - What was tested, what failed, hypotheses for why
    - Constraints for future attempts (what NOT to try again)
-2. Update CLAUDE.md Pipeline Status
+2. Update the project pipeline status in `AGENTS.md` or project notes
 3. Decide whether to pivot to next idea from IDEA_CANDIDATES.md or try an alternative approach
 
 #### `partial` — Claim partially supported
@@ -367,17 +361,17 @@ proof `status` set) by `/proof-checker`; here we only attach experiment edges.
 
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" || exit 1
-ARIS_REPO="${ARIS_REPO:-$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills.txt 2>/dev/null)}"
+if [ -z "${ARIS_REPO:-}" ] && [ -f .aris/installed-skills-codex.txt ]; then
+  ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' .aris/installed-skills-codex.txt 2>/dev/null) || true
+fi
 if [ -z "${ARIS_REPO:-}" ] && [ -f "$HOME/.aris/repo" ]; then
   ARIS_REPO=$(cat "$HOME/.aris/repo" 2>/dev/null) || true
 fi
-WIKI_SCRIPT=".aris/tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || WIKI_SCRIPT="tools/research_wiki.py"
-[ -f "$WIKI_SCRIPT" ] || { [ -n "${ARIS_REPO:-}" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"; }
-[ -f "$WIKI_SCRIPT" ] || {
-  echo "WARN: research_wiki.py not found; verdict will be reported but wiki edges/query-pack/log will be skipped. Fix: bash tools/install_aris.sh or smart_update.sh (refreshes ~/.aris/repo), export ARIS_REPO, or cp <ARIS-repo>/tools/research_wiki.py tools/." >&2
-  WIKI_SCRIPT=""
-}
+WIKI_SCRIPT=""
+[ -n "${ARIS_REPO:-}" ] && [ -f "$ARIS_REPO/tools/research_wiki.py" ] && WIKI_SCRIPT="$ARIS_REPO/tools/research_wiki.py"
+[ -z "$WIKI_SCRIPT" ] && [ -f tools/research_wiki.py ] && WIKI_SCRIPT="tools/research_wiki.py"
+[ -z "$WIKI_SCRIPT" ] && [ -f ~/.codex/skills/research-wiki/research_wiki.py ] && WIKI_SCRIPT="$HOME/.codex/skills/research-wiki/research_wiki.py"
+[ -n "$WIKI_SCRIPT" ] || echo "WARN: research_wiki.py unreachable; skipping wiki writes (verdict still reported)." >&2
 ```
 
 ```
@@ -432,11 +426,11 @@ if research-wiki/ exists:
 
 ## Rules
 
-- **Codex is the judge, not CC.** CC collects evidence and routes; Codex evaluates. This prevents post-hoc rationalization.
+- **The secondary Codex agent is the judge, not the local executor.** The local executor collects evidence and routes; the reviewer agent evaluates. This prevents post-hoc rationalization.
 - Do not inflate claims beyond what the data supports. If Codex says "partial", do not round up to "yes".
 - A single positive result on one dataset does not support a general claim. Be honest about scope.
 - If `confidence` is low, treat the judgment as inconclusive and add experiments rather than committing to a claim.
-- **Fail closed if the reviewer is unavailable.** If the Codex call fails, first walk the capability fallback chain in `shared-references/reviewer-routing.md` (`gpt-5.6-sol`+`ultra` → `gpt-5.6-sol`+`xhigh` → `gpt-5.5`+`xhigh`, capability errors only). If no allowed pair succeeds: write `CLAIMS_FROM_RESULTS.md` containing ONLY the first line `verdict: REVIEW_UNAVAILABLE` (a machine-checkable gate for pipeline callers), record the same in findings.md, and STOP — CC never substitutes its own claim judgment (a loop can drive, never acquit; `acceptance-gate.md`). Downstream steps (wiki `add_experiment` edges, ablation-planner, paper claims) must not consume a run without a Codex verdict. Exception: the deterministic evidence pre-check (Step 1.5) may still terminally mark a claim `claim_supported: no` for hallucinated evidence — a deterministic rejection needs no reviewer; only SUPPORTIVE or ambiguous outcomes require one.
+- **Fail closed if the reviewer is unavailable.** If the Codex call fails, first walk the capability fallback chain in `shared-references/reviewer-routing.md` (`gpt-5.6-sol`+`ultra` → `gpt-5.6-sol`+`xhigh` → `gpt-5.5`+`xhigh`, capability errors only). If no allowed pair succeeds: write `CLAIMS_FROM_RESULTS.md` containing ONLY the first line `verdict: REVIEW_UNAVAILABLE` (a machine-checkable gate for pipeline callers), record the same in findings.md, and STOP — the local executor never substitutes its own claim judgment (a loop can drive, never acquit; `acceptance-gate.md`). Downstream steps (wiki `add_experiment` edges, ablation-planner, paper claims) must not consume a run without a Codex verdict. Exception: the deterministic evidence pre-check (Step 1.5) may still terminally mark a claim `claim_supported: no` for hallucinated evidence — a deterministic rejection needs no reviewer; only SUPPORTIVE or ambiguous outcomes require one.
 - Always record the verdict and reasoning in findings.md, regardless of outcome.
 
 ## Review Tracing
