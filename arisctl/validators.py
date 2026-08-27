@@ -1877,18 +1877,17 @@ def validate_method_design_packet(
     }
 
 
+def render_method_design_view(packet: dict[str, Any]) -> str:
+    serialized = json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True)
+    return f"# Method Design\n\n```json\n{serialized}\n```\n"
+
+
 def validate_method_design_view(text: Any, packet: dict[str, Any]) -> str:
-    if not isinstance(text, str) or not text.strip():
-        raise ValidationError("method design view must be non-empty Markdown")
-    required = [packet["cycle_id"], packet["execution_set_id"]]
-    required.extend(item["mechanism_change_id"] for item in packet["required_mechanism_changes"])
-    required.extend(item["capability_id"] for item in packet["required_capabilities"])
-    required.extend(item["obligation_id"] for item in packet["design_obligations"])
-    required.extend(item["principle_id"] for item in packet["candidate_principles"])
-    required.extend(item["test_id"] for item in packet["discriminating_tests"])
-    missing = sorted({str(value) for value in required if str(value) not in text})
-    if missing:
-        raise ValidationError(f"method design view omits canonical packet references: {missing}")
+    expected = render_method_design_view(packet)
+    if text != expected:
+        raise ValidationError(
+            "method design view must exactly match the deterministic packet rendering"
+        )
     return text
 
 

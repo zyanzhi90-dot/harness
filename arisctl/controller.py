@@ -45,6 +45,7 @@ from .validators import (
     validate_principle_evidence_context,
     validate_selected_principle,
     render_field_map,
+    render_method_design_view,
     sha256_file,
     validate_canonical_registry,
     validate_coverage_review,
@@ -2409,28 +2410,6 @@ class ARISController:
 
         role = str(request["required_reviewer_role"])
         phase_name = str(phase["phase"])
-        if phase_name in {"method_design", "principle_evaluation"}:
-            payload = self._attested_reviewer_payload(
-                role=role,
-                request_id=str(request["id"]),
-                reviewer=str(result["reviewer"]),
-                verdict_id=str(result["verdict_id"]),
-                decision=str(result["gate_verdict"]),
-                artifact_bindings=dict(request["artifact_bindings"]),
-            )
-            manifest_name = (
-                "method_design_review"
-                if phase_name == "method_design"
-                else "principle_evaluation_verdict"
-            )
-            path = self.root / str(self.workflow["artifact_manifest"][manifest_name])
-            try:
-                actual = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ControllerError("formal method verdict artifact is not valid JSON") from exc
-            if actual != payload:
-                raise ControllerError("formal method verdict artifact differs from the attested reviewer payload")
-            return
         if phase_name not in {"problem_quality_gate", "problem_novelty_gate"}:
             return
         payload = self._attested_reviewer_payload(
@@ -2866,15 +2845,6 @@ class ARISController:
         if phase_name == "problem_novelty_gate":
             bindings.update(self._novelty_coverage_bindings())
         bindings.update(self._incremental_evidence_bindings(state, phase_name))
-        spec = self._phase_spec(state, phase_name)
-        for raw_path in run_state._resolve_artifact_refs(
-            state.get("workflow") or {},
-            list(spec.get("scientific_history_inputs") or []),
-            phase_name,
-        ):
-            path = self.root / raw_path
-            if path.is_file():
-                bindings[str(raw_path)] = sha256_file(path)
         if not bindings:
             raise ControllerError(f"formal Gate {phase_name!r} has no bindable reviewed artifact")
         return bindings
@@ -3101,6 +3071,10 @@ class ARISController:
         elif phase_name == "principle_evaluation":
             packet = self._method_packet(state, accepted=True)
             evaluation = json.loads(path.read_text(encoding="utf-8"))
+            updates_by_principle = {
+                (str(update["principle_id"]), str(update["principle_version"])): update
+                for update in evaluation["principle_updates"]
+            }
             for update in evaluation["principle_updates"]:
                 candidate = next(
                     item
@@ -3129,6 +3103,10 @@ class ARISController:
             cycle = state["scientific_core"].get("method_test_cycle") or {}
             for test_id, outcome in (cycle.get("terminal_outcomes") or {}).items():
                 test = cycle["tests"][test_id]
+                record_refs = [
+                    *deepcopy(outcome.get("result_refs") or []),
+                    {"path": reviewed[0], "sha256": digest},
+                ]
                 self._append_method_history_event(
                     "method_test_evidence",
                     {
@@ -3139,14 +3117,39 @@ class ARISController:
                         "execution_set_id": str(cycle["execution_set_id"]),
                         "test_id": test_id,
                         "targets": deepcopy(test["targets"]),
-                        "record_refs": [
-                            *deepcopy(outcome.get("result_refs") or []),
-                            {"path": reviewed[0], "sha256": digest},
-                        ],
+                        "record_refs": deepcopy(record_refs),
                         "reason": "Principle evaluation consumed the terminal test outcome",
                         "recorded_at": recorded_at,
                     },
                 )
+                principle_keys = {
+                    (str(target["principle_id"]), str(target["principle_version"]))
+                    for target in test["targets"]
+                }
+                for principle_key in sorted(principle_keys & updates_by_principle.keys()):
+                    update = updates_by_principle[principle_key]
+                    self._append_method_history_event(
+                        "method_test_evidence",
+                        {
+                            "schema_version": 1,
+                            "event_id": f"method-test-{uuid.uuid4().hex}",
+                            "event_type": "PRINCIPLE_DECISION_RECORDED",
+                            "cycle_id": str(cycle["cycle_id"]),
+                            "execution_set_id": str(cycle["execution_set_id"]),
+                            "test_id": test_id,
+                            "targets": deepcopy(test["targets"]),
+                            "principle_id": principle_key[0],
+                            "principle_version": principle_key[1],
+                            "decision": str(update["decision"]),
+                            "evidence_refs": deepcopy(update.get("evidence_refs") or []),
+                            "updated_boundary_or_assumption_refs": deepcopy(
+                                update.get("updated_boundary_or_assumption_refs") or []
+                            ),
+                            "record_refs": deepcopy(record_refs),
+                            "reason": str(update["rationale"]),
+                            "recorded_at": recorded_at,
+                        },
+                    )
         phase["history_recorded_for_reviewed_sha256"] = digest
 
     def refresh_current_review_request(self) -> dict[str, Any]:
@@ -3161,7 +3164,7 @@ class ARISController:
             if phase.get("status") != "running" or not spec.get("formal_gate") or not reviewed:
                 raise ControllerError("current phase has no running Main artifact review to finalize")
             try:
-                run_state._validate_method_main_artifact(
+                main_artifact = run_state._validate_method_main_artifact(
                     str(self.root),
                     state,
                     spec,
@@ -3172,6 +3175,14 @@ class ARISController:
                 )
             except ValueError as exc:
                 raise ControllerError(str(exc)) from exc
+            if phase["phase"] == "method_design":
+                view_path = self.root / str(
+                    self.workflow["artifact_manifest"]["method_design_view"]
+                )
+                view_path.parent.mkdir(parents=True, exist_ok=True)
+                view_path.write_text(
+                    render_method_design_view(main_artifact["packet"]), encoding="utf-8"
+                )
             self._record_reviewed_artifact_history(state, phase)
             expected = self._phase_review_bindings(state, str(phase["phase"]))
             request = phase.get("review_request")
