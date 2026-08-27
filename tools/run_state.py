@@ -1319,6 +1319,12 @@ def _assert_outputs(
                     artifact_bindings=bindings,
                     decisions=phase_decisions,
                 )
+                if verdict["decision"] in (spec.get("return_targets") or {}):
+                    return_guidance = verdict.get("return_guidance")
+                    if not isinstance(return_guidance, dict) or not return_guidance:
+                        raise ValueError(
+                            f"{label} requires non-empty structured return_guidance for a return verdict"
+                        )
         except ValueError as exc:
             raise ValueError(f"phase {phase!r} has invalid {label}: {exc}") from exc
         return {
@@ -1339,7 +1345,11 @@ def _assert_outputs(
                     ),
                 }
                 if kind == "candidate"
-                else {}
+                else (
+                    {"return_guidance": verdict["return_guidance"]}
+                    if verdict["decision"] in (spec.get("return_targets") or {})
+                    else {}
+                )
             ),
             **(method_result or {}),
         }
