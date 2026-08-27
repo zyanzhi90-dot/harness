@@ -1,7 +1,7 @@
 ---
 name: novelty-check
 description: Verify problem novelty, method novelty, or both against recent literature. Use when user says "查新", "novelty check", "有没有人做过", "check novelty", or wants to verify a research problem or method before committing.
-argument-hint: "[mode: problem|method|combined] [problem-or-method-description]"
+argument-hint: "[mode: problem|method|method-final|combined] [problem-or-method-description]"
 allowed-tools: Grep, Read, Glob, mcp__codex__codex
 ---
 
@@ -16,7 +16,7 @@ established in the literature: **$ARGUMENTS**
 
 ## Instructions
 
-Parse `mode: problem|method|combined` from the arguments. Default to `combined`
+Parse `mode: problem|method|method-final|combined` from the arguments. Default to `combined`
 when both a problem and method are present; otherwise infer the only applicable
 mode and state that inference. Follow
 [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
