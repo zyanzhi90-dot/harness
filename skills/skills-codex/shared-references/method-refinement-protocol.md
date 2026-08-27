@@ -1,76 +1,67 @@
 # Method Refinement Protocol
 
-Use this protocol to refine one Certified Problem Contract and its validated
-root-cause handoff through iterative
-review and an independent final decision. It owns context, state, review, and
-recovery. Scientific method design is owned only by
+Use this protocol only after the Controller has accepted
+`PRINCIPLE_CONVERGED` and materialized an active
+`idea-stage/SELECTED_PRINCIPLE.yaml`. It owns Selected-Principle-first target
+adaptation, iterative issue resolution, and the final method review. Principle
+formation and convergence remain owned by
 [`method-design-contract.md`](method-design-contract.md).
-
-## Contents
-
-- Input gate and active-context capsule
-- Canonical state and artifacts
-- R0-R4: freeze, build, review, and revise
-- R5: Controller-issued final independent review
-- R6: finalization and failure paths
 
 ## Scientific invariant
 
-Preserve:
+Preserve this order:
 
 ```text
-Field Evidence Map -> Certified Problem Contract
-  -> DIAGNOSIS_READY primary causal chains
-  -> competing explanations -> falsifiable Scientific Mainline
-  -> Design Obligations -> minimal sufficient dominant solution
-  -> dominant-only closure -> residual MUST gap
-  -> Field Map and same-field completion when that gap remains
-  -> cross-field structural search only if same-field options cannot reasonably close it
-  -> necessary natural integration
-  -> minimum claim-validation logic -> independent final decision
+Selected Principle
+  -> target-domain adaptation
+  -> minimal faithful realization
+  -> Principle-only closure attempt
+  -> residual mechanism/adaptation gaps
+  -> minimal necessary supporting mechanisms
+  -> Final Scientific Delta Claim
+  -> claim-validation obligations
+  -> independent final method review
 ```
 
-Combination is permitted only when a supporting mechanism closes a declared
-residual `MUST` gap; it is neither the default search strategy nor the
-innovation verdict. All detailed rules for the dominant method, supporting
-mechanisms, transfer, integration, removal/counterfactual tests, and novelty
-live in the method-design contract; do not copy them here or into platform
-skills.
+Concrete Method commitments begin here, not in pre-convergence test
+operationalization. Supporting mechanisms may be added only after a faithful
+Principle-only realization exposes a named residual mechanism or adaptation
+gap. Composition is minimal and gap-driven, not a novelty strategy.
 
 ## Input gate
 
 Require:
 
-- one `CERTIFIED/accepted` problem version, acceptance record, and separate
-  problem-novelty verdict;
-- `ROOT_CAUSE_ANALYSIS.json` and `ROOT_CAUSE_VERDICT.json` with
-  `DIAGNOSIS_READY`, matching IDs, and matching problem/evidence/analysis
-  SHA-256 values;
-- evidence-backed phenomenon, scope, value under either answer, and falsifier;
-- compact Active Field Map plus retrievable evidence IDs;
-- optional rough route, constraints, and reviewer feedback.
+- the active accepted Problem Contract and Evidence Capsule;
+- accepted Root-Cause Analysis/verdict with current hashes;
+- accepted `ACTIVE_FIELD_MAP.md` and currently usable Evidence;
+- Controller-materialized `SELECTED_PRINCIPLE.yaml` with the selected
+  Principle ID/version, causal-chain, RMC, Capability, and Obligation bindings,
+  Evidence closure, activation/failure conditions, boundaries, and remaining
+  uncertainty;
+- the latest Controller-exposed method-level reviewer guidance, Human feedback,
+  novelty feedback, or Full Validation result directed to this phase;
+- the previous proposal when a validation or method-level return preserves the
+  same Selected Principle.
 
-Return to problem discovery for `HOLD`, `REJECT`, `BLOCKED`, missing evidence,
-or material scope ambiguity. Do not compensate with a more elaborate method.
+The Selected Principle remains active for `REVISE`, `HOLD`,
+`REVISE_METHOD_DELTA`, final Human `request_revision`, and
+`METHOD_REFINEMENT_REQUIRED`. A Principle-level rethink/rejection, RCA reopen,
+or Problem-premise reopen invalidates it through the Controller; do not
+reconstruct it from history.
 
-## Active-context capsule
+If return feedback is active, consume the identified findings, Evidence, claim
+elements, and required checks before revising. A return cannot be satisfied by
+rewriting prose while preserving the rejected scientific state.
 
-Keep only:
+## Active context and artifacts
 
-1. Certified Problem Contract and validated primary causal-chain IDs;
-2. compact Active Field Map;
-3. latest full proposal;
-4. unresolved-issues ledger;
-5. evidence cards referenced by the current decision.
+Keep only the active Problem/RCA/Selected-Principle bindings, current proposal,
+unresolved issue IDs, current Evidence, and current return feedback in the
+working context. Older rounds and ledger records remain retrievable audit
+history.
 
-Keep the full Evidence Registry and older rounds on disk. Retrieve them by
-source or issue ID only when needed. On resume, read state, the focused
-contract, latest proposal, and unresolved ledger; do not read every historical
-round.
-
-## Canonical state and artifacts
-
-Use:
+Use the existing refinement artifacts:
 
 ```text
 refine-logs/
@@ -85,135 +76,201 @@ refine-logs/
   REFINEMENT_REPORT.md
 ```
 
-`REFINE_STATE.json` records schema version, phase, round, iterative reviewer
-handle, latest verdict, unresolved blocking issue IDs, current proposal path,
-Certified Problem Contract hash, root-cause analysis/verdict hashes,
-primary causal-chain IDs, scope/constraint hash, proposal hash,
-blind-verdict ID, acceptance status, and status. The Research Contract freezes
-the accepted problem/evidence snapshot; `ACTIVE_PROPOSAL.md` is the only
-mutable full method proposal and records the contract hash it implements.
-Round decisions contain only accepted/rejected changes and issue transitions;
-never duplicate the full proposal in every round.
+`REFINE_STATE.json` records refinement/review progress only; it is not a second
+scientific-core lifecycle. `ACTIVE_PROPOSAL.md` is the one mutable proposal.
+Create `MANIFEST.md` only when the shared artifact threshold is crossed.
 
-`FINAL_PROPOSAL.md` keeps the selected route's `route_id`, complete
-problem-version binding, root-cause analysis ID/SHA-256, and referenced
-causal-chain and design-obligation IDs in the template's typed fields. The
-references must resolve in `SELECTED_ROUTE.yaml`; a revised proposal is not a
-route-switch mechanism.
+## R0 — Freeze accepted upstream bindings
 
-Create `MANIFEST.md` only when the run exceeds the shared artifact threshold.
+Copy the active Problem, RCA, and Selected Principle identities unchanged. A
+proposal may adapt the Principle but cannot silently switch its ID/version,
+causal chains, RMCs, Capabilities, or Obligations. A contradiction in the
+selected Principle returns `RETHINK`; a contradiction in the accepted RCA uses
+`RCA_CONFLICT`; a material Problem change uses the existing Problem revision or
+validation-return path.
 
-## Workflow
+## R1 — Target-domain adaptation
 
-### R0 — Freeze the problem and diagnosis
+Translate the selected algorithm-independent intervention into the target
+domain. Specify:
 
-Copy the Certified Problem Contract and validated root-cause handoff unchanged;
-verify their problem ID/version, evidence IDs, causal-chain IDs, hashes, P3
-verdict, and `DIAGNOSIS_READY` verdict. `ACTIVE_PROPOSAL.md` is a separate,
-mutable method artifact and records that problem-version binding. A requested
-change to the question, scope, or falsifier stops refinement: the user must use
-explicit `arisctl revise-problem`, which creates a draft problem version and
-requires the existing problem quality, novelty, and human-acceptance sequence.
-Do not freeze Design Obligations before the hypothesis.
+- target entities, relations, states, information structures, and operating
+  conditions;
+- how the selected intervention acts on them;
+- how activation and failure conditions map to the target domain;
+- which accepted RMCs, Capabilities, and Obligations the adaptation serves;
+- which uncertainties remain assumptions rather than facts.
 
-### R1 — Build the active proposal
+Do not introduce a preferred backbone or component before the adaptation logic
+requires it.
 
-Execute M0-M6 of `method-design-contract.md` in order. Use its canonical output
-order and `templates/METHOD_PROPOSAL_TEMPLATE.md`. Keep evidence, inference,
-hypothesis, and proposal distinct. Never claim unrun experiments or unverified
-novelty.
+## R2 — Minimal faithful realization and Principle-only closure
 
-### R2 — Start independent iterative review
+Construct the smallest concrete realization that faithfully embodies the
+Selected Principle. Distinguish reused implementation machinery from core
+method changes. Then attempt Principle-only closure against every selected RMC,
+Capability, Obligation, failure condition, and applicability boundary.
 
-Start from raw artifacts in a fresh review context. Judge:
+For each closure entry record:
 
-1. problem fidelity;
-2. competing-explanation discipline and hypothesis quality;
-3. obligation traceability;
-4. dominant-carrier fit;
-5. integration and Scientific Closure;
-6. feasibility and boundary awareness;
-7. Scientific Delta and minimum claim-validation logic.
+```yaml
+binding_ids: []
+principle_intervention:
+concrete_realization:
+predicted_mechanism_change:
+closure_status: CLOSED | RESIDUAL_GAP
+evidence_or_reason:
+```
 
-Require issue IDs, severity, evidence, a correction, and
-`READY | REVISE | RETHINK | HOLD`. A numeric score tracks progress only.
+Do not use pre-convergence test-only realizations as an implicit backbone or
+Method commitment. Reuse one only if the post-convergence adaptation reasoning
+independently selects it as the minimal faithful realization.
 
-### R3 — Revise against issue IDs
+## R3 — Residual gaps and minimal necessary composition
 
-For each suggestion:
+Only a genuine `RESIDUAL_GAP` may justify a supporting mechanism. Give each gap
+a stable ID and record the failed closure link, target condition, consequence,
+and acceptance condition.
 
-- accept it when evidence shows it repairs an issue without problem drift;
-- reject it with evidence when it creates drift, redundancy, or unsupported
-  claims;
-- update the issue ledger;
-- revise only `ACTIVE_PROPOSAL.md`.
+First use the accepted Field Map and current Evidence. If a residual adaptation
+gap still lacks a justified solution, the running `method_refinement` phase may
+use the existing incremental literature gateway with
+`search_mode: ADAPTATION_GAP_SEARCH`. Its query-plan context binds the active
+Selected Principle ID/version/hash and non-empty
+`residual_adaptation_gaps`; every query binds a decision target and one or more
+gap IDs.
 
-Use the same reviewer thread only to check whether that reviewer's own issue
-IDs were resolved. Never use continuity as independent acceptance.
+For each supporting mechanism retained after that check, record:
 
-### R4 — Exit the iterative loop
+```yaml
+residual_gap_ids: []
+mechanism:
+why_the_selected_principle_alone_cannot_close_the_gap:
+activation_conditions:
+integration_interface:
+assumption_compatibility:
+removal_or_counterfactual_failure_prediction:
+```
 
-Stop when no blocking issue remains or the configured round limit is reached.
-Do not optimize prose or component count merely to raise a score. A score
-threshold or round limit cannot create `READY`.
+Remove a support when it closes no declared gap, duplicates the faithful
+realization, conflicts with the Selected Principle, lacks a real interface, or
+has no discriminating removal/counterfactual consequence. Preserve operational
+prerequisites as implementation constraints rather than scientific novelty.
 
-### R5 — Controller-issued final independent review
+If adaptation-gap search or Evidence re-adoption occurs while the phase is
+running, finish that session before final review and refresh the review request
+after the final proposal is written.
 
-The Controller-issued `independent_method_reviewer` is the one fresh final
-independent Gate. Start it in a new reviewer context with:
+## R4 — Final Scientific Delta Claim and validation obligations
 
-- Certified Problem Contract;
-- Active Field Map and cited evidence cards;
-- current proposal;
-- venue and resource constraints.
+State the `Final Scientific Delta Claim` that Full Validation will test. It may
+claim a new mechanism, representation, boundary, or important capability only
+within the Selected Principle's Evidence-supported conditions and the final
+Method's stated scope. It is not yet an established scientific fact.
 
-Do not pass generator history, previous scores, earlier feedback, or a change
-summary. Require blocking claim/evidence failures, unresolved alternative
-explanations, integration/redundancy failures, overclaiming, and missing
-boundary tests. It returns exactly one Controller-declared verdict:
+For every claim element specify a claim-validation obligation:
 
-| Verdict | Formal Controller effect |
+```yaml
+claim_element_id:
+causal_chain_ids: []
+mechanism_change_ids: []
+capability_ids: []
+obligation_ids: []
+core_method_changes: []
+predicted_mechanism_change:
+discriminating_evidence_required:
+performance_consequence_required:
+falsifying_pattern:
+failure_conditions_and_boundary:
+```
+
+Performance improvement alone cannot satisfy a mechanism-level claim. The
+obligations must permit Full Validation to recover:
+
+```text
+predicted mechanism change
+  -> observed mechanism change
+  -> discriminating evidence
+  -> performance consequence
+```
+
+## R5 — Write the final proposal
+
+Use `templates/METHOD_PROPOSAL_TEMPLATE.md`. `FINAL_PROPOSAL.md` must contain
+these exact non-empty sections and include every Selected Principle binding ID:
+
+1. `Selected Principle binding`
+2. `Target-domain adaptation`
+3. `Minimal faithful realization`
+4. `Principle-only closure attempt`
+5. `Residual mechanism and adaptation gaps`
+6. `Minimal necessary composition`
+7. `Core method changes`
+8. `Predicted mechanism changes`
+9. `Failure conditions and applicability boundaries`
+10. `Final Scientific Delta Claim`
+11. `Claim-validation obligations`
+
+Keep evidence, inference, proposal, and unvalidated Claim distinct.
+
+## R6 — Review and revise
+
+Iterative review may identify issue IDs for problem/RCA/Principle fidelity,
+adaptation correctness, realization faithfulness, residual-gap necessity,
+integration, feasibility, Claim calibration, and validation completeness.
+Resolve issue IDs against Evidence and revise only the active proposal. Scores
+are progress signals, never acceptance rules.
+
+The Controller-issued `independent_method_reviewer` is the sole formal final
+method reviewer. After all legal Evidence work is complete and
+`FINAL_PROPOSAL.md` is final, invoke `refresh-review-request`; dispatch the
+reviewer only against that current binding. Write its unchanged verdict to
+`FINAL_BLIND_REVIEW.md` with the live request and reviewed-artifact hashes.
+
+Formal outcomes are:
+
+| Verdict | Controller effect |
 |---|---|
-| `METHOD_READY` | accept this Gate and continue to final method novelty review |
-| `REVISE` | selected route remains valid; return to `method_refinement` |
-| `RETHINK` | the route's core method is unsound or inadequate; return to `method_design` and repeat the existing route-selection path |
-| `HOLD` | missing method-level evidence prevents a responsible decision; return to `method_refinement` and use its existing evidence/refinement path |
+| `METHOD_READY` | accept the phase and continue to final method novelty review |
+| `REVISE` | revise adaptation, realization, composition, Claim, or validation obligations in `method_refinement` |
+| `HOLD` | obtain or explain missing method-level Evidence in `method_refinement` |
+| `RETHINK` | return to `method_design` because the selected Principle or its scientific delta must be reconsidered |
+| `RCA_CONFLICT` | return linked Evidence and mechanism conflict to `root_cause_analysis` |
 
-`REVISE`, `RETHINK`, and `HOLD` are final formal Gate outcomes, not merely
-notes for the iterative loop. This reviewer has no authority to reopen the
-root-cause analysis or problem premise. Do not run a separate internal final
-blind audit: R2-R4 are iterative issue-resolution feedback, while R5 is the
-only independent review that decides whether this phase ends.
+The formal reviewer does not select a new Principle or rewrite the RCA.
 
-### R6 — Finalize
+## Downstream boundaries
 
-Write:
+The final novelty Gate distinguishes failure layers:
 
-- `FINAL_PROPOSAL.md`: clean proposal;
-- `FINAL_BLIND_REVIEW.md`: the raw verdict from that sole independent review.
-  It includes exactly one
-  fenced JSON metadata block with `schema_version: 1`, `review_request_id`,
-  `reviewer`, `verdict_id`, one of `decision: METHOD_READY | REVISE | RETHINK |
-  HOLD`, and
-  `reviewed_artifact_hashes`; the Controller binds the completed
-  `FINAL_PROPOSAL.md` SHA-256 to that same live request before attestation;
-- `REVIEW_SUMMARY.md`: compact issue-resolution and remaining-risk handoff;
-- `REFINEMENT_REPORT.md`: problem preservation, rejected suggestions,
-  limitations, and final decision.
+- `REVISE_METHOD_DELTA` preserves the Selected Principle and returns concrete
+  adaptation/embodiment/Claim work here;
+- `RETHINK_PRINCIPLE_DELTA` returns to `method_design` and invalidates the
+  Selected Principle through the Controller;
+- `HOLD` remains in the novelty Gate for missing novelty Evidence or
+  interpretation.
 
-If R5 does not return `METHOD_READY`, preserve the best proposal and its
-formal verdict; the Controller performs the fixed return above. Never
-fabricate readiness.
+Final Human acceptance accepts or requests revision of the final Method; it is
+not a Principle-selection Gate and does not start Full Validation. Only explicit
+user initiation obtains the Controller validation handoff.
+
+Use stage language exactly:
+
+```text
+method_design        -> Provisional Scientific Delta
+method_refinement    -> Final Scientific Delta Claim
+VALIDATED only       -> Established Scientific Delta
+```
 
 ## Failure paths
 
 | Code | Trigger | Response |
 |---|---|---|
-| `PROBLEM_DRIFT` | question, scope, or falsifier changes | return to problem discovery |
-| `EXPLANATION_COLLAPSE` | one plausible story becomes diagnosis without discrimination | restore competitors |
-| `CAUSAL_OVERCLAIM` | claim exceeds identification | downgrade claim or strengthen design |
-| `ROUTE_BLOAT` | mechanism has no unique obligation | remove it |
-| `INTEGRATION_MISSING` | parts lack a shared interface | redesign or remove support |
-| `REVIEWER_OVERFIT` | readiness depends on same-thread score | run the Controller-issued final independent review |
-| `CONTEXT_BLOAT` | recovery loads all rounds/evidence | restore the active-context capsule |
-| `NO_READY_ROUTE` | closure remains incomplete | retain explicit non-READY status |
+| `SELECTED_PRINCIPLE_MISSING` | no active Controller-materialized selection | stop; do not reconstruct it |
+| `PRINCIPLE_DRIFT` | proposal silently changes the selected Principle or bindings | return `RETHINK` or `RCA_CONFLICT` as applicable |
+| `ADAPTATION_UNFAITHFUL` | concrete Method does not instantiate the selected intervention | redesign the minimal realization |
+| `COMPOSITION_PREMATURE` | support is added before a Principle-only closure attempt | remove it and run closure first |
+| `SUPPORT_UNGROUNDED` | support closes no named residual gap | remove it |
+| `INTEGRATION_MISSING` | support lacks a real interface | redesign or remove it |
+| `CLAIM_OVERSTATED` | Final Scientific Delta Claim exceeds current Evidence or boundaries | narrow the Claim |
+| `VALIDATION_OBLIGATION_INCOMPLETE` | a claim cannot be traced to mechanism and performance evidence | repair the obligation before `METHOD_READY` |

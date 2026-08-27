@@ -27,8 +27,13 @@ python -m arisctl --root . validation-handoff <run_id>
 Proceed only when this command succeeds. It is the sole formal entry to this
 pipeline: it records the user's validation start and verifies that the run is in
 `METHOD_CONFIRMED_AWAITING_USER_VALIDATION`, with the accepted problem,
-root-cause analysis and verdict, final method proposal, novelty verdict, human
-method acceptance, provenance, and current artifact hashes.
+root-cause analysis and verdict, Controller-materialized Selected Principle,
+final method proposal, novelty verdict, human method acceptance, provenance,
+and current artifact hashes. Consume the returned `validation_obligations`:
+causal chains, Required Mechanism Changes, Required Capabilities/Design
+Obligations, selected Principle intervention, core method changes, predicted
+mechanism changes, failure/applicability boundaries, Final Scientific Delta
+Claim, and claim-validation obligations.
 
 Record and pass forward only the returned run ID, workflow hash, **handoff
 hash**, artifact hash map, and artifact paths. Do not recreate, infer, replace, or supplement
@@ -72,11 +77,12 @@ ad-hoc/legacy path inside `/research-pipeline`.
    python -m arisctl --root . submit-validation-result <run_id> VALIDATION_RESULT.json
    ```
 
-   Its fixed outcomes are `VALIDATED` (formally close validation),
-   `METHOD_REFINEMENT_REQUIRED` (the selected route remains valid, but its
-   proposal requires revision), `METHOD_ROUTE_REJECTED` (return to method
-   design and route selection), `ROOT_CAUSE_REJECTED` (return to root-cause
-   analysis), and `PROBLEM_PREMISE_REJECTED` (reopen problem generation). The
+   Its fixed outcomes are `VALIDATED` (formally close validation and record the
+   Established Scientific Delta), `METHOD_REFINEMENT_REQUIRED` (the Selected
+   Principle remains valid, but its concrete Method/Claim requires revision),
+   `SELECTED_PRINCIPLE_REJECTED` (return to Principle formation),
+   `ROOT_CAUSE_REJECTED` (return to root-cause analysis), and
+   `PROBLEM_PREMISE_REJECTED` (reopen problem generation). The
    Controller archives and invalidates the affected downstream canonical
    artifacts; this skill never chooses a target itself.
 

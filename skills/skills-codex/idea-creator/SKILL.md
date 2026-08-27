@@ -1,189 +1,398 @@
 ---
 name: idea-creator
-description: "Codex-compatible independent problem-discovery, root-cause diagnosis, or method-design module."
+description: "Run one independent problem-discovery, root-cause diagnosis, or Principle formation/evaluation module. Use mode: problem to certify an evidence-grounded problem; mode: diagnosis to execute 1a-2b and obtain an independent root-cause verdict; mode: method only after DIAGNOSIS_READY."
 argument-hint: "mode: problem|diagnosis|method; direction or handoff path"
 ---
 
-# Research Idea Creator (Codex adapter)
+# Research Idea Creator (Codex adapter) — three independent modes
 
-Run one explicit mode for **$ARGUMENTS**. The adapter preserves the mainline
-scientific contract while using the local Codex runner and fresh contexts.
+Run exactly one mode for: **$ARGUMENTS**.
 
-## Mode boundary
+This skill is intentionally split at artifact boundaries. Fresh invocations in
+`mode: diagnosis` and `mode: method` must not inherit the previous module's
+reasoning history. Diagnosis reads the accepted problem handoff; method reads
+the validated diagnosis handoff. The parent orchestrator may call the modes
+sequentially, but it must not skip either boundary.
 
-`mode: problem` reads the Field Evidence Map, matures internal Leads into
-evidence-grounded problem Candidates only when ready, and produces quality/novelty packets. It must stop before method
-design and wait for a Controller-recorded `human_accepted` problem version in
-`RESEARCH_CONTRACT.md`.
+## Shared execution contract
 
-`mode: diagnosis` reads only the accepted problem and evidence capsule. It
-executes 1a collection and description of phenomenon evidence directly
-representing the problem/failure, 1b phenomenon grouping, 2a causal-depth
-tracing, and 2b causal-chain construction under
-`root-cause-analysis-contract.md`. It writes `ROOT_CAUSE_ANALYSIS.{json,md}`;
-a fresh reviewer writes `ROOT_CAUSE_VERDICT.json`. 1a may use existing
-experiments, literature, datasets, real-world scenarios, or a necessary
-diagnostic pilot; a failed experiment is not required. It must not design
-methods. For a Method-triggered reopen, read the matching existing Controller
-return record (`method_design` → `root_cause_analysis`) and use its reason and
-trigger Evidence IDs; formally cite a method-stage Card only by running the
-existing `readopt-evidence` action.
+Read only the references needed for the active mode:
 
-`mode: method` reads the accepted problem plus a validated
-`DIAGNOSIS_READY` root-cause analysis/verdict with matching IDs, problem
-version, and hashes. It
-derives the scientific mainline and design obligations from
-`primary_causal_chain_ids`, then derives capabilities, chooses a minimal
-sufficient dominant solution, records dominant-only closure, and adds completion
-mechanisms only for residual MUST gaps. It
-must stop at human route selection and write `SELECTED_ROUTE.yaml` only after
-that decision. If this reasoning shows the accepted diagnosis needs
-re-analysis, finish any active method literature session and invoke the unique
-Controller `reopen-root-cause` action with a specific reason and any triggering
-formal method Evidence IDs; do not continue route design or rewrite RCA.
-
-`IDEA_REPORT.md` is a final human-facing report, not a machine handoff. Do not
-paste the full registry, raw search history, or previous reviewer transcript
-into a new context.
-
-If `LESSONS_LEARNED.md` exists, use only relevant entries as anti-repetition
-checks. They are not evidence or Controller handoffs and cannot authorize a
-transition. Never use `.aris/archive/` as an active input: `return-phase`
-moves invalidated outputs there so their former conclusion cannot be consumed.
-
-Starting context budget: active packet ≤24,000 characters, review bundle
-≤32,000 characters, at most 12 evidence cards and 8 unresolved issue IDs.
-Retrieve larger artifacts by stable path and ID; tune these defaults using
-task success, latency, and token-cost measurements.
-
-Read only the active module references:
-
-- [`idea-fanout-module.md`](../shared-references/idea-fanout-module.md) for
-  problem-mode breadth generation;
+- [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
 - [`root-cause-analysis-contract.md`](../shared-references/root-cause-analysis-contract.md)
-  for diagnosis mode and its independent Gate;
-- [`idea-wiki-integration.md`](../shared-references/idea-wiki-integration.md)
-  when `research-wiki/` is present;
-- [`idea-output-composition.md`](../shared-references/idea-output-composition.md)
-  when exporting the final report.
+- [`method-design-contract.md`](../shared-references/method-design-contract.md)
+- [`source-admission-policy.md`](../shared-references/source-admission-policy.md)
+- [`reviewer-independence.md`](../shared-references/reviewer-independence.md)
+- [`idea-fanout-module.md`](../shared-references/idea-fanout-module.md) — read
+  for problem-mode breadth generation only
+- [`idea-wiki-integration.md`](../shared-references/idea-wiki-integration.md) —
+  read when `research-wiki/` is present
+- [`idea-output-composition.md`](../shared-references/idea-output-composition.md) —
+  read when composing or exporting the final report
 
-## Problem mode
+Use `idea-stage/` as the working directory. Keep the full literature registry
+and raw search history out of the active prompt. Compile a compact packet with
+stable evidence IDs, claim/boundary/failure fields, and unresolved questions.
+Do not paste the complete `IDEA_REPORT.md` into downstream contexts.
 
-Follow `idea-fanout-module.md`: use isolated lens packets and structured Lead
-returns for discovery/triage only. Do not rank, certify, create Candidates,
-write Lead artifacts, or invoke a formal Gate from a shard.
+When `LESSONS_LEARNED.md` exists, read only entries relevant to the active
+problem, diagnosis, or method as anti-repetition checks. A lesson is neither
+formal evidence nor a handoff and cannot authorize a transition. Never read
+`.aris/archive/` as an active input: a Controller `return-phase` has moved
+invalidated outputs there precisely because their former conclusion no longer
+authorizes downstream work.
 
-Follow `problem-discovery-contract.md`: map field purpose/tasks/bottlenecks,
-method families, assumptions, boundaries, failures, contradictions, and
-negative evidence; discover community-open, self-discovered, and structurally
-justified migration Leads (routes, not quotas). Discover self-discovered Leads
-from horizontal comparison of shared assumptions, recurring failures,
-boundaries, inconsistent results, and unresolved contradictions, or from a key
-paper's discussion/conclusion, exposed bottleneck, or underdeveloped direction.
-A limitation is only a Lead, never a direct Candidate: compare it with the
-wider Field Map and run targeted deep dive first; triage each by starting
-observation, why track, largest uncertainty, current basis, and falsifier. Only
-a promising Lead in running `problem_generation` may use the existing targeted
-gateway, with one six-dimension primary `decision_dimension` plus immutable
-Lead/Field-Map/purpose/close-condition query context. The deep dive seeks
-disconfirmation, not only support. Evidence may strengthen,
-narrow, reframe, reject, or mature it. Only mature Leads become the existing
-formal Candidate schema; rejected Leads do not reach a validator or Gate. Then
-use a fresh jury for Reality, Importance, Unresolvedness, Precision,
-Falsifiability, and Answerability. Each dimension records `PASS`,
-`INSUFFICIENT_EVIDENCE`, or `FAIL`; only Reality, Importance, and
-Unresolvedness require formal evidence anchors, while the other dimensions may
-rely on the bound candidate and Field Map. Keep problem novelty separate from method
-novelty. Write `PROBLEM_CANDIDATES.jsonl`, `PROBLEM_CANDIDATES.md`, and verdict
-packets under `idea-stage/`. Human consideration includes every Quality-certified
-candidate with a completed consumable novelty audit (`NOVEL`, `NOT_NOVEL`, or
-`UNCERTAIN`), never novelty `survivor_ids` alone. After a Human
-`request_revision`, read the selected Candidate baseline, human feedback,
-novelty audit, and reviewer guidance from the latest Controller `return_history`
-entry; keep the same `problem_id` and make only the directed correction and
-directly affected content changes. After `reject`, use its human feedback to
-reassess the active Field Map and Evidence and form a different Candidate when
-warranted. Use the Controller return record as the active input. A model
-verdict is provisional; after human selection and before the Controller records
-human acceptance, prepare the versioned `RESEARCH_CONTRACT.md` and the separate
-`PROBLEM_EVIDENCE_CAPSULE.md`. The Contract must not embed the capsule: that
-independent artifact is the sole formal compact evidence handoff, and the
-Controller registers both hashes. A directed correction uses the live
-`problem_acceptance` Human Gate with `request_revision`, selected Candidate ID,
-and human feedback; a rejected Candidate uses `reject` with its selected ID and
-rejection reason. Both returns repeat Quality, Novelty, and Human Acceptance;
-the incremental literature gateway is used only for a real evidence gap.
+Every output must distinguish `evidence`, `inference`, `hypothesis`, and
+`decision`. Never treat a model score as acceptance. Formal verdicts require a
+verdict ID, reviewer identity/family, evidence anchors, and one status allowed
+by the active contract: problem certification uses
+`CERTIFIED/HOLD/REJECT/BLOCKED`; diagnosis uses
+`DIAGNOSIS_READY/REVISE_DIAGNOSIS/REOPEN_PROBLEM`. Human acceptance remains separate from
+machine or model review.
 
-### Phase 0: Load Research Wiki (if active)
+### Context budget (starting defaults)
 
-If `research-wiki/` exists, follow `idea-wiki-integration.md`. This preserves
-the existing **Load Research Wiki** and **Write Ideas to Research Wiki**
-behavior, but Wiki presence never means human acceptance. The module owns
-threat scanning, helper resolution, deterministic `upsert_idea`, and warn-only
-failure handling.
+Compile each active packet to at most 24,000 characters, with at most 12
+evidence cards and 8 unresolved issue IDs. Keep review bundles below 32,000
+characters; pass paths and stable IDs for larger artifacts. These are benchmark
+starting points, not scientific limits: measure task success, retrieval
+coverage, latency, and token cost before changing them. If a decision needs
+more evidence, retrieve the specific card by ID rather than appending the full
+registry or history.
 
-## Method mode
+For Codex-compatible path-only review transport, write the problem generator
+bundle to `idea-stage/codex_brainstorm_bundle.md` and prompt
+`Read the idea-generation bundle at <absolute path>`. Write the independent
+jury packet to `idea-stage/codex_triage_bundle.md`; never paste the full bundle
+into the reviewer context.
 
-Require `problem_status: CERTIFIED` and
-`acceptance_status: human_accepted`, plus `DIAGNOSIS_READY` and matching
-problem-version/evidence/analysis hashes. Import the validated causal chains,
-alternatives, discriminating evidence, falsifier, claim type, and obligations before
-searching techniques. Use the Controller-accepted `ACTIVE_FIELD_MAP.md` and
-its Evidence Registry as the formal method-mode input before technique search.
-While `method_design` is running, derive one canonical Design Obligation set
-from the accepted chains and intervention targets. If current knowledge cannot
-support a credible dominant mechanism, use `DOMINANT_SOLUTION_SEARCH` through
-the existing `arisctl` gateway: its Query Plan is the formal pre-route binding
-and every query names current obligation IDs and their derived chains, without
-requiring a dominant solution, closure, or residual gap. Search same-field,
-then causally isomorphic, then necessary cross-field mechanisms. Once a
-dominant carrier is credible, derive its minimal dominant-only closure. Only a
-declared residual `MUST` gap may use `RESIDUAL_MUST_GAP_SEARCH`; its queries
-bind decision targets and residual IDs. Reuse only the existing
-query/admission/read/evidence flow, never hosted web search/fetch. For each
-retained support, record the gap served, structural match, integration
-interface, compatible assumptions, removal failure, targeted validation, and
-transfer boundary.
-Preliminary `/novelty-check` is only a risk screen; final method novelty occurs
-after `/research-refine`.
-First seek a same-field mechanism for each declared residual `MUST` gap. Search
-another field only after recording why the accepted Field Map and a reasonable
-same-field search cannot close it. Combination is permitted only as the
-necessary support for that gap, never as a default or novelty verdict.
-Method artifacts are separate from the problem contract and may revise only
-their route/proposal content. Use explicit `arisctl revise-problem` for a
-material problem change; it creates a draft next version and repeats problem
-quality, novelty, and human acceptance.
-At route selection, `request_revision` returns only to `method_design`; final
-method acceptance uses the same decision to return only to `method_refinement`.
+## Mode dispatch
 
-## Wiki compatibility
+Parse the first explicit `mode:` value. If absent, default to `problem` and
+state that default in the output. Unknown modes are an error. The modes have
+different inputs, outputs, and stopping conditions:
 
-When active, preserve the existing **Write Ideas to Research Wiki** behavior
-through `upsert_idea`; retain `query_pack.md` and `review-tracing.md` paths for
-session compatibility. The compact handoffs are the authoritative state.
+| Mode | Reads | Writes | Must stop at |
+|---|---|---|---|
+| `problem` | Field Evidence Map and source records | `PROBLEM_CANDIDATES.*`, `PROBLEM_QUALITY_VERDICTS.jsonl`, `PROBLEM_NOVELTY_VERDICTS.jsonl`, then the separate `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` after user selection and before the Controller records human acceptance | human problem selection |
+| `diagnosis` | accepted `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` | `ROOT_CAUSE_ANALYSIS.json`, faithful `.md` view, independent `ROOT_CAUSE_VERDICT.json` | `DIAGNOSIS_READY` or return path |
+| `method` | accepted problem plus validated root-cause analysis/verdict; for evaluation, the Controller-formed Evidence Context | `METHOD_DESIGN_PACKET.json`, deterministic `METHOD_DESIGN.md`, or `PRINCIPLE_EVALUATION.json` according to the current phase; formal reviewer verdict artifacts | Principle/Test Human Gate or convergence return/acceptance |
 
-## Downstream order
+`IDEA_REPORT.md` is a final human-facing report only. It is never the machine
+handoff between these modes.
+
+---
+
+## Mode: `problem` — discovery and certification
+
+### P0. Validate the landscape
+
+Require a `SUFFICIENT` or bounded `PARTIAL` Field Evidence Map from
+`/research-lit`. The active map must cover field purpose, tasks, bottlenecks,
+method families, assumptions, effective and failure conditions, contradictions,
+evaluation blind spots, and negative evidence. If the map is `INSUFFICIENT`,
+return a blocked handoff with the missing searches; do not generate ideas.
+
+### P1. Discover and triage Leads in fresh lens contexts
+
+Follow [`idea-fanout-module.md`](../shared-references/idea-fanout-module.md):
+use isolated lens contexts and return structured Lead cognition only. Fan-out
+is for discovery and triage, not ranking, certification, or materializing a
+formal Candidate.
+
+Use all three routes when they yield useful Leads, without treating them as
+quotas:
+
+1. community-open problems;
+2. self-discovered failures, boundary conditions, and contradictions;
+3. structurally justified problem migration.
+
+Discover self-discovered Leads in two complementary ways: compare Field Map
+families horizontally for shared assumptions, recurring failures, boundaries,
+inconsistent results, and unresolved contradictions; and let a key paper's
+discussion/conclusion, exposed bottleneck, or underdeveloped direction suggest
+a Lead. In neither case does a paper limitation directly become a formal
+Candidate: first compare it against the wider map and validate it by targeted
+deep dive.
+
+For each Lead, establish its starting observation, reason to track, largest
+uncertainty, current basis, and possible disconfirming evidence. A promising
+Lead alone may use the existing targeted literature gateway after
+`problem_generation` has entered `running`. Each query has exactly one of
+Reality, Importance, Unresolvedness, Precision, Falsifiability, or
+Answerability as `decision_dimension`, with immutable non-empty Lead ID,
+statement, purpose, close condition, and current Field Map hash. Generators do
+not create formal Candidates, rank, certify, write Lead artifacts, or design
+methods.
+
+### P2. Evidence-led maturation
+
+After each Evidence round, strengthen, narrow, reframe, reject, or mature the
+Lead. Use the deep dive to seek disconfirmation, not merely support: check closest/strongest prior and residual unresolved delta, strongest
+counterevidence, alternative explanations, true unresolvedness, and whether
+simple application or tuning already resolves it. Judge Reality, Importance,
+Unresolvedness, Precision, Falsifiability, and Answerability scientifically;
+the Controller does not score these judgments.
+
+Only when a Lead is mature, expand it into the existing Candidate schema,
+resolve evidence IDs, and write:
+
+- `idea-stage/PROBLEM_CANDIDATES.jsonl` — machine handoff, one candidate per line;
+- `idea-stage/PROBLEM_CANDIDATES.md` — compact human-readable index.
+
+Rejected Leads remain internal cognition: create no Candidate and continue
+other Lead discovery/triage as needed. Do not send them to a validator, Gate,
+or Human Acceptance.
+
+### P3. Problem-quality gate
+
+Use a fresh reviewer context and a path-only bundle. Assess Reality,
+Importance, Unresolvedness, Precision, Falsifiability, and Answerability, plus
+hard gates for evidence, scope, decisive test, feasibility, and calibrated
+claim language. Record a `PASS`, `INSUFFICIENT_EVIDENCE`, or `FAIL` judgment
+for each dimension. Reality, Importance, and Unresolvedness require formal
+evidence anchors; Precision, Falsifiability, and Answerability may rely on the
+bound candidate and Field Map without irrelevant literature anchors. Return one
+verdict per candidate with issue IDs and applicable evidence anchors. This is a
+provisional scientific gate, not human acceptance.
+
+### P4. Problem novelty packet
+
+Prepare the compact candidate/evidence packet for the orchestrator's unique
+problem-novelty Gate. The parent workflow invokes
+`/novelty-check "mode: problem | candidate IDs + compact evidence packet"` only
+for quality-gate survivors. Keep problem novelty separate from method novelty;
+record closest prior framing, search coverage, concurrent-work risk, and
+`NOVEL / UNCERTAIN / NOT_NOVEL / BLOCKED` with a durable verdict ID in
+`PROBLEM_NOVELTY_VERDICTS.jsonl`. This module must not invoke the same formal
+Gate a second time.
+
+When the Controller returns to `problem_generation`, read only its latest
+`return_history` entry. For `request_revision`, use its selected Candidate
+baseline, human feedback, novelty audit, and reviewer guidance; retain that
+`problem_id` and make only the directed correction and directly affected
+content changes. Use the Controller return record as the active input for its
+feedback and reviewer guidance. For `reject`, use the human feedback as the re-analysis
+reason, reassess the active Field Map and Evidence, and form a different
+Candidate when warranted. Both paths repeat the existing Quality, Novelty, and
+Human Gate sequence. Use the existing incremental-literature route only when a
+real evidence gap is found; do not write an ordinary evidence gap into
+`LESSONS_LEARNED.md`.
+
+### P5. Human acceptance checkpoint
+
+Present every Quality-certified candidate with a completed, consumable novelty
+audit (`NOVEL`, `NOT_NOVEL`, or `UNCERTAIN`), including its evidence, weakest
+assumption, novelty conclusion, and the cost of a decisive test. Do not use
+novelty `survivor_ids` as the Human candidate set. Stop until the user selects
+one problem or explicitly rejects/reframes it. After the user selects a problem
+and before the Controller records human acceptance, create exactly these two
+independent artifacts:
+
+- `idea-stage/RESEARCH_CONTRACT.md` — the accepted Problem Contract;
+- `idea-stage/PROBLEM_EVIDENCE_CAPSULE.md` — the sole formal compact evidence
+  handoff for that Contract, using
+  `templates/PROBLEM_EVIDENCE_CAPSULE_TEMPLATE.md`.
+
+You must not embed a second capsule in the Contract or replace this artifact with a
+report section. The Controller assigns and records the accepted problem version
+with both artifact hashes. Do not create routes in this mode. A directed
+correction uses the live `problem_acceptance` Human Gate with
+`request_revision`, selected Candidate ID, and human feedback; a rejected
+Candidate uses `reject` with its selected ID and rejection reason. The
+Controller archives and invalidates the candidate-to-acceptance outputs before
+returning only to `problem_generation`.
+
+### Problem-mode forbidden actions
+
+- Do not write a Candidate Principle, Principle test packet, scientific Method,
+  method novelty verdict, or method review.
+- Do not turn a search gap into a novelty claim.
+- Do not treat an LLM jury score as acceptance.
+- Do not pass the full evidence registry or generator transcript downstream.
+
+---
+
+## Mode: `diagnosis` — independent 1a-2b root-cause analysis
+
+Require a human-accepted `RESEARCH_CONTRACT.md` and its unchanged
+`PROBLEM_EVIDENCE_CAPSULE.md`. Record both SHA-256 values, then follow
+[`root-cause-analysis-contract.md`](../shared-references/root-cause-analysis-contract.md):
+
+If this is a Method- or validation-triggered reopen, inspect the latest matching
+Controller return record directed to `root_cause_analysis` before analysis.
+Consume its decision, scientific reason, return guidance, validation-result ID,
+and linked Evidence/result paths as applicable. Formally re-adopt a cited
+phase-scoped Evidence Card through `readopt-evidence`, rather than copying or
+relabeling it.
+
+1. 1a collects and describes phenomenon evidence that directly represents the
+   accepted problem/failure, from existing experiments, literature, datasets,
+   real-world scenarios, or a necessary diagnostic pilot; failed experiments
+   are not a prerequisite;
+2. 1b groups phenomena while allowing multiple material mechanisms;
+3. 2a traces progressively deeper causes and competing explanations;
+4. 2b constructs evidence-calibrated, falsifiable causal chains with explicit
+   intervention targets.
+
+Write `ROOT_CAUSE_ANALYSIS.json` as the canonical handoff and a faithful
+`ROOT_CAUSE_ANALYSIS.md` view. Then a fresh independent reviewer writes
+`ROOT_CAUSE_VERDICT.json`. Only `DIAGNOSIS_READY`, with matching analysis ID and
+analysis/problem/evidence hashes, closes the Gate. `REVISE_DIAGNOSIS` returns
+to `root_cause_analysis`; `REOPEN_PROBLEM` returns to
+`problem_generation` so the problem is regenerated or revised and passes the
+existing quality, novelty, and human-acceptance sequence again. The Agent
+cannot choose another target. Do not
+name, search, rank, or combine methods in diagnosis mode.
+
+---
+
+## Mode: `method` — Principle formation or Evidence evaluation
+
+### M0. Preconditions
+
+Require `idea-stage/RESEARCH_CONTRACT.md` with:
+
+- `problem_status: CERTIFIED`;
+- `acceptance_status: human_accepted`;
+- selected problem ID and durable acceptance record;
+- the Controller-recorded problem version and problem-contract hash;
+- evidence IDs and scope boundaries.
+
+Also require `ROOT_CAUSE_ANALYSIS.json` and `ROOT_CAUSE_VERDICT.json` with:
+
+- verdict `DIAGNOSIS_READY`;
+- matching run ID, analysis ID, problem-contract hash, evidence-capsule hash,
+  and reviewed-analysis hash;
+- non-empty `primary_causal_chain_ids`.
+
+If any precondition is absent, return `BLOCKED_PRECONDITION` and do nothing.
+
+Inspect the Controller's current phase and execute exactly one of the following
+branches. Do not create a private lifecycle inside the skill.
+
+### M1. `method_design` — form the Principle/Test packet
+
+Follow `method-design-contract.md` in order:
+
+1. consume the accepted RCA causal chains, all Controller-associated
+   cross-cycle Principle/Test history, and the latest return guidance, Human
+   feedback, or validation feedback;
+2. derive machine-resolvable Required Mechanism Changes, Required Capabilities,
+   and Design Obligations before naming any concrete technique;
+3. execute Principle Search across first principles, representation
+   transformation, same-field mechanisms, and cross-domain structural
+   isomorphisms for every RMC;
+4. form algorithm-independent Candidate Principles with lineage, bindings,
+   activation/failure conditions, fatal assumptions, target-domain
+   operationalization, Provisional Scientific Delta, and discriminating
+   predictions;
+5. define multi-target discriminating tests and the cheapest informative atomic
+   execution set with per-test and total cost.
+
+Use only Controller-current Evidence. Cross-cycle history must be consumed, but
+its Evidence is not current unless it is accepted landscape Evidence, current
+cycle Evidence, formally re-adopted in the current RMC context, or returned by
+the Controller from Full Validation.
+
+If new literature is necessary, use only `PRINCIPLE_SEARCH` through the
+existing incremental gateway. Its Query Plan binds the full RMC/Capability/
+Obligation/causal-chain context and covers all four search dimensions for every
+RMC. Cross-domain search may validly conclude that no credible isomorphism was
+found; do not force a transferred Candidate.
+
+Write `METHOD_DESIGN_PACKET.json` and its exact deterministic
+`METHOD_DESIGN.md` view. The packet contains no lifecycle status. Finish all
+Evidence acquisition/re-adoption, then run `refresh-review-request` so the
+formal review binds the current inputs and final packet. The independent
+reviewer writes `METHOD_DESIGN_REVIEW.json` and returns only
+`PRINCIPLE_PACKET_READY`, `REVISE_PRINCIPLES`, or `RCA_CONFLICT`.
+
+At `principle_test_human_approval`, present the complete recommended execution
+set and total cost. Human `approve` approves the whole set and does not select
+a Principle. Any test-set or cost change uses `request_revision` with concrete
+feedback and returns to `method_design`.
+
+### M2. `principle_evaluation` — interpret the approved Evidence
+
+Do not start this phase until the Controller exposes `start_phase`. The pending
+window belongs to `/method-test`, which executes only the Controller-approved
+handoff and submits terminal results. Main must not create or modify
+`PRINCIPLE_EVIDENCE_CONTEXT.json`.
+
+When the phase starts, read the current Evidence Context, accepted
+Principle/Test packet, all Controller-associated cross-cycle history, and the
+latest return feedback. For every active Candidate version, assess
+operationalization fidelity, test validity/discriminativeness, activation
+conditions, and the observations relative to every competing prediction.
+Update Principles, assumptions, boundaries, or the RCA interpretation; do not
+reduce Evidence Update to performance ranking. `NO_RESULT` can expose an
+operationalization or feasibility problem but cannot support or reject a
+Principle.
+
+Write `PRINCIPLE_EVALUATION.json`, updating every active Candidate and citing
+only Evidence current in the supplied Context. After the final evaluation is
+written, run `refresh-review-request` and dispatch the declared independent
+reviewer. Its formal outcomes are `PRINCIPLE_CONVERGED`,
+`REVISE_EVALUATION`, `MORE_EVIDENCE`, or `RCA_CONFLICT`.
+
+`REVISE_EVALUATION` preserves the cycle and terminal results and revises only
+interpretation. `MORE_EVIDENCE` creates a new design/test cycle and repeats the
+Human test Gate. On convergence, the verdict names one Principle ID/version;
+only the Controller materializes `SELECTED_PRINCIPLE.yaml`. Main never writes
+that artifact.
+
+### Method-mode forbidden actions
+
+- Do not revise the accepted problem silently. A material change must use
+  explicit `arisctl revise-problem`, which creates a draft next version and
+  restarts the existing problem quality, novelty, and human-acceptance sequence.
+- Do not run the final method novelty gate before refinement.
+- Do not execute a test outside the approved `/method-test` window or treat a
+  test-only realization as a Candidate Method or final implementation.
+- Do not perform Method adaptation, residual-gap composition, or final Claim
+  construction before accepted Principle convergence.
+- Do not call `research-review` as a mandatory core stage. It remains an
+  optional external challenge after the relevant artifact exists.
+
+---
+
+## Compatibility integrations
+
+When `research-wiki/` exists, follow
+[`idea-wiki-integration.md`](../shared-references/idea-wiki-integration.md).
+This preserves the old **Load Research Wiki** and **Write Ideas to Research
+Wiki** behavior without making Wiki state an acceptance gate. The module owns
+helper resolution, threat scanning, deterministic `upsert_idea`, and warn-only
+failure handling. Keep `review-tracing.md` records for generator and jury
+calls, with generator and jury identities separated.
+
+The module's deterministic write remains an actual helper invocation:
 
 ```text
-/research-lit -> /idea-creator "mode: problem" -> independent problem-quality Gate
--> /novelty-check "mode: problem" -> human problem acceptance
--> /idea-creator "mode: diagnosis" -> root-cause Gate
--> /idea-creator "mode: method" -> human route selection
--> /research-refine -> final /novelty-check
+python3 "$WIKI_SCRIPT" upsert_idea research-wiki/ --slug <stable-id> \
+  --title <title> --stage proposed --outcome pending --thesis <problem-thesis>
 ```
 
-`research-review` remains an optional challenge, not a duplicate core gate.
+The final report is composed from the compact accepted artifacts for the final
+Human Method checkpoint. It must not use `IDEA_REPORT.md` as a prompt-sized
+state store or as a scientific handoff.
+Follow [`idea-output-composition.md`](../shared-references/idea-output-composition.md)
+for explicit standalone/composed mode, versioning, compact output, and render
+timing.
 
-## Compatibility report fields
+## Optional downstream skills
 
-The final **Problem-First Ranked Idea Report** retains **Certified Problems and
-Derived Routes**, including **Design obligations**, **Scientific mainline**,
-**dominant-only closure/residual MUST gaps**, **necessary supporting-mechanism ledger**,
-**Scientific-delta novelty**, and the **minimal sufficient dominant solution**. Keep generator and
-jury in fresh contexts; **do not reuse** the generator for the jury. Verdicts
-remain `CERTIFIED/provisional` until **explicit human confirmation** records
-`CERTIFIED/accepted`. `/experiment-plan` is an optional downstream handoff.
+```text
+/research-lit -> /idea-creator "mode: problem" -> /novelty-check "mode: problem"
+                 -> human acceptance
+                 -> /idea-creator "mode: diagnosis" -> root-cause Gate
+                 -> /idea-creator "mode: method" -> Principle packet review
+                 -> human test approval -> /method-test
+                 -> /idea-creator "mode: method" -> Principle convergence
+                 -> /research-refine -> /novelty-check "mode: method-final"
+```
 
-Compatibility label: Certified Problems and Derived Routes are the report's
-problem-first decision fields.
+`/research-review` is optional and may challenge a specific problem, Principle
+packet/evaluation, or final Method;
+it is not a duplicate acceptance gate in the default pipeline.

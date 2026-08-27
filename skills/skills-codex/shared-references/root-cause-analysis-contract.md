@@ -2,7 +2,7 @@
 
 Use this contract after one problem has been human-accepted under
 [`problem-discovery-contract.md`](problem-discovery-contract.md) and before any
-method route is generated under
+Candidate Principle is formed under
 [`method-design-contract.md`](method-design-contract.md). It is the single
 source of truth for the diagnosis handoff.
 
@@ -29,16 +29,16 @@ evidence capsule. Record their current SHA-256 values in the analysis. If the
 question, scope, falsifier, or evidence snapshot has changed, stop and return to
 problem acceptance rather than diagnosing a moving target.
 
-### Method-triggered reopen
+### Downstream-triggered reopen
 
-When this phase was reopened from a running `method_design`, read the latest
-existing Controller return record whose `from_phase` is `method_design` and
-whose `return_target` is `root_cause_analysis`. Its scientific reason and any
-`trigger_evidence_ids` identify what method reasoning found inconsistent with
-the accepted diagnosis. Reassess that issue without turning a method proposal
-into a diagnosis.
+When this phase is reopened by `RCA_CONFLICT` or `ROOT_CAUSE_REJECTED`, read the
+latest matching Controller return record directed to `root_cause_analysis`.
+Consume its scientific reason, return guidance, validation-result ID, linked
+Evidence IDs/result paths, and findings as applicable. Reassess the identified
+causal premise without turning a Candidate Principle, Method proposal, or
+performance result into a diagnosis.
 
-An identified method-stage Evidence Card may be formally cited only through
+An identified downstream Evidence Card may be formally cited only through
 the existing `readopt-evidence` action. This creates a current RCA binding
 without copying the Card or changing its historical query/read provenance. If a
 later `REVISE_DIAGNOSIS` return starts another RCA lifecycle and the same Card
@@ -280,11 +280,14 @@ reviewer's Type-B responsibility.
 ## Method-design handoff
 
 Pass the accepted problem unchanged plus the validated analysis and verdict.
-Method design consumes `primary_causal_chain_ids` and derives Design
-Obligations from their mechanism failures and intervention targets. It may not
+Method design consumes every `primary_causal_chain_id` and first derives
+machine-resolvable Required Mechanism Changes, Required Capabilities, and Design
+Obligations from its mechanism failures and intervention targets. Candidate
+Principles and tests must remain traceable through that chain. They may not
 replace the diagnosis with a more convenient story to justify a preferred
-technique. If method reasoning exposes a contradiction in the diagnosis, return
-to this stage rather than silently rewriting it.
+technique. If Principle formation, Evidence Update, Method adaptation, or Full
+Validation exposes a contradiction, return the linked Evidence and feedback to
+this stage rather than silently rewriting it downstream.
 
 ## Failure paths
 

@@ -1,6 +1,6 @@
 ---
 name: "novelty-check"
-description: "Verify problem novelty, method novelty, or both against recent literature. Use for 查新, novelty checks, prior-art questions, and research problem or method verification."
+description: "Verify problem novelty, method novelty, or both against recent literature. Use when user says \"查新\", \"novelty check\", \"有没有人做过\", \"check novelty\", or wants to verify a research problem or method before committing."
 ---
 
 > Override for Codex users who want **Claude Code**, not a second Codex agent, to act as the reviewer. Install this package **after** `skills/skills-codex/*`.
@@ -20,56 +20,98 @@ established in the literature: **$ARGUMENTS**
 ## Constants
 
 - **REVIEWER_MODEL = `claude-review`** — Claude reviewer invoked through the local `claude-review` MCP bridge. Set `CLAUDE_REVIEW_MODEL` if you need a specific Claude model override.
-- **REVIEWER_BACKEND = `claude-review`** — reviews route through the claude-review MCP (Claude family; cross-family for a Codex executor).
 
 ## Instructions
 
-Parse `mode: problem|method|combined`. Default to `combined` only when both are
-present; otherwise infer and report the applicable mode. Follow
+Parse `mode: problem|method|method-final|combined` from the arguments. Default to `combined`
+when both a problem and method are present; otherwise infer the only applicable
+mode and state that inference. Follow
 [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
-and keep problem novelty separate from method novelty.
-`mode: method-final` is a final-method alias and may run only on the refined
-`FINAL_PROPOSAL.md`, not on preliminary routes.
+for problem mode and
+[`method-design-contract.md`](../shared-references/method-design-contract.md)
+for method mode. Never collapse problem novelty, Principle/Scientific-Delta
+novelty, and concrete Method embodiment novelty.
+
+`mode: method-final` is an explicit final-method alias. It accepts only
+the active Controller-materialized `SELECTED_PRINCIPLE.yaml` plus
+`refine-logs/FINAL_PROPOSAL.md`, runs after refinement, and must not be treated
+as the preliminary method-risk screen. A non-final `mode: method` may assess a
+Candidate Principle's Provisional Scientific Delta as an advisory risk screen;
+it cannot emit the formal final-method verdict.
+
+For the formal final-method Gate, `idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md`
+must contain exactly one fenced JSON metadata block with `schema_version: 1`,
+the live `review_request_id`, `reviewer`, `verdict_id`, a Controller-declared
+`decision: NOVEL | REVISE_METHOD_DELTA | RETHINK_PRINCIPLE_DELTA | HOLD`, and
+the exact `reviewed_artifact_hashes` map for `FINAL_PROPOSAL.md`.
 
 Apply
 [`source-admission-policy.md`](../shared-references/source-admission-policy.md)
 before reading or expanding any candidate paper.
 
 ### Phase A: Extract Key Claims
-1. For `problem|combined`, extract problem claims: phenomenon, setting,
-   failure/boundary, causal framing, importance, and research question.
-2. For `method|combined`, extract the falsifiable hypothesis, intended
-   scientific delta, dominant method, backbone, innovation carrier, supporting
-   mechanisms, integration interfaces, targeted evidence, and technical delta.
-3. Assign separate IDs (`P1...`, `M1...`).
+1. Extract **problem claims** when mode is `problem` or `combined`:
+   phenomenon, setting/population, boundary or failure, causal framing,
+   importance, and the precise research question.
+2. For non-final `mode: method`, extract Candidate Principle/version, RMC/
+   Capability/Obligation bindings, activation/failure conditions, and
+   Provisional Scientific Delta. Keep the result preliminary.
+3. For `mode: method-final` (or combined input containing the accepted final
+   artifacts), extract the Selected Principle and its Evidence-supported
+   conditions; target-domain adaptation; minimal faithful realization;
+   Principle-only closure; residual mechanism/adaptation gaps; minimal
+   necessary composition; core and reused implementation elements;
+   failure/applicability boundaries; Final Scientific Delta Claim;
+   claim-validation obligations; and claimed embodiment delta.
+4. Keep separate claim IDs (`P1...` and `M1...`).
 
 ### Phase B: Controller-Governed Literature Search
 For each applicable claim:
 
-1. In a formal run, use a pending phase's `submit_query_plan` Controller action,
-   then only the existing query, admission, read and evidence actions. Never
-   use hosted web search/fetch or a private corpus/ledger.
-2. Use `problem_novelty_gate` or `final_method_novelty_gate` as appropriate and
-   finish reading before starting the Gate; newly accepted Evidence Card hashes
-   are bound by the Controller to its request.
-3. Read only `ADMIT_DECISION_GRADE` or `USER_SUPPLIED_READ` content; discovery
-   records remain metadata, never scientific evidence.
+1. For a formal run, ask `arisctl allowed-actions`. If the pending phase exposes
+   `submit_query_plan`, submit the claim-specific formulations there, then use
+   only the existing Controller `query`, `admit`, `read-*`, and
+   `submit-evidence` actions. Do not use WebSearch, WebFetch, hosted pages, or
+   a private corpus/ledger.
+2. Problem novelty uses its pending `problem_novelty_gate`; final method novelty
+   uses its pending `final_method_novelty_gate`. Finish the existing reading
+   flow before starting that Gate. The Controller binds newly accepted Evidence
+   Card hashes to the live Gate request.
+3. Retrieve admission metadata only through that gateway. Read only
+   `ADMIT_DECISION_GRADE` or `USER_SUPPLIED_READ` content; retain discovery-only
+   and blocked records as metadata with uncertainty, never scientific evidence.
+4. For non-formal/ad-hoc work, state that web findings are provisional and
+   cannot be promoted into a formal ARIS artifact.
 
 ### Phase C: Fresh-Agent Verification (cross-family accepted by default)
-Call REVIEWER_MODEL via `mcp__claude-review__review_start` with high-rigor review:
+Call REVIEWER_MODEL via a fresh Claude reviewer via `claude-review` MCP (`mcp__claude-review__review_start`) with
+xhigh reasoning.
+When the method description plus the Phase-B paper list is more than a short
+note, avoid pasting it inline into the reviewer prompt. Write a dossier file such as
+`NOVELTY_DOSSIER.md` (or a project-local equivalent) containing the method
+description, core claims, candidate papers, and the exact questions below, then
+send only the file path:
 ```
 mcp__claude-review__review_start:
-  prompt: |
-    [Full novelty briefing + prior work list + specific novelty questions]
+  task: |
+    Read the novelty dossier at <absolute path to NOVELTY_DOSSIER.md> and
+    follow all instructions in it.
 ```
 
 After this start call, immediately save the returned `jobId` and poll `mcp__claude-review__review_status` with a bounded `waitSeconds` until `done=true`. Treat the completed status payload's `response` as the reviewer output, and save the completed `threadId` for any follow-up round.
-Prompt should include:
-- mode and separate problem/method claim lists
-- All papers found in Phase B
-- Ask for independent problem and/or method verdicts, closest prior framing or
-  route, residual delta, and confidence. In combined mode, one verdict cannot
-  substitute for the other.
+Dossier contents should include:
+- mode and the separate problem/method claim lists
+- all papers found in Phase B, with verified identifiers or `[UNVERIFIED]`
+- for problem mode: ask whether the phenomenon and research-question framing
+  are already established, and what unresolved delta remains
+- for preliminary method mode: assess the Candidate Principle's Provisional
+  Scientific Delta without treating it as a final Claim; for final method mode:
+  ask separately whether novelty failure is at the Principle/Scientific-Delta
+  layer or only at the target adaptation, embodiment, Claim formulation, or
+  boundary layer; assess composition only as support for a demonstrated
+  residual adaptation/mechanism gap, never as novelty by itself
+- for combined mode: require two independent verdicts; a novel method cannot
+  rescue a non-novel problem framing, and vice versa
 
 ### Phase D: Novelty Report
 Output a structured report:
@@ -81,22 +123,28 @@ Output a structured report:
 problem / method / combined
 
 ### Problem Novelty
-- Problem statement and claims (P1...)
-- Closest existing framing
-- Residual unresolved delta
-- Verdict: HIGH / MEDIUM / LOW / BLOCKED
-- Confidence and evidence gaps
+- **Problem statement**: [...]
+- **Problem claims**: [P1...]
+- **Closest existing framing**: [...]
+- **Residual unresolved delta**: [...]
+- **Verdict**: HIGH / MEDIUM / LOW / BLOCKED
+- **Confidence and evidence gaps**: [...]
 
 ### Method Novelty
-- Scientific hypothesis and intended delta
-- Dominant method + backbone + innovation carrier and claims (M1...)
-- Supporting mechanisms, integration interfaces, and targeted responsibilities
-- Closest existing route
-- Residual scientific delta and technical-route delta
-- Scientific closure: actual interfaces, capability-specific removal failures,
-  targeted evidence, and one causal chain
-- Verdict: HIGH / MEDIUM / LOW / BLOCKED
-- Confidence and evidence gaps
+- **Candidate/Selected Principle and Evidence-supported scope**: [...]
+- **Target adaptation and minimal faithful realization**: [...]
+- **Principle-only closure and residual gaps**: [...]
+- **Minimal necessary composition (if any)**: [gap served, actual interface,
+  activation conditions, and removal/counterfactual responsibility]
+- **Final Scientific Delta Claim**: [...]
+- **Method claims**: [M1...]
+- **Closest existing Principle / embodiment**: [...]
+- **Residual scientific delta**: [...]
+- **Residual embodiment delta**: [...]
+- **Failure layer**: [none / Principle-Scientific-Delta / adaptation-embodiment-Claim / novelty-Evidence-only]
+- **Validation obligations and boundaries**: [...]
+- **Verdict**: HIGH / MEDIUM / LOW / BLOCKED
+- **Confidence and evidence gaps**: [...]
 
 ### Closest Prior Work
 | Paper | Year | Venue | Overlap type | Claim IDs | Key difference |
@@ -110,20 +158,38 @@ problem / method / combined
 - Risk: [what a reviewer would cite as prior work]
 
 ### Suggested Positioning
-[How to frame the contribution to maximize novelty perception]
+[Accurate positioning without inflating either novelty dimension]
 ```
 
 ### Important Rules
 - Be BRUTALLY honest — false novelty claims waste months of research time
-- "Applying X to Y" requires structural problem correspondence and a coherent
-  new mechanism or understanding.
-- In combined mode, report problem, scientific-delta, and technical-route
-  novelty separately. A supporting mechanism is justified only for a declared
-  residual `MUST` gap after Field-Map and same-field assessment; combination is
-  not a novelty claim.
+- A supporting mechanism is justified only when it closes a demonstrated
+  residual mechanism/adaptation gap after the Principle-only closure attempt;
+  composition itself is not a novelty claim.
+- "Applying X to Y" is novel only when the selected Principle's structural
+  mapping and target adaptation create a real scientific or embodiment delta.
+- In combined mode, report problem and method novelty separately.
 - If the method is not novel but the FINDING would be, say so explicitly
+- For the formal final Gate, map adaptation/embodiment/Claim/boundary failure to
+  `REVISE_METHOD_DELTA`, Principle/Scientific-Delta failure to
+  `RETHINK_PRINCIPLE_DELTA`, and missing novelty Evidence or interpretation to
+  `HOLD`. Do not reject a Principle merely because its concrete realization is
+  insufficiently novel.
 - Apply the Source Admission Gate without using recency as an eligibility gate.
+- If a low-citation, non-elite, or just-published paper is a potentially
+  decisive closest/concurrent prior, invoke the existing
+  `decisive_closest_prior_or_concurrent` admission exception and obtain its
+  decision-grade Evidence Card whose source ID is that same prior. If that verification cannot be completed, the
+  problem verdict is `UNCERTAIN`, never `NOVEL`.
+- **Anti-hallucination for Closest Prior Work.** The Source Admission Gate takes
+  precedence: if admission metadata cannot be verified, keep the paper
+  discovery-only or blocked. For an admitted paper, run `verify_papers.py` (canonical name resolved
+  per [`shared-references/integration-contract.md`](../shared-references/integration-contract.md)
+  §2). If only this identifier helper fails, tag the citation `[UNVERIFIED]` and
+  surface the uncertainty. Never fabricate arXiv IDs, DOIs, or titles. Full
+  protocol:
+  [`citation-discipline.md`](../shared-references/citation-discipline.md).
 
 ## Review Tracing
 
-After each `mcp__claude-review__review_start` or optional `oracle-pro` reviewer call, save the trace following `../shared-references/review-tracing.md`. Write files directly to `.aris/traces/novelty-check/<date>_run<NN>/` and record searched claims, closest papers, reviewer route, raw response, and final novelty decision. Respect the `--- trace:` parameter when present (default: `full`).
+After each `mcp__claude-review__review_start` or optional `oracle-pro` reviewer call, save the trace following `../shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `../shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/novelty-check/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).

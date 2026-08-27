@@ -1,6 +1,6 @@
 # ARIS Skills Catalog
 
-Every skill that ships with ARIS, grouped by role. **80 skills** as of the
+Every skill that ships with ARIS, grouped by role. **81 skills** as of the
 latest update; new skills land via PR and get added to the table below.
 
 - Each `Skill` link goes to the canonical `SKILL.md` (the LLM-readable spec).
@@ -26,7 +26,7 @@ not one automatic chain from a research direction to a paper.
 | Skill | Role | Requires |
 |---|---|---|
 | [`/research-pipeline`](../skills/research-pipeline/SKILL.md) | **Canonical validation continuation** — input is a canonical run ID; user-initiated after `METHOD_CONFIRMED_AWAITING_USER_VALIDATION` to bind planning, execution, and result interpretation | Controller state, GPU |
-| [`/idea-discovery`](../skills/idea-discovery/SKILL.md) | **Canonical problem-first discovery** — research-lit → human scope approval → problem Gates → human problem acceptance → root-cause Gate → method/route/refinement → final method Gates; stops before validation | Codex MCP |
+| [`/idea-discovery`](../skills/idea-discovery/SKILL.md) | **Canonical problem-first discovery** — field map → problem Gates → accepted RCA → Principle formation → Human-approved discriminating tests → Evidence-driven Principle convergence → Method refinement/final Gates; stops before Full Validation | Codex MCP |
 | [`/experiment-bridge`](../skills/experiment-bridge/SKILL.md) | **Experiment implementation** — execute a bound formal plan after validation handoff, or an explicitly non-canonical ad-hoc plan | GPU (local / remote / Vast / Modal) |
 | [`/auto-review-loop`](../skills/auto-review-loop/SKILL.md) | **Workflow 2** — autonomous review → fix → re-review until positive or max rounds; uses Codex MCP reviewer | Codex MCP |
 | [`/auto-review-loop-llm`](../skills/auto-review-loop-llm/SKILL.md) | Same as Workflow 2 but uses any OpenAI-compatible LLM via [`llm-chat`](../mcp-servers/llm-chat/) MCP server | llm-chat MCP |
@@ -35,7 +35,7 @@ not one automatic chain from a research direction to a paper.
 | [`/rebuttal`](../skills/rebuttal/SKILL.md) | **Workflow 4** — parse reviews → atomize → strategy → draft → safety check → stress test → 2-version output → follow-ups | Codex MCP |
 | [`/resubmit-pipeline`](../skills/resubmit-pipeline/SKILL.md) | **Workflow 5** — text-only port across venues (no new experiments, no bib edits) — isolation → anonymity → audits `--soft-only` → microedit → kill-argument gate → compile + push | Codex MCP, LaTeX |
 | [`/paper-talk`](../skills/paper-talk/SKILL.md) | **Workflow 6** — paper → slide outline → Beamer + PPTX → per-page polish → assurance audits → final report | Codex MCP, LaTeX, python-pptx |
-| [`/research-refine-pipeline`](../skills/research-refine-pipeline/SKILL.md) | Standalone refine-and-plan convenience workflow; it is not part of canonical `/idea-discovery` | Codex MCP |
+| [`/research-refine-pipeline`](../skills/research-refine-pipeline/SKILL.md) | Continue a canonical run from an accepted Selected Principle through Method refinement/final Gates; plan Full Validation only after explicit user initiation | Codex MCP |
 | [`/patent-pipeline`](../skills/patent-pipeline/SKILL.md) | Full patent drafting — invention → claims → spec → jurisdiction format (CN / US / EP) | Codex MCP |
 | [`/dse-loop`](../skills/dse-loop/SKILL.md) | Autonomous design-space exploration loop for computer architecture / EDA — run → analyze → tune → iterate until objective met | Domain-specific tools |
 | [`/meta-optimize`](../skills/meta-optimize/SKILL.md) | **Workflow M** — analyze ARIS usage logs and propose SKILL.md / prompt / default-parameter improvements (outer-loop self-evolution) | Codex MCP, hook logging |
@@ -65,9 +65,9 @@ Generating, refining, planning research ideas before implementation.
 
 | Skill | Role | Requires |
 |---|---|---|
-| [`/idea-creator`](../skills/idea-creator/SKILL.md) | Generate certified problem candidates, root-cause analysis, or method routes in the Controller-assigned phase | Codex MCP |
-| [`/research-refine`](../skills/research-refine/SKILL.md) | Certified problem → issue-based method refinement → fresh blind audit | Codex MCP |
-| [`/experiment-plan`](../skills/experiment-plan/SKILL.md) | Turn a refined proposal into a claim-driven experiment roadmap — ablations, budgets, run order | None |
+| [`/idea-creator`](../skills/idea-creator/SKILL.md) | Run the Controller-assigned scientific module: certify a problem, perform RCA, form/review Candidate Principles and tests, or evaluate Evidence toward Principle convergence | Codex MCP |
+| [`/research-refine`](../skills/research-refine/SKILL.md) | Selected Principle → target adaptation → minimal faithful realization/composition → bounded Final Scientific Delta Claim → fresh final review | Codex MCP |
+| [`/experiment-plan`](../skills/experiment-plan/SKILL.md) | Turn a Controller validation handoff or explicit ad-hoc proposal into a claim-driven experiment roadmap — ablations, budgets, run order | None |
 | [`/ablation-planner`](../skills/ablation-planner/SKILL.md) | Design ablation studies from a reviewer's perspective (after main results pass `/result-to-claim`) | Codex MCP |
 | [`/formula-derivation`](../skills/formula-derivation/SKILL.md) | Structure theory derivations — organize assumptions, build derivation chains, turn scattered equations into coherent narrative | None |
 
@@ -77,6 +77,7 @@ GPU job submission, scheduling, monitoring, profiling.
 
 | Skill | Role | Requires |
 |---|---|---|
+| [`/method-test`](../skills/method-test/SKILL.md) | Thin orchestrator for a Human-approved Principle discriminating-test set; executes approved tests, records raw terminal outcomes, and never interprets Evidence or convergence | None |
 | [`/run-experiment`](../skills/run-experiment/SKILL.md) | Deploy experiments to local / remote / Vast.ai / Modal GPU | GPU (configurable) |
 | [`/monitor-experiment`](../skills/monitor-experiment/SKILL.md) | Monitor running experiments, check progress, collect results | None |
 | [`/analyze-results`](../skills/analyze-results/SKILL.md) | Compute statistics, generate comparison tables, surface insights from experiment results | None |

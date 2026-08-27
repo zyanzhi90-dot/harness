@@ -43,7 +43,7 @@ skill	gemini-search	lit-search	-	Gemini 驱动的文献发现
 skill	research-lit	lit-search	-	文献综述与相关工作分析
 skill	comm-lit-review	lit-search	-	通信领域专用文献综述
 skill	idea-creator	ideation	novelty-check,research-lit	给定方向生成并排序研究 idea
-skill	idea-discovery	ideation	idea-creator,novelty-check,research-lit,research-refine,render-html	W1:problem-first research discovery with explicit human checkpoints
+skill	idea-discovery	ideation	idea-creator,method-test,novelty-check,research-lit,research-refine,render-html	W1:problem-first research discovery with explicit human checkpoints
 skill	novelty-check	ideation	-	idea 查新(有没有人做过)
 skill	research-refine	ideation	-	粗糙方向打磨成聚焦提案
 skill	research-refine-pipeline	ideation	research-refine,experiment-plan	refine+实验计划一条龙
@@ -59,6 +59,7 @@ skill	formula-derivation	theory	-	公式推导与理论线组织
 skill	proof-writer	theory	-	撰写严格数学证明
 skill	proof-checker	theory	render-html	证明缺口审查与修复
 skill	experiment-plan	experiments	-	claim 驱动的实验路线图
+skill	method-test	experiments	-	执行人工批准的 Principle 判别测试并回传终态结果
 skill	experiment-bridge	experiments	run-experiment,experiment-queue,monitor-experiment,training-check,ablation-planner	W1.5:从实验计划到跑通初步结果
 skill	experiment-queue	experiments	-	SSH 批量实验队列(OOM 重试)
 skill	run-experiment	experiments	-	部署运行实验(本地/远程/云 GPU)

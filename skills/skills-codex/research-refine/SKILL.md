@@ -1,120 +1,137 @@
 ---
-name: "research-refine"
-description: "Refine one Certified Problem Contract or selected problem-derived route into a coherent top-journal method plan. Use when the problem is already certified but its hypothesis, dominant method, integration, or validation needs refinement. Do not use for a vague direction; run idea-creator or idea-discovery first."
+name: research-refine
+description: Refine one Controller-materialized Selected Principle into a target-adapted, minimal faithful Method and bounded Final Scientific Delta Claim. Use only after accepted Principle convergence; do not use for problem discovery, Principle formation, or pre-convergence test operationalization.
 ---
 
 # Research Refine
 
 Refine: **$ARGUMENTS**
 
-## Purpose
+## Purpose and boundary
 
-Preserve:
+Execute the post-convergence scientific sequence:
 
 ```text
-Certified Problem Contract
-  -> competing explanations -> falsifiable Scientific Mainline
-  -> Design Obligations -> minimal sufficient dominant solution
-  -> dominant-only closure -> residual MUST gaps -> necessary completion search
-  -> natural integration -> Scientific Closure with minimum claim-validation logic
-  -> independent decision
+Selected Principle -> target-domain adaptation -> minimal faithful realization
+  -> Principle-only closure attempt -> residual mechanism/adaptation gaps
+  -> minimal necessary composition -> Final Scientific Delta Claim
+  -> claim-validation obligations -> independent final method review
 ```
 
-For method research, derive capabilities first, start from a minimal sufficient
-dominant solution (including first principles where warranted), and search for
-support only after dominant-only closure leaves a residual MUST gap.
-Check the accepted Field Map and same-field mechanisms first for each declared
-residual `MUST` gap; search another field only when they cannot reasonably close
-that gap. Combination is permitted only as necessary support, not the default,
-Scientific Delta, or novelty verdict.
-
-Stop for a vague, uncertified, provisional, `HOLD`, `REJECT`, or `BLOCKED`
-problem. Require `CERTIFIED/accepted`, a hash-matched root-cause analysis and
-`DIAGNOSIS_READY` verdict, plus the human-selected
-`idea-stage/SELECTED_ROUTE.yaml`; a route mentioned only in prose or in
-`IDEA_REPORT.md` is not a valid precondition.
+Do not enter from a rough Method, prose selection, test-only realization, or
+`IDEA_REPORT.md`. Require an active Controller-materialized
+`idea-stage/SELECTED_PRINCIPLE.yaml`, accepted Problem/RCA bindings, and the
+accepted convergence artifacts. A pre-convergence realization carries only
+operationalization/test meaning and is not the Method backbone or composition.
 
 ## Required references
 
-Read and follow:
+Read these once, then execute rather than restating them:
 
-- [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
-- [`root-cause-analysis-contract.md`](../shared-references/root-cause-analysis-contract.md)
-- [`method-design-contract.md`](../shared-references/method-design-contract.md)
-- [`method-refinement-protocol.md`](../shared-references/method-refinement-protocol.md)
-- [`reviewer-independence.md`](../shared-references/reviewer-independence.md)
-- [`templates/RESEARCH_CONTRACT_TEMPLATE.md`](../../../templates/RESEARCH_CONTRACT_TEMPLATE.md)
-- [`templates/METHOD_PROPOSAL_TEMPLATE.md`](../../../templates/METHOD_PROPOSAL_TEMPLATE.md)
+1. [`method-design-contract.md`](../shared-references/method-design-contract.md)
+   — verify the accepted Principle and stage semantics.
+2. [`method-refinement-protocol.md`](../shared-references/method-refinement-protocol.md)
+   — own target adaptation, closure, composition, output, and review.
+3. [`root-cause-analysis-contract.md`](../shared-references/root-cause-analysis-contract.md)
+   — preserve the accepted causal-chain handoff.
+4. [`reviewer-independence.md`](../shared-references/reviewer-independence.md)
+   — preserve formal review independence.
 
-The shared files are the single source of truth. Do not duplicate their
-schemas or doctrine here.
+Use [`templates/METHOD_PROPOSAL_TEMPLATE.md`](../../templates/METHOD_PROPOSAL_TEMPLATE.md)
+for `ACTIVE_PROPOSAL.md` and `FINAL_PROPOSAL.md`.
 
-## Configuration and outputs
+## Input preflight
+
+Require and hash-check:
+
+- the active accepted Problem Contract and Evidence Capsule;
+- `ROOT_CAUSE_ANALYSIS.json` and `ROOT_CAUSE_VERDICT.json` with
+  `DIAGNOSIS_READY`;
+- `SELECTED_PRINCIPLE.yaml` materialized by the Controller after accepted
+  convergence;
+- the Controller-exposed return/validation feedback directed to
+  `method_refinement`, if any.
+
+Consume the latest feedback before revision. `REVISE`, `HOLD`,
+`REVISE_METHOD_DELTA`, final Human `request_revision`, and
+`METHOD_REFINEMENT_REQUIRED` preserve the same Selected Principle. `RETHINK`,
+`RETHINK_PRINCIPLE_DELTA`, `SELECTED_PRINCIPLE_REJECTED`, `RCA_CONFLICT`,
+`ROOT_CAUSE_REJECTED`, and `PROBLEM_PREMISE_REJECTED` reopen upstream science;
+stop if the Selected Principle is no longer active.
+
+## Configuration
 
 - `MAX_ROUNDS = 5`
-- `SCORE_THRESHOLD = 9` — progress signal only
+- `SCORE_THRESHOLD = 9` — progress signal only, never acceptance.
 - `OUTPUT_DIR = refine-logs/`
+- `REVIEWER_BACKEND = codex`
 - `REVIEWER_MODEL = gpt-5.6-sol`
 
-Maintain:
+Allow explicit overrides. Do not hard-code domain doctrine.
 
-- `REFINE_STATE.json`
-- `ACTIVE_PROPOSAL.md`
-- `UNRESOLVED_ISSUES.md`
-- `round-N-review.md`
-- `round-N-decision.md`
-- `FINAL_BLIND_REVIEW.md`
-- `FINAL_PROPOSAL.md`
-- `REVIEW_SUMMARY.md`
-- `REFINEMENT_REPORT.md`
+## Execution
 
-## Reviewer routing
+Follow R0–R6 in `method-refinement-protocol.md`:
 
-The base Codex-native reviewer is same-family and its verdict is provisional.
+- bind the active Problem, RCA, and Selected Principle without drift;
+- adapt the algorithm-independent intervention to the target domain;
+- construct the minimal faithful realization and attempt Principle-only
+  closure against every selected RMC, Capability, Obligation, condition, and
+  boundary;
+- declare stable residual-gap IDs before adding support;
+- retain only the smallest mechanisms needed to close those gaps through real
+  interfaces;
+- write a bounded `Final Scientific Delta Claim` and traceable
+  claim-validation obligations;
+- keep `Established Scientific Delta` unavailable until Full Validation returns
+  `VALIDATED`.
 
-1. Start iterative Round 1 with a fresh secondary reviewer agent.
-2. Use the same agent only to check resolution of its own issue IDs.
-3. Do not start a second final blind review. The Controller-issued
-   `independent_method_reviewer` is the one fresh final independent Gate; it
-   receives raw artifacts and no earlier scores, feedback, generator history,
-   or change summary.
-4. Record the iterative agent ID separately from the Controller review request.
-5. Only its `METHOD_READY` may advance; `REVISE/HOLD` return to
-   `method_refinement` and `RETHINK` returns to `method_design`.
-   Formal acceptance remains Controller-only.
+If a concrete residual adaptation gap requires literature, open only the
+existing `method_refinement` incremental gateway with
+`ADAPTATION_GAP_SEARCH`. Bind the active Selected Principle ID/version/hash and
+each non-empty residual gap. Complete the search or Evidence re-adoption before
+sealing the final review request.
 
-## Workflow
+## Reviewer transport
 
-Follow R0-R6 in `method-refinement-protocol.md` without restating it:
+The base reviewer provides a same-family provisional review. Start Round 1
+with a fresh secondary reviewer agent and use
+that same agent only to check resolution of its own issue IDs. Persist path-only
+review bundles and record the iterative agent ID separately from the Controller
+review request. Continuity cannot accept the phase.
 
-- If the selected route exposes a claim-specific evidence gap, open the pending
-  `method_refinement` incremental literature window through `arisctl` before
-  phase start. Reuse only the existing query/admission/paper-reader/Evidence
-  Registry flow, never hosted web search/fetch or a private evidence list; the
-  accepted Evidence Card hashes enter the refinement output provenance snapshot.
+The Controller-issued `independent_method_reviewer` is the sole formal final
+reviewer. When `FINAL_PROPOSAL.md` is final and all Evidence work is complete,
+invoke:
 
-- R0 locks one Controller-recorded Certified Problem version; it does not make
-  the problem permanently immutable.
-- R1 executes M0-M6 to build the complete active proposal: recover the
-  Scientific Mainline, derive capabilities, close the dominant-only route, then
-  search only residual MUST gaps and close the Scientific Delta decision.
-- R2 starts the independent iterative review of that proposal.
-- R3-R4 resolve issue IDs; score never overrides a blocker.
-- R5 runs the sole **Controller-issued final independent review** in a fresh
-  context; it is not an additional audit after iterative review.
-- R6 writes the canonical outputs and preserves non-READY status honestly.
+```text
+python -m arisctl --root . refresh-review-request <run_id>
+```
 
-## Recovery and rules
+Dispatch only against that current request. Write its unchanged formal verdict
+to `refine-logs/FINAL_BLIND_REVIEW.md`. Outcomes are:
 
-On resume, read state, the focused Research Contract, active proposal,
-unresolved ledger, and evidence cards named by active issues. Do not read every
-historical round.
+```text
+METHOD_READY -> final_method_novelty_gate
+REVISE/HOLD  -> method_refinement
+RETHINK      -> method_design
+RCA_CONFLICT -> root_cause_analysis
+```
 
-- Preserve the bound Certified Problem ID/version/hash. A material problem
-  change must use `arisctl revise-problem`, never a proposal edit.
-- Keep evidence, inference, hypothesis, and proposal distinct.
-- Keep problem, Scientific Delta, and technical-route novelty separate.
-- Allow necessary sophistication; remove redundancy, not required scientific
-  links.
-- Never fabricate evidence, results, novelty, scores, or readiness.
-- Leave experiments, code, and paper writing to downstream skills.
+## Recovery
+
+On resume, read only the focused accepted bindings, `REFINE_STATE.json`, the
+current proposal, unresolved issue IDs, current Evidence named by those issues,
+and the latest return feedback. Older rounds remain audit history.
+
+## Completion rules
+
+- Preserve every selected Principle/RCA/RMC/Capability/Obligation binding.
+- Use the exact required `FINAL_PROPOSAL.md` sections from the refinement
+  protocol.
+- Keep evidence, inference, proposal, and unvalidated Claim distinct.
+- Do not add support without a demonstrated residual adaptation/mechanism gap.
+- Do not manufacture Evidence, results, novelty, convergence, or readiness.
+- Final Human acceptance does not start validation. Experiment planning and
+  execution for Full Validation require an explicit user initiation and a live
+  Controller `validation-handoff`.

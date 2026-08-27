@@ -1,6 +1,6 @@
 ---
 name: idea-creator
-description: "Gemini cross-family adapter for independent problem discovery, 1a–2b diagnosis, or method design."
+description: "Gemini cross-family adapter for independent problem discovery, 1a–2b diagnosis, or Principle formation/evaluation."
 argument-hint: "mode: problem|diagnosis|method; direction or handoff path"
 ---
 
@@ -9,7 +9,8 @@ argument-hint: "mode: problem|diagnosis|method; direction or handoff path"
 Use exactly one mode for **$ARGUMENTS**. This overlay supplies a cross-family
 challenge; it does not collapse problem and method into one call.
 
-The overall compatibility output remains **certified problems and derived method routes**, while each execution writes only its own compact handoff.
+The composed output binds certified problems, accepted RCA, converged Principles,
+and the final Method while each execution writes only its own compact handoff.
 
 Use the independent adapters when relevant:
 `../shared-references/idea-fanout-module.md` for isolated breadth generation,
@@ -58,19 +59,29 @@ root-cause reviewer and Controller own `ROOT_CAUSE_VERDICT.json` and the fixed
 ## `mode: method`
 
 Require the accepted `RESEARCH_CONTRACT.md` and the current Controller-accepted
-`ROOT_CAUSE_ANALYSIS.json` plus `DIAGNOSIS_READY` verdict. Derive the scientific mainline,
-competing explanations, falsifier, design obligations, and one minimal sufficient
-dominant method before any completion search. Only a declared residual `MUST`
-gap may trigger support search: assess the Field Map and same-field mechanisms
-first, then search a structurally corresponding other field only when those
-options cannot reasonably close that gap. For every retained support, record
-the gap served, structural match, integration interface, compatible assumptions,
-capability-specific removal failure, targeted validation, and transfer boundary.
-Produce at most three routes in `METHOD_ROUTES.md` and stop
-for human route selection into `SELECTED_ROUTE.yaml`. Preliminary method
-novelty is a risk screen only; final method novelty is after `/research-refine`.
+`ROOT_CAUSE_ANALYSIS.json` plus `DIAGNOSIS_READY` verdict. In `method_design`,
+resolve RCA chains into machine-resolvable Required Mechanism Changes,
+Capabilities, and Design Obligations. Record first-principles, representation-
+transformation, same-field, and cross-domain structural-isomorphism search;
+cross-domain candidates require source Evidence, structural mapping, causal
+direction, activation-transfer conditions, disanalogies, and boundaries. Form
+algorithm-independent Candidate Principles with lineage, fatal assumptions,
+target operationalization, Provisional Scientific Delta, discriminating
+predictions, and multi-Principle tests. Write `METHOD_DESIGN_PACKET.json`, its
+deterministic Markdown view, and the Gemini reviewer-backed
+`METHOD_DESIGN_REVIEW.json`. Only `PRINCIPLE_PACKET_READY` reaches Human
+approval of the recommended execution set and cost.
 
-Keep problem novelty, scientific-delta novelty, and technical-route novelty
-separate. Do not plan experiments, silently revise the accepted problem, or
+After all approved tests have terminal outcomes, require the Controller-formed
+`PRINCIPLE_EVIDENCE_CONTEXT.json`. Assess operationalization and test validity,
+activation conditions, prediction-level outcomes, and Evidence-supported
+Principle updates. Write `PRINCIPLE_EVALUATION.json`; the independent Gemini
+review produces `PRINCIPLE_EVALUATION_VERDICT.json`. `PRINCIPLE_CONVERGED`
+materializes `SELECTED_PRINCIPLE.yaml`; `REVISE_EVALUATION`, `MORE_EVIDENCE`,
+and `RCA_CONFLICT` follow their fixed Controller return targets.
+
+Keep problem novelty, Principle/Scientific-Delta novelty, and concrete Method
+embodiment novelty separate. Pre-convergence realization is test-only and must
+not become the Method backbone. Do not silently revise the accepted problem or
 use a score as acceptance. `research-review` is optional and must not become a
 second default gate.

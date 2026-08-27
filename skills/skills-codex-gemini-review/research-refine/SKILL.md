@@ -1,6 +1,6 @@
 ---
 name: "research-refine"
-description: "Gemini cross-family review overlay for refining one Certified Problem Contract into a coherent top-journal method route."
+description: "Gemini cross-family review overlay for adapting one Controller-materialized Selected Principle into a minimal faithful Method and bounded Final Scientific Delta Claim."
 ---
 
 > Install after `skills/skills-codex/*`.
@@ -19,20 +19,18 @@ Load:
 - [`method-refinement-protocol.md`](../shared-references/method-refinement-protocol.md)
 - [`reviewer-independence.md`](../shared-references/reviewer-independence.md)
 
-Preserve the Certified Problem Contract, competing explanations, falsifiable
-Scientific Mainline, Design Obligations, minimal sufficient dominant solution,
-dominant-only closure, residual-MUST-gap-driven support, necessary integration,
-targeted Scientific Closure, and separate novelty verdicts.
+Preserve the accepted Problem/RCA/RMC/Capability/Obligation bindings and the
+Controller-materialized `idea-stage/SELECTED_PRINCIPLE.yaml`. Adapt that
+Principle to the target domain, derive its minimal faithful realization, attempt
+Principle-only closure, identify concrete residual adaptation/mechanism gaps,
+and add only the minimal composition necessary to close named gaps. Bound the
+Final Scientific Delta Claim and its validation obligations without treating it
+as established before Full Validation.
 
-Require `CERTIFIED/accepted` and the human-selected
-`idea-stage/SELECTED_ROUTE.yaml`; do not treat a prose route or
-`IDEA_REPORT.md` as a valid precondition. Final method novelty is checked only
-after `FINAL_PROPOSAL.md`.
-
-For each residual `MUST` gap, assess the Field Map and same-field mechanisms
-first. Search another field only when those options cannot reasonably close that
-gap; combination is permitted only as necessary support and is not the
-Scientific Delta.
+Require accepted convergence artifacts and the active Selected Principle; do
+not treat a pre-convergence realization, prose proposal, or `IDEA_REPORT.md` as
+a valid precondition. Final method novelty is checked only after
+`FINAL_PROPOSAL.md`.
 
 ## Outputs
 
@@ -59,23 +57,25 @@ Preserve:
 5. Use `mcp__gemini-review__review_reply_start` only to verify resolution of
    that reviewer's issue IDs; poll status after each call.
 
-Review Problem Fidelity, competing-explanation discipline, Hypothesis Quality,
-obligation traceability, dominant-carrier fit, integration, Scientific Closure,
-feasibility, boundaries, Scientific Delta, and targeted validation. Numeric
-score is progress metadata, not acceptance.
+Review Selected-Principle fidelity, target adaptation, minimal faithful
+realization, Principle-only closure, named residual gaps, minimal necessary
+composition, feasibility, boundaries, the bounded Final Scientific Delta Claim,
+and claim-validation obligations. Numeric score is progress metadata, not
+acceptance.
 
 ### Controller-issued final independent Gate
 
 Do not start a second final blind audit. The Controller-issued
 `independent_method_reviewer` is the sole final independent review and receives
-the frozen problem, compact Field Evidence Map, cited evidence cards, current
-proposal, and constraints without iterative thread history, scores, or change
-summaries.
+the frozen Problem/RCA/Selected-Principle bindings, compact Field Evidence Map,
+cited Evidence Cards, current proposal, and constraints without iterative
+thread history, scores, or change summaries.
 
-Its only formal outcomes are `METHOD_READY`, `REVISE`, `RETHINK`, and `HOLD`:
+Its only formal outcomes are `METHOD_READY`, `REVISE`, `RETHINK`, `HOLD`, and
+`RCA_CONFLICT`:
 only `METHOD_READY` advances; `REVISE/HOLD` return to `method_refinement`; and
-`RETHINK` returns to `method_design`. Do not manufacture a local acceptance
-status.
+`RETHINK` returns to `method_design`; `RCA_CONFLICT` returns to
+`root_cause_analysis`. Do not manufacture a local acceptance status.
 Only the Controller may record `acceptance_status: accepted` after consuming
 the bound formal attestation.
 
@@ -85,10 +85,12 @@ Read state, focused Research Contract, active proposal, unresolved issues, and
 only the evidence cards named by active issues. Do not reload all historical
 rounds.
 
-- Preserve the certified problem.
-- Do not collapse explanations without discriminating evidence.
-- Require structural match, transfer limits, real interfaces, compatibility,
-  removal/counterfactual failure, and targeted validation.
+- Preserve the accepted Problem/RCA and Selected Principle.
+- Do not reopen Principle formation or reinterpret convergence locally.
+- Add support only for a demonstrated residual adaptation/mechanism gap and
+  require real interfaces, compatible activation conditions, boundaries, and
+  removal/counterfactual responsibility.
 - Allow necessary sophistication; delete only redundancy.
 - Never fabricate evidence, results, novelty, scores, or readiness.
-- Leave experiments, code generation, and paper writing unchanged downstream.
+- Full Validation requires explicit user initiation and a live Controller
+  `validation-handoff`; leave code generation and paper writing downstream.

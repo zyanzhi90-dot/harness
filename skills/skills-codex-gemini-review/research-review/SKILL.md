@@ -17,9 +17,13 @@ Get a multi-round critical review of research work from an external LLM with max
 
 ## Context: $ARGUMENTS
 
-Parse `stage: problem|method|project`. Default to `project`. When explicit,
-review only that stage under
-[`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md).
+Parse `stage: problem|principle|method|project`. Default to `project`. When
+explicit, review only that stage; do not ask a Method to compensate for a weak
+problem, collapse Principle truth into Method novelty, or reject a certified
+problem because one Principle/Method is weak. Load
+[`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
+and, for `principle|method`,
+[`method-design-contract.md`](../shared-references/method-design-contract.md).
 
 ## Prerequisites
 
@@ -40,11 +44,15 @@ Before calling the external reviewer, compile a comprehensive briefing:
 2. Read any memory/notes files for key findings and experiment history
 3. For `problem`, include Evidence Map, question, source class, scope, value if
    yes/no, falsifier, and P3 record.
-4. For `method`, include the Certified Problem Contract, scientific mainline,
-   dominant method, backbone, innovation carrier, supporting-mechanism ledger,
-   integration interfaces, targeted evidence, and separate
-   scientific-delta/technical-route novelty.
-5. For `project`, include claims, methods, results, and weaknesses.
+4. For `principle`, include accepted RCA, RMC/Capability/Obligation bindings,
+   Principle Search, Candidate lineage, fatal assumptions, Provisional
+   Scientific Delta, multi-target predictions/tests, current Evidence Context
+   or Evidence Update, and return feedback.
+5. For `method`, include the Controller-materialized Selected Principle, target
+   adaptation, minimal faithful realization, Principle-only closure, residual
+   gaps, minimal necessary composition, Final Scientific Delta Claim,
+   boundaries, and claim-validation obligations.
+6. For `project`, include claims, methods, results, and weaknesses.
 
 ### Step 2: Initial Review (Round 1)
 Send a detailed prompt with high-rigor review:
@@ -56,12 +64,17 @@ mcp__gemini-review__review_start:
     Please act as a senior top-venue reviewer and respect the declared stage.
     For problem stage, score Reality, Importance, Unresolvedness, Precision,
     Falsifiability, and Answerability; return CERTIFIED/HOLD/REJECT/BLOCKED.
-    For method stage, apply method-design-contract.md. Judge hypothesis quality,
-    dominant-method fit, backbone/innovation-carrier separation, dominant-only
-    closure, and each declared residual MUST gap. Require Field-Map and
-    same-field assessment before any cross-field support, plus actual integration
-    interfaces, capability-specific removal failures, targeted evidence,
-    scientific closure, and scientific delta. Combination is not the novelty verdict.
+    For principle stage, judge RCA-to-RMC-to-Capability/Obligation-to-Principle
+    closure, algorithm independence, the four search dimensions, cross-domain
+    structural mappings, fatal assumptions, multi-target discriminating tests,
+    Evidence currentness, and whether Evidence Update changes scientific
+    understanding rather than only performance ranking. NO_RESULT is not
+    support or rejection.
+    For method stage, verify fidelity to the Controller-materialized Selected
+    Principle, target adaptation, minimal faithful realization, Principle-only
+    closure, named residual gaps, minimal necessary composition, bounded Final
+    Scientific Delta Claim, boundaries, and mechanism-linked validation
+    obligations. Do not call the Claim established before VALIDATED.
     For project stage, review logic, evidence, narrative, and venue sufficiency.
     Please be brutally honest.
 ```
@@ -86,8 +99,10 @@ Key follow-up patterns:
 ### Step 4: Convergence
 Stop iterating when:
 - problem stage: stable P3 verdict and decisive missing evidence are explicit
-- method stage: obligations, route verdict, weak assumptions, and decisive
-  validation are explicit
+- principle stage: Candidate status, unresolved assumptions, Evidence
+  interpretation, and the next discriminating decision are explicit
+- method stage: Selected-Principle fidelity, residual gaps, concrete Method
+  verdict, Claim boundaries, and decisive validation obligations are explicit
 - project stage: claims, evidence, plan, and narrative are settled
 
 ### Step 5: Document Everything
@@ -109,7 +124,8 @@ Update project memory/notes with key review conclusions.
 - Be honest about weaknesses — hiding them leads to worse feedback
 - Push back on criticisms you disagree with, but accept valid ones
 - Focus on ACTIONABLE feedback — "what experiment would fix this?"
-- Preserve stage separation: problem and method verdicts are distinct decisions.
+- Preserve stage separation: problem, Principle, and Method verdicts are
+  distinct decisions.
 - Document the completed `threadId` for potential future resumption
 - The review document should be self-contained (readable without the conversation)
 

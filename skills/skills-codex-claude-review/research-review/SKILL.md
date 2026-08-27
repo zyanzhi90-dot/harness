@@ -16,18 +16,39 @@ description: "Get a deep critical review of research from Claude via claude-revi
 
 > **Claude overlay assurance:** this route is a different model family from the Codex executor and records `review_independence: cross-family` plus `acceptance_status: accepted`.
 
-Get a multi-round critical review of research work from an external LLM with maximum reasoning depth.
+> 🔒 **Do not wrap this skill in `/loop`, `/schedule`, or `CronCreate`.** It is
+> verdict-bearing — it produces a cross-model review verdict, multi-round with
+> reviewer thread continuity. An external timer re-fires the verdict on
+> wall-clock time and breaks the reviewer's round-to-round memory: zero new
+> signal, full token cost. Schedule the *external wait that precedes it* (work
+> ready → then review once), not the verdict. See
+> [`shared-references/external-cadence.md`](../shared-references/external-cadence.md).
+
+Get a multi-round critical review of research work from a fresh secondary Codex
+agent with maximum reasoning depth.
 
 ## Constants
 
 - **REVIEWER_MODEL = `claude-review`** — Claude reviewer invoked through the local `claude-review` MCP bridge. Set `CLAUDE_REVIEW_MODEL` if you need a specific Claude model override.
 - **REVIEWER_BACKEND = `claude-review`** — reviews route through the claude-review MCP (Claude family; cross-family for a Codex executor).
 
+## Reviewer Calling Convention
+
+Start a fresh review with `mcp__claude-review__review_start` and continue the same review with
+`mcp__claude-review__review_reply_start` using the returned completed threadId. Keep full briefs in project-local
+files and pass their absolute paths so the reviewer can verify artifacts.
+
 ## Context: $ARGUMENTS
 
-Parse `stage: problem|method|project`. Default to `project` for complete work.
-When a stage is explicit, review only that stage's decision. Follow
+Parse `stage: problem|principle|method|project` from the arguments. Default to `project`
+for an existing complete work. When an orchestrator passes an explicit stage,
+review only that stage's decision; do not ask a method to compensate for a weak
+problem, collapse Principle truth into Method novelty, or reject a certified
+problem merely because one Candidate Principle or Method adaptation is weak.
+Use the stage contracts in
 [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md).
+For `stage: principle` or `stage: method`, also load
+[`method-design-contract.md`](../shared-references/method-design-contract.md).
 
 ## Prerequisites
 
@@ -46,53 +67,71 @@ When a stage is explicit, review only that stage's decision. Follow
 Before calling the external reviewer, compile a comprehensive briefing:
 1. Read project narrative documents (e.g., STORY.md, README.md, paper drafts)
 2. Read any memory/notes files for key findings and experiment history
-3. For `problem`, include Evidence Map, research question, source class, scope,
-   value if yes/no, falsifier, and P3 gate record.
-4. For `method`, include the Certified Problem Contract, scientific mainline,
-   dominant method, backbone, innovation carrier, supporting-mechanism ledger,
-   integration interfaces, targeted evidence, and separate
-   scientific-delta/technical-route novelty results.
-5. For `project`, identify core claims, methods, results, and weaknesses.
+3. For `stage: problem`, include the Evidence Map, exact research question,
+   source class, scope, value if yes/no, decisive falsifier, and P3 gate record.
+4. For `stage: principle`, include the accepted RCA, RMC/Capability/Obligation
+   bindings, Principle Search record, Candidate versions, fatal assumptions,
+   Provisional Scientific Delta, multi-target predictions/tests, current
+   Evidence Context or Evidence Update when applicable, and return feedback.
+5. For `stage: method`, include the Controller-materialized Selected Principle,
+   target-domain adaptation, minimal faithful realization, Principle-only
+   closure, residual gaps, minimal necessary composition, Final Scientific
+   Delta Claim, boundaries, and claim-validation obligations.
+6. For `stage: project`, identify core claims, methodology, key results, and
+   known weaknesses as before.
 
 ### Step 2: Initial Review (Round 1)
-Send a detailed prompt with ultra reasoning:
+Send a detailed prompt with ultra reasoning. Keep the tool payload short: write
+the full briefing to `RESEARCH_REVIEW_REQUEST.md`, then point the fresh Codex
+agent at that file.
 
 ```
 mcp__claude-review__review_start:
-  prompt: |
-    [Full research context + specific questions]
-    Please act as a senior top-venue reviewer and respect the declared stage.
-    Start from the
+  task: |
+    Read the review brief at <absolute path to RESEARCH_REVIEW_REQUEST.md>.
+    Executor notes are not evidence beyond the files they cite, so verify the
+    referenced artifacts before judging.
+    Please act as a senior top-venue reviewer. Respect the stage declared in
+    the brief. Start from the
     assumption that the work is broken somewhere — your job is to find where.
     Be adversarial. Trust nothing the author tells you — verify everything
     yourself.
-    For problem stage, score Reality, Importance, Unresolvedness, Precision,
-    Falsifiability, and Answerability; return CERTIFIED/HOLD/REJECT/BLOCKED.
-    For method stage, apply method-design-contract.md. Judge hypothesis quality,
-    dominant-method fit, backbone/innovation-carrier separation, dominant-only
-    closure, and each declared residual MUST gap. Require Field-Map and
-    same-field assessment before any cross-field support, plus actual integration
-    interfaces, capability-specific removal failures, targeted evidence,
-    scientific closure, and scientific delta. Combination is not the novelty verdict.
-    For project stage, review logic, evidence, narrative, and venue sufficiency.
+    For stage=problem, score Reality, Importance, Unresolvedness, Precision,
+    Falsifiability, and Answerability; return CERTIFIED / HOLD / REJECT /
+    BLOCKED plus the decisive missing evidence.
+     For stage=principle, judge the RCA-to-RMC-to-Capability/Obligation-to-
+     Principle closure, algorithm independence, four-dimension search,
+     cross-domain structural mappings, premature closure, fatal assumptions,
+     multi-target discriminating predictions/tests, Evidence currentness, and
+     whether an Evidence Update changes scientific understanding rather than
+     only performance ranking. Do not interpret NO_RESULT as support/rejection.
+     For stage=method, verify fidelity to the Controller-materialized Selected
+     Principle, target adaptation, minimal faithful realization,
+     Principle-only closure, named residual gaps, minimal necessary composition,
+     bounded Final Scientific Delta Claim, and mechanism-linked validation
+     obligations. Do not call the Claim established before VALIDATED.
+    For stage=project, identify logical gaps, missing evidence, narrative
+    weaknesses, and top-venue sufficiency as usual.
     Please be brutally honest.
 ```
 
 After this start call, immediately save the returned `jobId` and poll `mcp__claude-review__review_status` with a bounded `waitSeconds` until `done=true`. Treat the completed status payload's `response` as the reviewer output, and save the completed `threadId` for any follow-up round.
 
+The review brief should contain the full research context, the specific
+questions, and the primary artifact / raw-result paths the reviewer should
+inspect. Save the returned completed threadId.
+
 ### Step 3: Iterative Dialogue (Rounds 2-N)
-Use `mcp__claude-review__review_reply_start` with the saved completed `threadId`, then poll `mcp__claude-review__review_status` with the returned `jobId` until `done=true` to continue the conversation:
+Use `mcp__claude-review__review_reply_start` with the returned completed threadId to continue the conversation. For
+follow-up rounds, write an updated brief such as
+`RESEARCH_REVIEW_ROUND_2.md` and send only the path:
 
 ```
 mcp__claude-review__review_reply_start:
-  threadId: [saved reviewer id from Step 2]
+  threadId: [saved reviewer completed threadId from Step 2]
   prompt: |
-    Please continue the review using the revised materials below.
-
-    Revised files:
-    - /absolute/path/to/file1
-    - /absolute/path/to/file2
-
+    Read the updated review brief at <absolute path to
+    RESEARCH_REVIEW_ROUND_2.md>.
     Focus on unresolved weaknesses and whether the revision actually fixed them.
 ```
 
@@ -112,16 +151,21 @@ Key follow-up patterns:
 
 ### Step 4: Convergence
 Stop iterating when:
-- problem stage: a stable P3 verdict and decisive missing evidence are explicit
-- method stage: obligations, route verdict, weak assumptions, and decisive
-  validation are explicit
-- project stage: core claims, evidence, experiment plan, and narrative are settled
+- `stage: problem`: a stable P3 verdict and the evidence required to change it
+  are explicit.
+- `stage: principle`: Candidate status, unresolved assumptions, Evidence
+  interpretation, and the next discriminating decision are explicit.
+- `stage: method`: Selected-Principle fidelity, residual gaps, concrete Method
+  verdict, Claim boundaries, and decisive validation obligations are explicit.
+- `stage: project`: core claims, evidence requirements, experiment plan, and
+  narrative structure are settled.
 
 ### Step 5: Document Everything
 Save the full interaction and conclusions to a review document in the project root:
 - Round-by-round summary of criticisms and responses
 - Declared stage and stage-specific verdict
-- Separate problem and method conclusions whenever both appear
+- Separate problem-quality/problem-novelty and method-quality/method-novelty
+  conclusions when both appear
 - Final consensus on claims, narrative, and experiments where applicable
 - Claims matrix (what claims are allowed under each possible outcome)
 - Prioritized TODO list with estimated compute costs
@@ -129,26 +173,28 @@ Save the full interaction and conclusions to a review document in the project ro
 
 Update project memory/notes with key review conclusions.
 
-If `— composed: <canonical-report-path>` is explicitly present, fold consensus,
-claims matrix, TODOs, and trace links into that report instead of writing a
-standalone review document. Without the directive, write the standalone review
-as documented; never infer composed mode from an existing file. `— standalone`
-always wins. See
-[`output-composition.md`](../shared-references/output-composition.md).
-
-### Step 6: Review Tracing
-
-Save a trace for every `mcp__claude-review__review_start`, `mcp__claude-review__review_reply_start`, or `oracle-pro` review call following `../shared-references/review-tracing.md`. Record the reviewer route, saved threadId, prompt summary, raw response path, decisions, and action items. This preserves the Claude mainline Review Tracing semantics while using Codex-native reviewer calls.
+> **Composed mode** — if invoked with `— composed: <canonical-report-path>` (an
+> orchestrator like `/idea-discovery` passes this), do **not** write a standalone review
+> `.md` in the project root. The raw conversation is already persisted to `.aris/traces/…`
+> (see *Review Tracing* below — that audit copy is kept in every mode); fold the review
+> *conclusions* (consensus, claims matrix, prioritized TODOs) into the orchestrator's
+> canonical report and cite the trace path there. **Default (no `— composed:` directive):
+> behave exactly as above — write the standalone review document.** Never infer composed
+> mode from a report file merely existing. Full rules:
+> [`shared-references/output-composition.md`](../shared-references/output-composition.md).
 
 ## Key Rules
 
-- **Always ask the Claude reviewer for strict, high-rigor feedback** in every review round.
-- Send comprehensive context in Round 1 — the external model cannot read your files
+- ALWAYS pin `model: the claude-review model` + `config: {"model_reasoning_effort": "ultra"}` for reviews (deep-audit tier; capability fallback per `reviewer-routing.md`, never below `xhigh`)
+- Put comprehensive context in the review brief. Codex can read local files
+  when you pass an absolute path; manual reviewers usually cannot, so attach or
+  paste the same brief there.
 - Be honest about weaknesses — hiding them leads to worse feedback
 - Push back on criticisms you disagree with, but accept valid ones
 - Focus on ACTIONABLE feedback — "what experiment would fix this?"
-- Preserve stage separation: problem and method verdicts are distinct decisions.
-- Document the completed `threadId` for potential future resumption
+- Preserve stage separation: a problem verdict and a method verdict are
+  different decisions.
+- Document the reviewer completed threadId for potential future resumption
 - The review document should be self-contained (readable without the conversation)
 
 ## Prompt Templates
@@ -167,3 +213,7 @@ Save a trace for every `mcp__claude-review__review_start`, `mcp__claude-review__
 
 ### For mock review:
 "Please write a mock NeurIPS review with: Summary, Strengths, Weaknesses, Questions for Authors, Score, Confidence, and What Would Move Toward Accept."
+
+## Review Tracing
+
+After each `mcp__claude-review__review_start`, `mcp__claude-review__review_reply_start`, or optional `oracle-pro` review call, save the trace following `../shared-references/review-tracing.md` (Policy C — forensic; never silently skip). Use `save_trace.sh` (resolved per the chain in `../shared-references/integration-contract.md` §2) or write files directly to `.aris/traces/research-review/<date>_run<NN>/`. Respect the `--- trace:` parameter (default: `full`).

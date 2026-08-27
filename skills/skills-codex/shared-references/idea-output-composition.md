@@ -18,9 +18,13 @@ In the current problem-first workflow, `/research-lit`, `/idea-creator`, and
 reviewers first write their own stage-scoped machine handoffs and audit traces.
 The orchestrator owns the final `idea-stage/IDEA_REPORT.md` only after the
 human has accepted the problem, the root-cause Gate is `DIAGNOSIS_READY`, and
-the human has selected a route. Composition folds unique
-findings or links to their durable artifacts; it does not paste registries,
-transcripts, or duplicate verdict tables into the report.
+the Principle packet and test cycle have completed, convergence has been
+accepted, and the final Method is ready for the Human checkpoint. Composition
+folds unique findings or links to `METHOD_DESIGN_PACKET.json`,
+`PRINCIPLE_EVALUATION.json`, Controller-materialized
+`SELECTED_PRINCIPLE.yaml`, `FINAL_PROPOSAL.md`, and their verdicts; it does not
+paste registries, ledgers, raw results, transcripts, or duplicate verdict tables
+into the report.
 
 ## Artifact policy
 
@@ -30,9 +34,9 @@ Markdown. `IDEA_REPORT.md` is a readable decision record, never a hidden state
 database and never the handoff between problem and method modes.
 
 An optional `COMPACT` output may create
-`idea-stage/IDEA_CANDIDATES.md` after problem acceptance or route selection. It
-is a short index (candidate/route IDs, status, one-line rationale, artifact
-links), not a second report. Render HTML only after the canonical report is
+`idea-stage/IDEA_CANDIDATES.md` after problem acceptance or accepted Principle
+convergence. It is a short index (problem/Principle IDs, status, one-line
+rationale, artifact links), not a second report. Render HTML only after the canonical report is
 complete; rendering is presentation, not a scientific gate.
 
 Keep scratch launch logs and redundant summaries out of the stage directory
@@ -45,8 +49,10 @@ reviewer provenance, and human decision paths.
 
 Before writing a composed report, verify: one canonical path; all included
 sections have source artifact links; problem acceptance, the root-cause
-analysis/verdict IDs and hashes, and route selection are present; no section
-claims a method was accepted before its final gate; and no
+analysis/verdict IDs and hashes, the Evidence Update/convergence verdict, the
+Selected Principle, final proposal, and final verdicts are present; no section
+claims a Method was accepted before its final Gate, no Final Scientific Delta
+Claim is labeled established before `VALIDATED`, and no
 intermediate report has been treated as active context. On failure, keep the
 stage artifacts and return `BLOCKED_COMPOSITION` instead of silently producing
 a persuasive but incomplete report.

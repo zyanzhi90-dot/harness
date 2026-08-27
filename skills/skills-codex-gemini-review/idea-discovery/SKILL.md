@@ -1,6 +1,6 @@
 ---
 name: idea-discovery
-description: "Gemini cross-family overlay for the ARIS field map, problem-certification, independent method design, refinement, and human decisions."
+description: "Gemini cross-family overlay for the ARIS field map, problem certification, RCA, Principle formation/testing/convergence, Method refinement, and human decisions."
 argument-hint: "[research-direction]"
 ---
 
@@ -18,17 +18,20 @@ independent cross-family challenge; it does not create a second default gate.
 -> independent problem-quality Gate -> /novelty-check "mode: problem"
 -> human problem acceptance -> /idea-creator "mode: diagnosis"
 -> independent root-cause Gate -> /idea-creator "mode: method"
--> human route selection -> /research-refine
+-> independent Principle packet review -> Human test-set approval
+-> /method-test -> /idea-creator "mode: method"
+-> independent Principle convergence review -> /research-refine
 -> /novelty-check "mode: method-final" -> human final method acceptance
 -> METHOD_CONFIRMED_AWAITING_USER_VALIDATION
 ```
 
 Run each module in a fresh context. Pass compact packets and stable artifact
 paths only: active map, the accepted `RESEARCH_CONTRACT.md` and separate
-`PROBLEM_EVIDENCE_CAPSULE.md`, selected `SELECTED_ROUTE.yaml`, and final
-proposal. The Contract must not embed a second capsule; the independent capsule
-is the sole formal compact evidence handoff. Do not paste the full registry or
-conversation history. `IDEA_REPORT.md` is the final human report only.
+`PROBLEM_EVIDENCE_CAPSULE.md`, accepted RCA, current Principle/Test packet,
+Controller-formed Evidence Context, converged `SELECTED_PRINCIPLE.yaml`, and
+final proposal. The Contract must not embed a second capsule; the independent
+capsule is the sole formal compact evidence handoff. Do not paste the full
+registry or conversation history. `IDEA_REPORT.md` is the final human report only.
 
 The shared workflow phase list is authoritative. In particular, neither this
 overlay nor a cross-family review may skip `root_cause_analysis` or
@@ -53,9 +56,12 @@ diagnostic/replication evidence tied to an explicit decision target; recency or
 relevance alone is insufficient. User material is `USER_SUPPLIED_READ` and
 requires post-read assessment.
 
-No method route may be generated before `human_accepted` appears in the problem
-contract and the Controller has accepted a `DIAGNOSIS_READY` root-cause verdict
-bound to the current contract, capsule, and 1a–2b analysis. Preliminary method
-novelty is a risk screen; final method novelty requires `FINAL_PROPOSAL.md`.
-`research-review` is optional. Do not plan or execute experiments in this
-workflow.
+No Candidate Principle may be formed before `human_accepted` appears in the
+problem contract and the Controller has accepted a `DIAGNOSIS_READY` root-cause
+verdict bound to the current contract, capsule, and 1a–2b analysis. No test may
+run before Human approval; `/method-test` only executes that approved
+discriminating-test set and never interprets Evidence or convergence.
+Method adaptation starts only from the Controller-materialized Selected
+Principle. Preliminary novelty is advisory; final method novelty requires
+`FINAL_PROPOSAL.md`. `research-review` is optional. Full Validation remains a
+separate, explicitly user-initiated continuation.
