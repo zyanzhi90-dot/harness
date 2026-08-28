@@ -1058,7 +1058,7 @@ def _validate_principle_method_outputs(
     request = _find_phase(state, phase).get("review_request")
     if not isinstance(request, dict) or request.get("reviewed_artifacts_pending"):
         return None
-    result: dict = {}
+    result: dict = {"validated_artifacts": _artifact_hashes(root, output_paths)}
     try:
         if phase == "method_design":
             packet = main["packet"]

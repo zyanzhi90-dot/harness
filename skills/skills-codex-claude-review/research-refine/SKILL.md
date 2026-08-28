@@ -73,8 +73,8 @@ stop if the Selected Principle is no longer active.
 - `MAX_ROUNDS = 5`
 - `SCORE_THRESHOLD = 9` — progress signal only, never acceptance.
 - `OUTPUT_DIR = refine-logs/`
-- `REVIEWER_BACKEND = codex`
-- `REVIEWER_MODEL = the claude-review model`
+- `REVIEWER_BACKEND = claude-review`
+- `REVIEWER_MODEL = the configured Claude model`
 
 Allow explicit overrides. Do not hard-code domain doctrine.
 
@@ -103,11 +103,13 @@ sealing the final review request.
 
 ## Reviewer transport
 
-The base reviewer provides a cross-family accepted Claude review. Start Round 1
-with a fresh secondary reviewer agent and use
-that same completed threadId only to check resolution of its own issue IDs. Persist path-only
-review bundles and record the iterative completed threadId separately from the Controller
-review request. Continuity cannot accept the phase.
+Start Round 1 with `mcp__claude-review__review_start`, then poll
+`mcp__claude-review__review_status` to completion. Persist path-only review
+bundles and the completed Claude `threadId`. Use
+`mcp__claude-review__review_reply_start` with that same completed `threadId`
+only to check resolution of its own issue IDs, polling review status after each
+call. Record the iterative thread separately from the Controller review
+request. Continuity cannot accept the phase.
 
 The Controller-issued `independent_method_reviewer` is the sole formal final
 reviewer. When `FINAL_PROPOSAL.md` is final and all Evidence work is complete,
@@ -117,8 +119,10 @@ invoke:
 python -m arisctl --root . refresh-review-request <run_id>
 ```
 
-Dispatch only against that current request. Write its unchanged formal verdict
-to `refine-logs/FINAL_BLIND_REVIEW.md`. Outcomes are:
+Dispatch a fresh Claude review with `mcp__claude-review__review_start` only
+against that current request and poll `mcp__claude-review__review_status` to
+completion. Write its unchanged formal verdict to
+`refine-logs/FINAL_BLIND_REVIEW.md`. Outcomes are:
 
 ```text
 METHOD_READY -> final_method_novelty_gate

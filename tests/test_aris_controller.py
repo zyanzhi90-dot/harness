@@ -1050,6 +1050,11 @@ def attest_current_review(
                 "reviewed_artifact_hashes": request["artifact_bindings"],
             }
         )
+    elif current["phase"] == "final_method_novelty_gate":
+        text = (controller.root / "idea-stage" / "FINAL_METHOD_NOVELTY_VERDICT.md").read_text(
+            encoding="utf-8"
+        )
+        payload = json.loads(text.split("```json\n", 1)[1].split("\n```", 1)[0])
     elif request["required_reviewer_role"] in {
         "independent_problem_reviewer", "independent_novelty_reviewer",
     }:
@@ -1114,6 +1119,14 @@ def formal_verdict_artifact(
         "decision": decision,
         "reviewed_artifact_hashes": bindings,
     }
+    if phase["phase"] == "final_method_novelty_gate":
+        metadata["run_id"] = controller.run_id
+    if phase["phase"] == "final_method_novelty_gate" and decision != "NOVEL":
+        metadata["return_guidance"] = {
+            "missing_evidence": ["The declared novelty delta is not yet established."],
+            "decision_target": "Resolve the novelty review's declared blocking layer.",
+            "required_check": ["Consume the bound final novelty feedback."],
+        }
     if phase["phase"] in {"problem_quality_gate", "problem_novelty_gate"}:
         if phase["phase"] == "problem_quality_gate":
             assessment = {
@@ -1260,6 +1273,7 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": json.dumps({"decision": "PRINCIPLE_CONVERGED"}) + "\n",
         "idea-stage/SELECTED_PRINCIPLE.yaml": yaml.safe_dump(selected, sort_keys=False),
         "refine-logs/FINAL_PROPOSAL.md": proposal,
+        "refine-logs/FINAL_BLIND_REVIEW.md": "# Accepted method review\n",
         "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "# Novelty\n",
         "idea-stage/IDEA_REPORT.md": "# Accepted\n",
     }
@@ -1288,6 +1302,7 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": "principle_evaluation",
         "idea-stage/SELECTED_PRINCIPLE.yaml": "principle_evaluation",
         "refine-logs/FINAL_PROPOSAL.md": "method_refinement",
+        "refine-logs/FINAL_BLIND_REVIEW.md": "method_refinement",
         "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "final_method_novelty_gate",
         "idea-stage/IDEA_REPORT.md": "final_method_human_acceptance",
     }
@@ -5600,6 +5615,60 @@ def test_validation_result_uses_fixed_canonical_return_targets(
         assert core["active_problem_version"]["problem_id"] == "P-1"
 
 
+@pytest.mark.parametrize(
+    ("decision", "target", "selected_remains"),
+    [
+        ("REVISE_METHOD_DELTA", "method_refinement", True),
+        ("RETHINK_PRINCIPLE_DELTA", "method_design", False),
+        ("HOLD", "final_method_novelty_gate", True),
+    ],
+)
+def test_final_method_novelty_uses_layered_return_targets(
+    tmp_path: Path, decision: str, target: str, selected_remains: bool
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        core["status"] = "ACTIVE"
+        core["current_phase"] = "final_method_novelty_gate"
+        core["validation_entry"] = None
+        core["approval_request"] = None
+        state["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
+        phase = run_state._find_phase(state, "final_method_novelty_gate")
+        phase["status"] = "pending"
+        phase["review_request"] = None
+        run_state._find_phase(state, "final_method_human_acceptance")["status"] = "pending"
+
+    controller.start_current_phase()
+    verdict_id = f"final-novelty-{decision.lower()}"
+    verdict_path = tmp_path / "idea-stage" / "FINAL_METHOD_NOVELTY_VERDICT.md"
+    verdict_path.write_text(
+        formal_verdict_artifact(
+            controller, verdict_id=verdict_id, decision=decision
+        ),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    attest_current_review(
+        controller, verdict_id, "claude-sonnet-4", decision=decision
+    )
+    returned = controller.return_current_phase(verdict_id, "claude-sonnet-4")
+
+    core = returned["scientific_core"]
+    event = core["return_history"][-1]
+    assert core["current_phase"] == target
+    assert run_state._find_phase(returned, target)["status"] == "pending"
+    assert event["decision"] == decision
+    assert event["return_target"] == target
+    assert event["return_guidance"]["decision_target"]
+    selected_path = tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml"
+    selected_record = core["accepted_artifacts"].get(
+        "idea-stage/SELECTED_PRINCIPLE.yaml"
+    )
+    assert selected_path.exists() is selected_remains
+    assert (selected_record is not None) is selected_remains
+
+
 def test_tampering_accepted_policy_or_field_map_blocks_transition(tmp_path: Path) -> None:
     controller = start_controller(tmp_path)
     policy = tmp_path / "idea-stage" / "SOURCE_ADMISSION_POLICY.yaml"
@@ -7015,6 +7084,134 @@ def test_re_adoption_preserves_history_and_search_cycle_authorization_is_boundar
             max_search_cycles=result["after"]["max_search_cycles"] + 1,
             reason="must not rewrite an active retrieval plan",
         )
+
+
+def test_adaptation_gap_evidence_refreshes_the_current_final_review_binding(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    root_cause_path = tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json"
+    root_cause_path.write_text(
+        json.dumps({"analysis_id": "RCA-1", "primary_causal_chain_ids": ["CHAIN-1"]}) + "\n",
+        encoding="utf-8",
+    )
+    selected_path = tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml"
+    selected = yaml.safe_load(selected_path.read_text(encoding="utf-8"))
+    selected["root_cause_binding"]["analysis_sha256"] = sha256_file(root_cause_path)
+    selected_path.write_text(yaml.safe_dump(selected, sort_keys=False), encoding="utf-8")
+    card_path = tmp_path / ".aris" / "canonical" / "run-1" / "evidence-P2.json"
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    card = {
+        "source_id": "P2",
+        "read_event_id": "R-P2",
+        "method_refinement_search_context": {
+            "search_mode": "ADAPTATION_GAP_SEARCH",
+            "principle_id": "PR-A",
+            "principle_version": "1",
+            "selected_principle_sha256": sha256_file(
+                tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml"
+            ),
+            "actual_hit_query_ids": ["Q-P2"],
+            "residual_adaptation_gap_ids": ["GAP-1"],
+        },
+    }
+    card_path.write_text(json.dumps(card), encoding="utf-8")
+    (tmp_path / "idea-stage" / "EVIDENCE_REGISTRY.jsonl").write_text(
+        json.dumps(card) + "\n", encoding="utf-8"
+    )
+
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        core["status"] = "ACTIVE"
+        core["current_phase"] = "method_refinement"
+        core["validation_entry"] = None
+        phase = run_state._find_phase(state, "method_refinement")
+        phase["status"] = "pending"
+        phase["review_request"] = None
+        state["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
+        core["accepted_artifacts"]["idea-stage/ROOT_CAUSE_ANALYSIS.json"] = (
+            controller._artifact_record(
+                "idea-stage/ROOT_CAUSE_ANALYSIS.json",
+                producer_phase="root_cause_analysis",
+                provenance={},
+                upstream_snapshot={},
+            )
+        )
+        core["accepted_artifacts"]["idea-stage/SELECTED_PRINCIPLE.yaml"] = (
+            controller._artifact_record(
+                "idea-stage/SELECTED_PRINCIPLE.yaml",
+                producer_phase="principle_evaluation",
+                provenance={},
+                upstream_snapshot={},
+            )
+        )
+        root_cause_phase = run_state._find_phase(state, "root_cause_analysis")
+        root_cause_phase["analysis_id"] = "RCA-1"
+        root_cause_phase["validated_artifacts"] = {
+            raw_path: core["accepted_artifacts"][raw_path]["sha256"]
+            for raw_path in (
+                "idea-stage/RESEARCH_CONTRACT.md",
+                "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/ROOT_CAUSE_ANALYSIS.json",
+            )
+        }
+        run_state._find_phase(state, "root_cause_gate")["validated_artifacts"] = {
+            "idea-stage/ROOT_CAUSE_VERDICT.json": core["accepted_artifacts"][
+                "idea-stage/ROOT_CAUSE_VERDICT.json"
+            ]["sha256"]
+        }
+        research = state["research_lit"]
+        research["accepted_artifacts"]["evidence:P2"] = {
+            "path": str(card_path.relative_to(tmp_path)),
+            "sha256": sha256_file(card_path),
+            "read_event_id": "R-P2",
+            "validator_result": "PASS",
+        }
+        research["read_events"]["R-P2"] = {"paper_id": "P2", "status": "complete"}
+        research["papers"]["P2"] = {"found_by_query_ids": ["Q-P2"]}
+        research["query_events"]["Q-P2"] = {"status": "complete"}
+        old_anchor = controller._phase_evidence_anchor(state, "method_refinement")
+        research["incremental_evidence_by_phase"] = {
+            "method_refinement": {
+                "evidence:P2": {
+                    **research["accepted_artifacts"]["evidence:P2"],
+                    "evidence_key": "evidence:P2",
+                    "phase_binding_anchor": old_anchor,
+                }
+            }
+        }
+
+    selected = yaml.safe_load(selected_path.read_text(encoding="utf-8"))
+    selected["remaining_uncertainty"].append("adaptation-gap transfer")
+    selected_path.write_text(yaml.safe_dump(selected, sort_keys=False), encoding="utf-8")
+    with controller._store.mutate() as state:
+        state["scientific_core"]["accepted_artifacts"][
+            "idea-stage/SELECTED_PRINCIPLE.yaml"
+        ] = controller._artifact_record(
+            "idea-stage/SELECTED_PRINCIPLE.yaml",
+            producer_phase="principle_evaluation",
+            provenance={},
+            upstream_snapshot={},
+        )
+
+    controller.start_current_phase()
+    assert controller._incremental_evidence_bindings(
+        controller.status(), "method_refinement"
+    ) == {}
+    assert controller.readopt_incremental_evidence(
+        "P2", obligation_ids=["OBL-1"]
+    )["status"] == "RE_ADOPTED"
+
+    request = controller.refresh_current_review_request()
+    assert request["artifact_bindings"]["refine-logs/FINAL_PROPOSAL.md"] == sha256_file(
+        tmp_path / "refine-logs" / "FINAL_PROPOSAL.md"
+    )
+    assert request["artifact_bindings"]["idea-stage/SELECTED_PRINCIPLE.yaml"] == sha256_file(
+        selected_path
+    )
+    assert request["artifact_bindings"][str(card_path.relative_to(tmp_path))] == sha256_file(
+        card_path
+    )
 
 
 def test_method_to_rca_reopen_records_method_evidence_and_uses_existing_readoption(

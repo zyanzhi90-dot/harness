@@ -463,8 +463,6 @@ class ARISController:
 
         required_equal = (
             "schema_version",
-            "workflow_id",
-            "artifact_manifest",
             "research_effort_budget",
             "research_lit",
             "terminal_statuses",
@@ -482,13 +480,28 @@ class ARISController:
             for item in current_workflow.get("phases", [])
             if isinstance(item, dict) and isinstance(item.get("phase"), str)
         }
-        executed = {
+        phase_records = state.get("phases", [])
+        executed: list[str] = []
+        replaced_suffix: list[str] = []
+        pending_suffix_started = False
+        for item in phase_records:
+            if not isinstance(item, dict) or not isinstance(item.get("phase"), str):
+                incompatible.append("phases")
+                continue
+            if item.get("status") in {None, "pending"}:
+                pending_suffix_started = True
+                replaced_suffix.append(item["phase"])
+            elif pending_suffix_started:
+                incompatible.append(f"phases.{item['phase']}.non_contiguous_executed_prefix")
+            else:
+                executed.append(item["phase"])
+        canonical_order = [
             item.get("phase")
-            for item in state.get("phases", [])
+            for item in current_workflow.get("phases", [])
             if isinstance(item, dict)
-            and isinstance(item.get("phase"), str)
-            and item.get("status") not in {None, "pending"}
-        }
+        ]
+        if canonical_order[:len(executed)] != executed:
+            incompatible.append("phases.executed_prefix_order")
         checked = set(executed)
         pending = list(executed)
         while pending:
@@ -505,11 +518,34 @@ class ARISController:
             if old_specs.get(phase) != new_specs.get(phase):
                 incompatible.append(f"phases.{phase}")
 
+        def artifact_refs(value: Any) -> set[str]:
+            if isinstance(value, str) and value.startswith("@artifact:"):
+                return {value[len("@artifact:"):]}
+            if isinstance(value, dict):
+                return (
+                    set().union(*(artifact_refs(item) for item in value.values()))
+                    if value else set()
+                )
+            if isinstance(value, list):
+                return (
+                    set().union(*(artifact_refs(item) for item in value))
+                    if value else set()
+                )
+            return set()
+
+        old_manifest = stored.get("artifact_manifest") or {}
+        new_manifest = current_workflow.get("artifact_manifest") or {}
+        for phase in checked:
+            for key in artifact_refs(old_specs.get(phase)) | artifact_refs(new_specs.get(phase)):
+                if old_manifest.get(key) != new_manifest.get(key):
+                    incompatible.append(f"artifact_manifest.{key}")
+
         return {
             "compatible": not incompatible,
-            "executed_phases": sorted(executed),
+            "executed_phases": executed,
             "checked_phase_semantics": sorted(checked),
             "incompatible_paths": sorted(set(incompatible)),
+            "replaced_suffix": replaced_suffix,
         }
 
     def _paper_reading_structural_migration(
@@ -643,15 +679,41 @@ class ARISController:
                 "migration_id": uuid.uuid4().hex,
                 "migration_type": migration_type,
                 "migrated_at": now(),
+                "from_workflow_id": (state.get("workflow") or {}).get("workflow_id"),
+                "to_workflow_id": self.workflow.get("workflow_id"),
                 "from_workflow_sha256": state.get("workflow_sha256"),
                 "to_workflow_sha256": self.workflow_sha256,
                 "executed_phases": report["executed_phases"],
                 "checked_phase_semantics": report["checked_phase_semantics"],
+                "replaced_suffix": report["replaced_suffix"],
                 "recorded_by": "ARISController",
             }
+            preserved_prefix = state["phases"][:len(report["executed_phases"])]
+            canonical_suffix = self.workflow["phases"][len(preserved_prefix):]
+            state["phases"] = [
+                *preserved_prefix,
+                *[
+                    {
+                        "phase": spec["phase"],
+                        "status": "pending",
+                        "artifact": None,
+                        "verdict_id": None,
+                        "reviewer": None,
+                        "reviewer_family": None,
+                        "review_independence": None,
+                        "acceptance_status": None,
+                        "executor_model": state.get("executor_model"),
+                        "executor_family": state.get("executor_family"),
+                        "human_decision": None,
+                        "updated": now(),
+                    }
+                    for spec in canonical_suffix
+                ],
+            ]
             state.setdefault("workflow_migrations", []).append(record)
             state["workflow"] = deepcopy(self.workflow)
             state["workflow_sha256"] = self.workflow_sha256
+            state["scientific_core"]["current_phase"] = "method_design"
             run_state._save(str(self.root), self.run_id, state)
             return {
                 "migration": record,
@@ -3678,7 +3740,9 @@ class ARISController:
         }
         record["acceptance"] = deepcopy(acceptance)
         state["scientific_core"]["accepted_artifacts"][raw_path] = record
-        phase.setdefault("acceptance_artifacts", {})[raw_path] = record
+        if phase.get("acceptance_artifacts") is None:
+            phase["acceptance_artifacts"] = {}
+        phase["acceptance_artifacts"][raw_path] = record
         for event_type in ("CONVERGED", "SELECTED"):
             self._append_method_history_event(
                 "method_principles",
