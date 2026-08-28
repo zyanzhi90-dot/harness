@@ -5708,8 +5708,13 @@ def test_workflow_hash_mismatch_requires_compatible_migration(tmp_path: Path) ->
     commands = parser._subparsers._group_actions[0].choices
     assert "upgrade-workflow" not in commands
     assert "migrate-workflow" in commands
-    with pytest.raises(ControllerError, match="executed-stage semantics"):
-        controller.migrate_workflow_if_compatible()
+    migrated = controller.migrate_workflow_if_compatible()
+    restored = controller.status()
+    assert migrated["migration"]["from_workflow_sha256"] == old_sha256
+    assert migrated["migration"]["from_workflow_id"] == "semantically-different-workflow"
+    assert migrated["migration"]["to_workflow_id"] == controller.workflow["workflow_id"]
+    assert restored["workflow"] == controller.workflow
+    assert restored["workflow_sha256"] == controller.workflow_sha256
 
 
 def test_compatible_workflow_migration_preserves_run_history(tmp_path: Path) -> None:
