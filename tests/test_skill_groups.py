@@ -110,6 +110,11 @@ class CatalogTest(unittest.TestCase):
         _, requires = self.skills["idea-creator"]
         self.assertIn("novelty-check", requires.split(","))
 
+    def test_method_test_is_discoverable_in_the_experiment_group(self):
+        group, requires = self.skills["method-test"]
+        self.assertEqual(group, "experiments")
+        self.assertEqual(requires, "-")
+
     def test_research_pipeline_lists_only_canonical_validation_dependencies(self):
         _, requires = self.skills["research-pipeline"]
         self.assertEqual(

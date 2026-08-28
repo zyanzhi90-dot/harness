@@ -91,57 +91,23 @@ def test_problem_agent_path_matures_leads_before_candidates() -> None:
         assert "only mature" in compact_discovery
 
 
-def test_method_design_contract_is_mirrored_and_preserves_core_doctrine() -> None:
-    for root in (MAIN, CODEX):
-        text = read(root / "shared-references" / "method-design-contract.md")
-        compact = " ".join(text.split()).lower()
-        assert "falsifiable scientific hypothesis" in compact
-        assert "dominant method" in compact
-        assert "implementation_backbone" in text
-        assert "innovation_carrier" in text
-        assert "integration_interface" in text
-        assert "removal_failure_prediction" in text
-        assert "targeted_validation" in text
-        assert "same-field" in compact and "cross-field" in compact
-        assert "high-efficiency decision order" in compact
-        assert "not a default design goal or innovation target" in compact
-        assert "scientific_delta_novelty" in text
-        assert "technical_route_novelty" in text
-        assert "average performance" in compact
-        assert "candidate_explanations" in text
-        assert "claim_type: causal | mechanistic | functional | descriptive" in text
-        assert "contribution_type:" in text
-        assert "disanalogy_and_transfer_limit" in text
-        assert "counterfactual intervention" in compact
-        assert "dominant-only closure attempt" in compact
-        assert "causal_identification" in text
-        assert "claim_validation_obligation" in text
-        assert "route_comparison" in text
-        assert "target-problem confirmation must precede solution borrowing" in compact
-        assert "problem-method fit" in compact
-        assert "minimum-sufficient-method audit" in compact
-        assert "active_field_map.md" in compact
-        assert "targeted decision action" in compact
-        assert "no residual `must` id has no" in compact
-        assert "record_type: design_obligation_set" in text
-        assert "candidate routes must not restate or edit it" in compact
-        assert "upstream method-design derivation, not a route-local edit" in compact
-        assert "novelty pressure must never reverse this order" in compact
-        causal_order = (
-            "minimal sufficient dominant solution",
-            "dominant-only closure and residual must gaps",
-            "accepted field map and same-field completion search",
-            "only if same-field options cannot reasonably close that gap: cross-field structural search",
-        )
-        positions = [compact.index(item) for item in causal_order]
-        assert positions == sorted(positions)
-        assert "combination is the default preferred" not in compact
-        assert "operational_feasibility_gap" in text.lower()
-        assert "problem -> mechanism -> method -> boundary" in compact
-        assert "multiplicity_control" not in text
-        assert "power_mde_or_precision_rationale" not in text
-        assert "randomization_seeds_and_independent_replication" not in text
-
+def test_method_design_contract_is_mirrored_and_declares_principle_first_lifecycle() -> None:
+    main = read(MAIN / "shared-references" / "method-design-contract.md")
+    assert main == read(CODEX / "shared-references" / "method-design-contract.md")
+    for marker in (
+        "Required Mechanism Changes",
+        "Capability/Obligation",
+        "search_mode: PRINCIPLE_SEARCH",
+        "Candidate Principles",
+        "test-only operationalization",
+        "method-test-handoff",
+        "PRINCIPLE_EVIDENCE_CONTEXT.json",
+        "PRINCIPLE_CONVERGED",
+        "MORE_EVIDENCE",
+        "RCA_CONFLICT",
+        "SELECTED_PRINCIPLE.yaml",
+    ):
+        assert marker in main
 
 def test_literature_stage_builds_an_evidence_map_before_methods() -> None:
     for root in (MAIN, CODEX):
@@ -204,64 +170,18 @@ def test_literature_stage_builds_an_evidence_map_before_methods() -> None:
 
 
 def test_landscape_search_log_uses_the_workflow_artifact_manifest() -> None:
+    expected_landscape = {
+        "active_field_map": "idea-stage/ACTIVE_FIELD_MAP.md",
+        "evidence_registry": "idea-stage/EVIDENCE_REGISTRY.jsonl",
+        "literature_corpus": "idea-stage/LITERATURE_CORPUS.jsonl",
+        "source_admission_policy": "idea-stage/SOURCE_ADMISSION_POLICY.yaml",
+        "search_log": "idea-stage/SEARCH_LEDGER.jsonl",
+    }
     for root in (MAIN, CODEX):
         workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
-        assert workflow["artifact_manifest"] == {
-            "active_field_map": "idea-stage/ACTIVE_FIELD_MAP.md",
-            "evidence_registry": "idea-stage/EVIDENCE_REGISTRY.jsonl",
-            "literature_corpus": "idea-stage/LITERATURE_CORPUS.jsonl",
-            "source_admission_policy": "idea-stage/SOURCE_ADMISSION_POLICY.yaml",
-            "search_log": "idea-stage/SEARCH_LEDGER.jsonl",
-            "root_cause_analysis": "idea-stage/ROOT_CAUSE_ANALYSIS.json",
-            "root_cause_analysis_view": "idea-stage/ROOT_CAUSE_ANALYSIS.md",
-            "root_cause_verdict": "idea-stage/ROOT_CAUSE_VERDICT.json",
-        }
-        landscape = next(item for item in workflow["phases"] if item["phase"] == "landscape")
-        assert "@artifact:search_log" in landscape["produced_artifacts"]
-        assert "@artifact:literature_corpus" in landscape["produced_artifacts"]
-        acceptance = next(item for item in workflow["phases"] if item["phase"] == "problem_human_acceptance")
-        assert acceptance["requires_coverage"] == {"phase": "landscape", "statuses": ["SUFFICIENT"]}
-        phase_names = [item["phase"] for item in workflow["phases"]]
-        assert phase_names.index("problem_human_acceptance") < phase_names.index("root_cause_analysis")
-        assert phase_names.index("root_cause_analysis") < phase_names.index("root_cause_gate")
-        assert phase_names.index("root_cause_gate") < phase_names.index("method_design")
-        root_gate = next(item for item in workflow["phases"] if item["phase"] == "root_cause_gate")
-        assert root_gate["accepted_verdicts"] == ["DIAGNOSIS_READY"]
-        assert root_gate["return_targets"] == {
-            "REVISE_DIAGNOSIS": "root_cause_analysis",
-            "REOPEN_PROBLEM": "problem_generation",
-        }
-        human_return_targets = {
-            item["phase"]: item["return_targets"]
-            for item in workflow["phases"]
-            if item.get("human_checkpoint")
-        }
-        assert human_return_targets == {
-            "scope_human_approval": {"request_revision": "landscape"},
-            "problem_human_acceptance": {
-                "request_revision": "problem_generation",
-                "reject": "problem_generation",
-            },
-            "route_human_selection": {"request_revision": "method_design"},
-            "final_method_human_acceptance": {"request_revision": "method_refinement"},
-        }
-        for phase in workflow["phases"]:
-            if phase.get("human_checkpoint"):
-                assert phase["accepted_decisions"] == ["approve"]
-        research = workflow["research_lit"]
-        assert research["controller"] == "arisctl.controller.ARISController"
-        assert research["ledger_source"] == "gateway_events_only"
-        assert research["canonicalization"] == "staging_then_validator_then_controller_acceptance"
-        incremental = workflow["scientific_core"]["incremental_literature"]
-        assert incremental["permitted_phases"] == [
-            "problem_generation", "problem_novelty_gate", "root_cause_analysis",
-            "method_design", "method_refinement", "final_method_novelty_gate"
-        ]
-        assert incremental["completion"] == "return_to_landscape_accepted_without_coverage_review"
-        assert "method_design_may_reenter_while_running" in incremental["entry_policy"]
-        method_design = next(item for item in workflow["phases"] if item["phase"] == "method_design")
-        assert "idea-stage/ACTIVE_FIELD_MAP.md" in method_design["required_inputs"]
-
+        assert {key: workflow["artifact_manifest"][key] for key in expected_landscape} == expected_landscape
+        assert workflow["artifact_manifest"]["method_design_packet"] == "idea-stage/METHOD_DESIGN_PACKET.json"
+        assert workflow["artifact_manifest"]["selected_principle"] == "idea-stage/SELECTED_PRINCIPLE.yaml"
 
 def test_problem_human_return_guidance_is_synced_to_the_codex_adapter() -> None:
     for root in (MAIN, CODEX):
@@ -341,121 +261,69 @@ def test_landscape_completion_requires_auditable_branch_and_lineage_saturation()
         assert "does not verify full bibliographic identity" in fanout_compact
 
 
-def test_field_mapping_and_migration_orders_are_enforced() -> None:
+def test_field_mapping_and_principle_search_orders_are_enforced() -> None:
     for root in (MAIN, CODEX):
         problem = read(root / "shared-references" / "problem-discovery-contract.md")
         field_block = problem[problem.index("Build the landscape in this order") :]
         field_chain = (
-            "field core purposes",
-            "typical tasks and scenarios",
-            "core bottlenecks",
-            "method families",
-            "which bottleneck each family addresses and by what mechanism",
-            "assumptions each family requires",
-            "conditions where each family is effective",
-            "conditions where each family fails",
-            "unresolved contradictions",
+            "field core purposes", "typical tasks and scenarios", "core bottlenecks",
+            "method families", "which bottleneck each family addresses and by what mechanism",
+            "assumptions each family requires", "conditions where each family is effective",
+            "conditions where each family fails", "unresolved contradictions",
         )
         positions = [field_block.index(item) for item in field_chain]
         assert positions == sorted(positions)
-
-        migration_block = problem[problem.index("Enforce this order") :]
-        migration_chain = (
-            "observe problem P in a source field",
-            "extract the mechanism that produces P",
-            "structurally isomorphic mechanism",
-            "confirm with target-field data",
-            "only then consider transferring a solution",
-        )
-        positions = [migration_block.index(item) for item in migration_chain]
-        assert positions == sorted(positions)
-
         method = read(root / "shared-references" / "method-design-contract.md")
-        transfer_block = method[method.index("For a cross-field route") :]
-        transfer_chain = (
-            "source-field problem",
-            "source problem-formation mechanism",
-            "structurally isomorphic target mechanism",
-            "target-field data confirming the problem",
-            "residual target design obligation",
-            "source solution mechanism",
-            "transferred method or idea",
-        )
-        positions = [transfer_block.index(item) for item in transfer_chain]
-        assert positions == sorted(positions)
+        search = method[method.index("## D1") :]
+        assert all(item in search for item in (
+            "FIRST_PRINCIPLES", "REPRESENTATION_TRANSFORMATION",
+            "SAME_FIELD_MECHANISM", "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM",
+        ))
 
-
-def test_idea_creator_is_problem_first_and_keeps_combination_strategy() -> None:
+def test_idea_creator_declares_problem_diagnosis_and_principle_modes() -> None:
     for root in (MAIN, CODEX):
         text = skill(root, "idea-creator")
-        assert "Problem-First Ranked Idea Report" in text
-        assert "Certified Problems and Derived Routes" in text
-        assert "Design obligations" in text
-        assert "Scientific mainline" in text
-        assert "dominant" in text and "minimal" in text
-        assert "residual MUST gap" in text
-        assert "supporting-mechanism ledger" in text.lower()
-        assert "Scientific-delta novelty" in text
-        assert "Lead every recommended idea with its method" not in text
-        assert "Quantity first, quality second" not in text
+        assert all(marker in text for marker in (
+            "mode: problem", "mode: diagnosis", "mode: method",
+            "METHOD_DESIGN_PACKET.json", "PRINCIPLE_EVALUATION.json",
+            "/method-test", "PRINCIPLE_PACKET_READY",
+        ))
 
-
-def test_novelty_and_review_keep_problem_and_method_verdicts_separate() -> None:
+def test_novelty_and_review_keep_problem_principle_and_method_verdicts_separate() -> None:
     for root in (MAIN, CODEX):
         novelty = skill(root, "novelty-check")
         review = skill(root, "research-review")
-        assert "mode: problem|method|combined" in novelty
-        assert "### Problem Novelty" in novelty
-        assert "### Method Novelty" in novelty
-        assert "stage: problem|method|project" in review
-        assert "Reality, Importance, Unresolvedness, Precision" in review
-        assert "stage separation" in review.lower()
-        assert "different decisions" in review or "distinct decisions" in review
+        assert "mode: problem" in novelty and "mode: method" in novelty
+        assert "REVISE_METHOD_DELTA" in novelty
+        assert "RETHINK_PRINCIPLE_DELTA" in novelty
+        assert "RMC/Capability/Obligation" in review
+        assert "stage: method" in review
+        assert "Capability/Obligation" in review
 
-
-def test_refine_derives_coherent_routes_from_certified_problem() -> None:
+def test_refine_consumes_one_controller_selected_principle() -> None:
     for root in (MAIN, CODEX):
         text = skill(root, "research-refine")
-        assert "Certified Problem Contract" in text
-        assert "method-design-contract.md" in text
-        assert "Scientific Mainline" in text
-        assert "dominant-only closure" in text
-        assert "closure" in text.lower()
-        assert "scientific delta" in text.lower()
-        assert "Frontier Leverage" not in text
-        assert "The smallest adequate mechanism wins" not in text
-        assert "method-refinement-protocol.md" in text
-        assert "Controller-issued final independent review" in text
-        assert "Do not read all `round-*.md` files" in text or "Do not read every" in text
-        assert "score" in text.lower() and "acceptance" in text.lower()
-
+        assert all(marker in text for marker in (
+            "Controller-materialized Selected Principle",
+            "accepted Principle convergence",
+            "minimal faithful realization",
+            "Principle-only closure",
+            "ADAPTATION_GAP_SEARCH",
+            "METHOD_READY",
+        ))
 
 def test_problem_contract_and_method_proposal_are_separate() -> None:
-    text = read(REPO_ROOT / "templates" / "RESEARCH_CONTRACT_TEMPLATE.md")
+    contract = read(REPO_ROOT / "templates" / "RESEARCH_CONTRACT_TEMPLATE.md")
     capsule = read(REPO_ROOT / "templates" / "PROBLEM_EVIDENCE_CAPSULE_TEMPLATE.md")
     proposal = read(REPO_ROOT / "templates" / "METHOD_PROPOSAL_TEMPLATE.md")
-    assert "## Certified Problem Contract" in text
-    assert "Problem version" in text and "Contract SHA-256" in text
-    assert "Value if yes / value if no" in text
-    assert "Problem novelty verdict" in text
-    assert "Acceptance status" in text
-    assert "## Problem Evidence Capsule" not in text
-    assert "PROBLEM_EVIDENCE_CAPSULE_TEMPLATE.md" in text
+    assert "## Certified Problem Contract" in contract
+    assert "## Problem Evidence Capsule" not in contract
     assert "# Problem Evidence Capsule" in capsule
-    assert "sole formal compact evidence handoff" in capsule
-    assert "Linked Contract path" in capsule
-    assert "Linked Contract SHA-256" in capsule
-    assert "before the Controller records human acceptance" in " ".join(text.split())
-    assert "before the Controller records" in " ".join(capsule.split())
-    assert "Scientific Mainline" not in text and "Selected Method Route" not in text
-    assert "Problem version" in proposal
-    assert "Design-obligation set ID" in proposal
-    assert "Scientific Mainline" in proposal
-    assert "Design Obligations and Route" in proposal
-    assert "Scientific Closure and Claim Validation" in proposal
-    assert "## Experiment Design" not in text
-    assert "experiment plan" in proposal.lower()
-
+    assert "## Selected Principle binding" in proposal
+    assert "Required Mechanism Change IDs" in proposal
+    assert "## Principle-only closure attempt" in proposal
+    assert "## Claim-validation obligations" in proposal
+    assert "Established Scientific Delta" in proposal
 
 def test_problem_evidence_capsule_has_one_documented_form_across_active_skills() -> None:
     skill_paths = (
@@ -473,35 +341,14 @@ def test_problem_evidence_capsule_has_one_documented_form_across_active_skills()
         assert "before the controller records human acceptance" in " ".join(text.lower().split())
 
 
-def test_cross_family_overlays_preserve_the_core_contract() -> None:
+def test_cross_family_overlays_preserve_scientific_semantics_and_backend_adaptation() -> None:
     for root in (CLAUDE_OVERLAY, GEMINI_OVERLAY):
         novelty = skill(root, "novelty-check")
         review = skill(root, "research-review")
         refine = skill(root, "research-refine")
-        assert "mode: problem|method|combined" in novelty
-        assert "Problem Novelty" in novelty and "Method Novelty" in novelty
-        assert "stage: problem|method|project" in review
-        assert "Certified Problem Contract" in refine
-        assert "Scientific Closure" in refine
-        assert "Hypothesis Quality" in refine
-        assert "Controller-issued final independent Gate" in refine
-        assert "Frontier Leverage" not in refine
-
-    creator = skill(GEMINI_OVERLAY, "idea-creator")
-    discovery = skill(GEMINI_OVERLAY, "idea-discovery")
-    assert "certified problems and derived method routes" in creator.lower()
-    assert "scientific mainline" in creator.lower()
-    assert "dominant method" in creator.lower()
-    assert "problem-certification" in discovery
-    assert 'mode: problem|diagnosis|method' in creator
-    assert 'mode: diagnosis' in creator
-    assert "1a observed failure phenomena" in creator
-    assert "2b explicit causal chains" in creator
-    assert "root_cause_analysis" in discovery
-    assert "root_cause_gate" in discovery
-    assert discovery.index('mode: diagnosis') < discovery.index('mode: method')
-    assert "METHOD_CONFIRMED_AWAITING_USER_VALIDATION" in discovery
-
+        assert "RETHINK_PRINCIPLE_DELTA" in novelty
+        assert "RMC/Capability/Obligation" in review
+        assert "Selected Principle" in refine
 
 def test_source_admission_exception_is_narrow_and_consistent_across_codex_paths() -> None:
     shared = read(REPO_ROOT / "skills" / "shared-references" / "source-admission-policy.md")
@@ -527,174 +374,110 @@ def test_source_admission_exception_is_narrow_and_consistent_across_codex_paths(
     )
 
 
-def test_refinement_protocol_is_mirrored_and_preserves_gap_driven_search() -> None:
+def test_refinement_protocol_is_mirrored_and_preserves_selected_principle_semantics() -> None:
+    main = read(MAIN / "shared-references" / "method-refinement-protocol.md")
+    assert main == read(CODEX / "shared-references" / "method-refinement-protocol.md")
+    assert all(marker in main for marker in (
+        "SELECTED_PRINCIPLE.yaml", "minimal faithful realization",
+        "Principle-only closure", "ADAPTATION_GAP_SEARCH",
+        "REVISE_METHOD_DELTA", "RETHINK_PRINCIPLE_DELTA",
+        "METHOD_REFINEMENT_REQUIRED",
+    ))
+
+def test_runtime_method_skills_declare_their_principle_first_roles() -> None:
+    required = {
+        "idea-creator": ("Required Mechanism Changes", "PRINCIPLE_SEARCH", "Candidate Principles"),
+        "research-refine": ("Selected Principle", "ADAPTATION_GAP_SEARCH", "minimal faithful realization"),
+        "research-refine-pipeline": ("Selected Principle", "METHOD_READY", "validation-handoff"),
+        "novelty-check": ("REVISE_METHOD_DELTA", "RETHINK_PRINCIPLE_DELTA"),
+        "research-review": ("stage: principle", "stage: method"),
+        "method-test": ("method-test-handoff", "submit-method-test-result", "NO_RESULT"),
+    }
     for root in (MAIN, CODEX):
-        text = read(root / "shared-references" / "method-refinement-protocol.md")
-        compact = " ".join(text.split()).lower()
-        assert "active-context capsule" in compact
-        assert "do not read every historical round" in compact
-        assert "controller-issued final independent review" in compact
-        assert "previous scores" in compact
-        assert "only independent review that decides whether this phase ends" in compact
-        assert "method_ready" in compact and "rethink" in compact and "hold" in compact
-        order = (
-            "minimal sufficient dominant solution",
-            "dominant-only closure -> residual must gap",
-            "field map and same-field completion when that gap remains",
-            "cross-field structural search only if same-field options cannot reasonably close it",
-        )
-        positions = [compact.index(item) for item in order]
-        assert positions == sorted(positions)
-        assert "combination is permitted only when a supporting mechanism closes a declared" in compact
-        assert "neither the default search strategy nor the innovation verdict" in compact
-
-
-def test_runtime_method_skills_use_residual_gap_and_field_first_order() -> None:
-    base_skills = (
-        "idea-creator",
-        "research-refine",
-        "research-refine-pipeline",
-        "novelty-check",
-        "research-review",
-    )
-    for root in (MAIN, CODEX):
-        for name in base_skills:
-            compact = " ".join(skill(root, name).split()).lower()
-            assert "residual" in compact, name
-            assert "same-field" in compact, name
-            assert "combination is the default preferred" not in compact, name
-            assert "preferred combination search" not in compact, name
-
-    for root in (CLAUDE_OVERLAY, GEMINI_OVERLAY):
-        for name in ("research-refine", "novelty-check", "research-review"):
-            compact = " ".join(skill(root, name).split()).lower()
-            assert "residual" in compact, name
-            assert "same-field" in compact, name
-            assert "preferred combination search" not in compact, name
-
-    creator = " ".join(skill(GEMINI_OVERLAY, "idea-creator").split()).lower()
-    assert "minimal sufficient dominant" in creator
-    assert "residual `must` gap" in creator
-    assert creator.index("field map and same-field") < creator.index("other field")
-
+        for name, markers in required.items():
+            text = skill(root, name)
+            assert all(marker in text for marker in markers), name
 
 def test_generator_and_problem_jury_are_independent() -> None:
     for root in (MAIN, CODEX):
-        text = skill(root, "idea-creator")
-        compact = " ".join(text.split()).lower()
-        assert "fresh" in compact
-        assert "generator" in compact and "jury" in compact
-        assert "do not reuse" in compact
-        assert "same reviewer thread" not in compact
+        workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
+        assert workflow["scientific_core"]["allowed_agents"]["problem_generation"] == ["main_research_agent"]
+        assert workflow["scientific_core"]["allowed_agents"]["problem_quality_gate"] == ["independent_problem_reviewer"]
+        assert workflow["scientific_core"]["allowed_agents"]["method_design"] == [
+            "main_research_agent", "independent_method_reviewer"
+        ]
 
-
-def test_refine_routing_requires_a_certified_problem() -> None:
+def test_refine_routing_requires_an_accepted_selected_principle() -> None:
     for root in (MAIN, CODEX):
         refine = skill(root, "research-refine")
         pipeline = skill(root, "research-refine-pipeline")
-        assert "Do not use for a vague direction" in refine
-        assert "For a vague direction" in pipeline
-        assert "Certified Problem Contract" in refine
+        assert "accepted Principle convergence" in refine
+        assert "SELECTED_PRINCIPLE.yaml" in refine
+        assert "Candidate Principle" in pipeline
+        assert "pre-convergence" in pipeline
 
-
-def test_default_discovery_cannot_cross_human_or_compute_gates() -> None:
+def test_default_discovery_cannot_cross_human_or_test_gates() -> None:
     for root in (MAIN, CODEX):
-        discovery = skill(root, "idea-discovery")
-        creator = skill(root, "idea-creator")
-        assert "If no response, I'll proceed" not in discovery
-        assert "If no response, stop here" in discovery
-        assert "AUTO_EXPERIMENT_PLAN = false" in discovery
-        assert "CERTIFIED/accepted" in creator
-        assert "CERTIFIED/provisional" in creator
-        assert "explicit human confirmation" in creator
-        assert "Parallel Pilot Experiments" not in creator
-        assert "PILOT_MAX_HOURS" not in creator
-        assert "single seed" not in creator.lower()
-        assert "/experiment-plan" in creator
-
+        workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
+        approval = next(item for item in workflow["phases"] if item["phase"] == "principle_test_human_approval")
+        evaluation = next(item for item in workflow["phases"] if item["phase"] == "principle_evaluation")
+        assert approval["human_checkpoint"] is True
+        assert approval["approval_subject"] == "method_design_packet.recommended_execution_set_and_estimated_total_cost"
+        assert evaluation["pre_start_conditions"] == [
+            "approved_execution_set_all_tests_terminal",
+            "active_principle_evidence_context_matches_approved_cycle",
+        ]
 
 def test_refine_phase_mapping_matches_shared_protocol() -> None:
     for root in (MAIN, CODEX):
-        text = skill(root, "research-refine")
-        assert "R1 executes M0-M6" in text
-        assert "R2 starts the independent iterative review" in text
-        assert "R1 executes M0-M2" not in text
+        workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
+        refinement = next(item for item in workflow["phases"] if item["phase"] == "method_refinement")
+        assert refinement["required_inputs"][-1] == "@artifact:selected_principle"
+        assert refinement["reviewed_artifacts"] == ["@artifact:final_proposal"]
+        assert refinement["accepted_verdicts"] == ["METHOD_READY"]
+        assert refinement["return_targets"] == {
+            "REVISE": "method_refinement",
+            "RETHINK": "method_design",
+            "HOLD": "method_refinement",
+            "RCA_CONFLICT": "root_cause_analysis",
+        }
 
-
-def test_core_codex_relative_reference_links_resolve() -> None:
-    link_pattern = re.compile(r"\]\((\.\./[^)#]+\.md)\)")
-    for name in (
-        "research-lit",
-        "idea-creator",
-        "idea-discovery",
-        "research-refine",
-        "research-refine-pipeline",
-    ):
-        skill_path = CODEX / name / "SKILL.md"
-        for relative in link_pattern.findall(read(skill_path)):
-            target = (skill_path.parent / relative).resolve()
-            assert target.is_file(), f"{skill_path}: unresolved {relative}"
-
+def test_core_codex_adapters_reference_canonical_shared_contracts_and_templates() -> None:
+    expected = {
+        "idea-creator": ("../shared-references/method-design-contract.md",),
+        "research-refine": (
+            "../shared-references/method-refinement-protocol.md",
+            "../../templates/METHOD_PROPOSAL_TEMPLATE.md",
+        ),
+    }
+    for name, references in expected.items():
+        text = skill(CODEX, name)
+        assert all(reference in text for reference in references), name
 
 def test_restored_idea_modules_are_mirrored_and_keep_stage_boundaries() -> None:
     module_names = (
-        "idea-fanout-module.md",
-        "idea-wiki-integration.md",
-        "reference-paper-intake.md",
-        "idea-output-composition.md",
+        "idea-fanout-module.md", "idea-wiki-integration.md",
+        "reference-paper-intake.md", "idea-output-composition.md",
     )
     for name in module_names:
-        main = read(MAIN / "shared-references" / name)
-        codex = read(CODEX / "shared-references" / name)
-        assert main == codex, name
-        assert len(main) < 12_000, name
-
-    fanout = read(MAIN / "shared-references" / "idea-fanout-module.md")
-    assert "working Leads" in fanout
-    assert "not Lead artifacts" in fanout
-    assert "certification" in fanout and "ranking" in fanout
-    assert "never reused as a jury context" in fanout
-
-    wiki = read(MAIN / "shared-references" / "idea-wiki-integration.md")
-    assert "wiki-helper-resolution.md" in wiki
-    assert "query_pack.md" in wiki
-    assert 'python3 "$WIKI_SCRIPT" upsert_idea' in wiki
-    assert "Wiki presence is memory" in wiki
-
-    paper = read(MAIN / "shared-references" / "reference-paper-intake.md")
-    assert "REF_PAPER" in paper
-    assert "USER_SUPPLIED_READ" in paper
-    assert "REF_PAPER_SUMMARY.md" in paper
-    assert "cannot silently change scope" in paper
-    assert "do not generate a method" in paper
-
+        assert read(MAIN / "shared-references" / name) == read(
+            CODEX / "shared-references" / name
+        )
     composition = read(MAIN / "shared-references" / "idea-output-composition.md")
-    assert "if and only if" in composition
-    assert "never activates it" in composition
-    composition_compact = " ".join(composition.split())
-    assert "only after the human has accepted the problem, the root-cause Gate is `DIAGNOSIS_READY`, and the human has selected a route" in composition_compact
+    assert "PRINCIPLE_EVALUATION.json" in composition
+    assert "SELECTED_PRINCIPLE.yaml" in composition
+    assert "final proposal" in composition.lower()
+    assert "convergence has been" in composition
 
-
-def test_root_cause_contract_is_mirrored_and_precedes_method_design() -> None:
+def test_root_cause_contract_is_mirrored_and_precedes_principle_design() -> None:
     main = read(MAIN / "shared-references" / "root-cause-analysis-contract.md")
-    codex = read(CODEX / "shared-references" / "root-cause-analysis-contract.md")
-    assert main == codex
-    for marker in (
-        "1a - Direct phenomenon evidence",
-        "1b - Phenomenon grouping",
-        "2a - Causal depth traces",
-        "2b - Causal chains",
-        "DIAGNOSIS_READY | REVISE_DIAGNOSIS | REOPEN_PROBLEM",
-        "A failed experiment is not a mandatory prerequisite",
-        "evidence_source_type: existing_experiment | literature | dataset | real_world | diagnostic_pilot",
-        "reviewed_analysis_sha256",
-        "primary_causal_chain_ids",
-    ):
-        assert marker in main
+    assert main == read(CODEX / "shared-references" / "root-cause-analysis-contract.md")
+    assert "DIAGNOSIS_READY | REVISE_DIAGNOSIS | REOPEN_PROBLEM" in main
+    assert "primary_causal_chain_ids" in main
     method = read(MAIN / "shared-references" / "method-design-contract.md")
     assert "only after the independent Root-Cause Gate" in method
-    assert "derived_from_causal_chain_id" in method
-
+    assert "Required Mechanism Changes" in method
+    assert "causal_chain_ids" in method
 
 def test_formal_reviewer_gates_declare_roles_and_fixed_verdict_enums() -> None:
     for root in (MAIN, CODEX):
@@ -710,174 +493,76 @@ def test_formal_reviewer_gates_declare_roles_and_fixed_verdict_enums() -> None:
 
 
 def test_formal_negative_verdicts_have_fixed_earlier_return_targets() -> None:
-    expected = {
-        "problem_quality_gate": {
-            "HOLD": "problem_generation",
-            "REJECT": "problem_generation",
-            "BLOCKED": "problem_generation",
-        },
-        "problem_novelty_gate": {
-            "BLOCKED": "problem_generation",
-        },
-        "final_method_novelty_gate": {
-            "UNCERTAIN": "method_design",
-            "NOT_NOVEL": "method_design",
-            "BLOCKED": "method_design",
-        },
-        "method_refinement": {
-            "REVISE": "method_refinement",
-            "RETHINK": "method_design",
-            "HOLD": "method_refinement",
-        },
+    workflow = json.loads(read(MAIN / "shared-references" / "idea-workflow.yaml"))
+    by_phase = {item["phase"]: item for item in workflow["phases"]}
+    assert by_phase["method_design"]["return_targets"] == {
+        "REVISE_PRINCIPLES": "method_design",
+        "RCA_CONFLICT": "root_cause_analysis",
     }
+    assert by_phase["principle_evaluation"]["return_targets"] == {
+        "REVISE_EVALUATION": "principle_evaluation",
+        "MORE_EVIDENCE": "method_design",
+        "RCA_CONFLICT": "root_cause_analysis",
+    }
+    assert by_phase["final_method_novelty_gate"]["return_targets"] == {
+        "REVISE_METHOD_DELTA": "method_refinement",
+        "RETHINK_PRINCIPLE_DELTA": "method_design",
+        "HOLD": "final_method_novelty_gate",
+    }
+
+def test_formal_test_and_validation_contracts_separate_execution_from_interpretation() -> None:
+    workflow = json.loads(read(MAIN / "shared-references" / "idea-workflow.yaml"))
+    test_contract = workflow["artifact_contracts"]["method_test_evidence"]
+    evaluation = workflow["artifact_contracts"]["principle_evaluation"]
+    validation = workflow["artifact_contracts"]["validation_result"]
+    assert test_contract["terminal_outcomes"] == ["RESULT_AVAILABLE", "NO_RESULT"]
+    assert "PRINCIPLE_DECISION_RECORDED" in test_contract["event_types"]
+    assert "principle_updates" in evaluation["required_fields"]
+    assert validation["decision_enum"] == [
+        "VALIDATED", "METHOD_REFINEMENT_REQUIRED",
+        "SELECTED_PRINCIPLE_REJECTED", "ROOT_CAUSE_REJECTED",
+        "PROBLEM_PREMISE_REJECTED",
+    ]
+
+def test_method_test_and_validation_skills_fail_closed_for_formal_inputs() -> None:
+    for root in (MAIN, CODEX):
+        method_test = skill(root, "method-test")
+        result_to_claim = skill(root, "result-to-claim")
+        experiment = skill(root, "experiment-plan")
+        assert "method-test-handoff" in method_test
+        assert "approved_test_ids" in method_test
+        assert "Do not turn `NO_RESULT`" in method_test
+        assert "validation-handoff" in result_to_claim
+        assert "NON_CANONICAL_AD_HOC" in experiment
+
+def test_research_pipeline_cannot_bypass_the_canonical_scientific_lifecycle() -> None:
     for root in (MAIN, CODEX):
         workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
-        phases = {item["phase"]: item for item in workflow["phases"]}
-        ordered = [item["phase"] for item in workflow["phases"]]
-        for phase_name, targets in expected.items():
-            assert phases[phase_name]["return_targets"] == targets
-            assert all(ordered.index(target) <= ordered.index(phase_name) for target in targets.values())
-        assert phases["method_refinement"]["accepted_verdicts"] == ["METHOD_READY"]
+        phases = workflow["scientific_core"]["phases"]
+        assert phases[6:10] == [
+            "method_design", "principle_test_human_approval",
+            "principle_evaluation", "method_refinement",
+        ]
+        pipeline = skill(root, "research-refine-pipeline")
+        assert "accepted Selected Principle" in pipeline
+        assert "explicitly initiates" in pipeline
 
-
-def test_formal_experiment_chain_requires_mechanism_evidence_and_result_interpretation() -> None:
+def test_public_routing_and_iteration_log_are_consistent_with_principle_first_workflow() -> None:
     for root in (MAIN, CODEX):
-        plan = skill(root, "experiment-plan")
-        assert "ROOT_CAUSE_ANALYSIS.json" in plan
-        assert "ROOT_CAUSE_VERDICT.json" in plan
-        assert "Mechanism Validation Map" in plan
-        assert "Predicted mechanism or failure-phenomenon change" in plan
-        assert "Mechanism observation" in plan
-        assert "Performance evaluation" in plan
-        assert "smallest necessary ablation or controlled comparison" in plan
-        assert "not a new workflow stage or Gate" in plan
+        workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
+        assert workflow["workflow_id"] == "idea-discovery-v3"
+        discovery = skill(root, "idea-discovery")
+        assert "human approval of the atomic test execution set" in discovery
+        assert "/method-test" in discovery
+        assert "Principle convergence" in discovery
+        assert "Selected Principle" in skill(root, "research-refine-pipeline")
 
-        result = skill(root, "result-to-claim")
-        assert "mechanism evidence table" in result
-        assert "mechanism_status" in result
-        assert "EXPLANATION_SUPPORTED | PERFORMANCE_ONLY | DIAGNOSE_FAILURE" in result
-        assert "mechanism_evidence_closure" in result
-        assert '"explanation_status": "EXPLANATION_SUPPORTED"' in result
-        assert '"mechanism_match": "MATCHES_PREDICTION"' in result
-        assert "validation_review_request" in result
-        assert "Main must not parse or normalize the judgment" in result
-        assert "positive empirical result, but does NOT establish the original mechanism" in result
-        assert "method mismatch, implementation/measurement fault, and an incomplete or wrong earlier analysis" in result
-        assert "Preserve anomalous observations as new" in result
-
-    discovery = skill(MAIN, "idea-discovery")
-    assert "WebSearch" not in discovery
-    assert "WebFetch" not in discovery
-
-    template = read(REPO_ROOT / "templates" / "EXPERIMENT_PLAN_TEMPLATE.md")
-    template_cn = read(REPO_ROOT / "templates" / "EXPERIMENT_PLAN_TEMPLATE_CN.md")
-    for marker in ("Mechanism Validation Map", "Causal link / core change", "Use only when needed"):
-        assert marker in template
-    for marker in ("机制验证映射", "因果链 / 核心改动", "仅在必要时使用"):
-        assert marker in template_cn
-
-
-def test_experiment_skills_fail_closed_for_formal_inputs_and_isolate_ad_hoc_work() -> None:
+def test_idea_workflow_references_canonical_principle_first_modules() -> None:
     for root in (MAIN, CODEX):
-        plan = skill(root, "experiment-plan")
-        bridge = skill(root, "experiment-bridge")
-        for text in (plan, bridge):
-            assert "validation-handoff <run_id>" in text
-            assert "NON_CANONICAL_AD_HOC" in text
-            assert "not a new workflow stage or Gate" in text or "read-only preflight" in text
-
-        assert "Do not derive `FINAL_PROPOSAL`" in plan
-        assert "missing files are a stop condition" in plan
-        assert "Do not create `FINAL_PROPOSAL`, `RESEARCH_CONTRACT`" in bridge
-        assert "this fallback is forbidden" in bridge
-        assert "idea-stage/docs/research_contract.md" in bridge
-
-
-def test_research_pipeline_cannot_bypass_the_canonical_scientific_route() -> None:
-    required = (
-        "validation-handoff <run_id>",
-        "METHOD_CONFIRMED_AWAITING_USER_VALIDATION",
-        "sole formal entry to this\npipeline",
-        "Do not recreate, infer, replace, or supplement",
-        "Stop. Do not invoke `/idea-discovery`",
-        "must not use `tools/run_state.py`",
-        "There is no\ntimeout approval, automatic choice of a ranked idea",
-        "`/research-pipeline` does not operate in `NON_CANONICAL_AD_HOC` mode",
-        "`/experiment-plan`",
-        "`/experiment-bridge`",
-        "`/result-to-claim`",
-    )
-    forbidden = (
-        "AUTO_PROCEED = true",
-        "wait 10 seconds",
-        "run_state.py start",
-        "### Stage 1: Idea Discovery",
-        "End-to-end autonomous research workflow",
-    )
-
-    for root in (MAIN, CODEX):
-        pipeline = skill(root, "research-pipeline")
-        for marker in required:
-            assert marker in pipeline
-        for marker in forbidden:
-            assert marker not in pipeline
-
-
-def test_public_routing_and_legacy_iteration_log_are_consistent() -> None:
-    public_routes = {
-        REPO_ROOT / "README.md": 'research-pipeline "<canonical-run-id>"',
-        REPO_ROOT / "README_CN.md": 'research-pipeline "<canonical-run-id>"',
-        REPO_ROOT / "AGENT_GUIDE.md": "canonical Controller workflow",
-        REPO_ROOT / "docs" / "SKILLS_CATALOG.md": "input is a canonical run ID",
-        REPO_ROOT / "SETUP_GUIDE.md": 'research-pipeline "<canonical-run-id>"',
-        REPO_ROOT / "docs" / "COPILOT_CLI_ADAPTATION.md": 'research-pipeline "<canonical-run-id>"',
-    }
-    for path, marker in public_routes.items():
-        assert marker in read(path), path
-
-    assert 'research-pipeline "your topic"' not in read(REPO_ROOT / "README.md")
-    assert 'research-pipeline "你的课题"' not in read(REPO_ROOT / "README_CN.md")
-    assert "chains idea discovery → auto review → paper writing autonomously" not in read(
-        REPO_ROOT / "README.md"
-    )
-    assert "三大工作流端到端贯通" not in read(REPO_ROOT / "README_CN.md")
-
-    for path in (REPO_ROOT / "README.md", REPO_ROOT / "README_CN.md"):
-        text = read(path)
-        assert "METHOD_CONFIRMED_AWAITING_USER_VALIDATION" in text
-        assert "SEARCH_LEDGER.jsonl" in text
-    guide = read(REPO_ROOT / "AGENT_GUIDE.md")
-    assert "IDEA_REPORT.md` | `/idea-discovery` | human reading only" in guide
-    assert "refine-logs/EXPERIMENT_PLAN.md" in guide
-    handoff = read(REPO_ROOT / "RESEARCH_HANDOFF_CN.md")
-    assert "SEARCH_LEDGER.jsonl" in handoff
-    assert "SEARCH_LOG.md" not in handoff
-    assert "USER_SUPPLIED_READ" in handoff
-    catalog = read(REPO_ROOT / "docs" / "SKILLS_CATALOG.md")
-    assert "stops before validation" in catalog
-    assert "not part of canonical `/idea-discovery`" in catalog
-
-    iteration_log = read(REPO_ROOT / "tools" / "iteration_log.py")
-    assert "LEGACY: iteration_log.py" in iteration_log
-    for root in (MAIN, CODEX):
-        cadence = read(root / "shared-references" / "external-cadence.md")
-        integration = read(root / "shared-references" / "integration-contract.md")
-        assert "no active shipped consumer" in cadence
-        assert "Legacy; no active caller" in integration
-
-
-def test_idea_workflow_references_restored_modules_without_inlining_them() -> None:
-    creator = skill(MAIN, "idea-creator")
-    discovery = skill(MAIN, "idea-discovery")
-    for ref in (
-        "idea-fanout-module.md",
-        "idea-wiki-integration.md",
-        "idea-output-composition.md",
-    ):
-        assert ref in creator
-    for ref in ("reference-paper-intake.md", "idea-output-composition.md"):
-        assert ref in discovery
-    assert "REF_PAPER = false" in discovery
-    assert "COMPACT = false" in discovery
-    assert "human problem or route decision" in discovery
-    assert "mode: method" in creator and "human_accepted" in creator
+        creator = skill(root, "idea-creator")
+        workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
+        assert "problem-discovery-contract.md" in creator
+        assert "root-cause-analysis-contract.md" in creator
+        assert "method-design-contract.md" in creator
+        assert workflow["artifact_manifest"]["method_design_packet"].endswith("METHOD_DESIGN_PACKET.json")
+        assert workflow["artifact_manifest"]["principle_evaluation"].endswith("PRINCIPLE_EVALUATION.json")

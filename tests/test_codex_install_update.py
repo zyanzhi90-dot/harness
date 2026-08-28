@@ -31,6 +31,10 @@ def make_minimal_aris_repo(root: Path) -> Path:
     repo = root / "aris"
     make_skill(repo / "skills" / "skills-codex" / "alpha", "# alpha\n")
     make_skill(repo / "skills" / "skills-codex" / "beta", "# beta-base\n")
+    make_skill(
+        repo / "skills" / "skills-codex" / "method-test",
+        "# method-test\nAPPROVED_METHOD_TEST_EXECUTION_SET\n",
+    )
     (repo / "skills" / "skills-codex" / "shared-references").mkdir(parents=True, exist_ok=True)
     (repo / "skills" / "skills-codex" / "shared-references" / "reviewer-routing.md").write_text("base\n")
     make_skill(repo / "skills" / "skills-codex-claude-review" / "beta", "# beta-claude-overlay\n")
@@ -92,9 +96,13 @@ def test_install_aris_codex_reconcile_and_uninstall(tmp_path: Path) -> None:
     assert "$1==repo_root" not in agents_text
     assert (project / ".agents" / "skills" / "alpha").is_symlink()
     assert (project / ".agents" / "skills" / "beta").resolve() == (repo / "skills" / "skills-codex" / "beta")
+    assert (project / ".agents" / "skills" / "method-test").resolve() == (
+        repo / "skills" / "skills-codex" / "method-test"
+    )
     assert (project / ".agents" / "skills" / "shared-references").resolve() == (
         repo / "skills" / "skills-codex" / "shared-references"
     )
+    assert "\tmethod-test\t" in manifest.read_text(encoding="utf-8")
 
     run(
         [

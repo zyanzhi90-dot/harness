@@ -639,21 +639,25 @@ def test_partial_landscape_can_progress_but_cannot_certify_a_problem():
             rs.approve_human(d, "partial", "problem_human_acceptance", "accept", selected_id="P1")
 
 
-def test_refinement_is_hard_blocked_until_route_is_human_selected_and_materialized():
+def test_refinement_is_hard_blocked_until_principle_convergence_is_accepted_and_materialized():
     repo = Path(__file__).resolve().parents[1]
     workflow = str(repo / "skills" / "shared-references" / "idea-workflow.yaml")
     with _tmp() as d:
-        rs.start_run(d, "route-gate", [], workflow_path=workflow)
-        state = rs._load(d, "route-gate")
-        # Isolate the route gate itself while retaining the declared dependency
-        # semantics: an accepted problem is necessary before method design.
+        rs.start_run(d, "principle-gate", [], workflow_path=workflow)
+        state = rs._load(d, "principle-gate")
+        # Isolate the declared convergence dependency and its Controller-owned
+        # Selected Principle artifact without inventing a second lifecycle.
         for phase in ("landscape", "scope_human_approval", "problem_generation",
-                      "problem_quality_gate", "problem_novelty_gate", "problem_human_acceptance"):
+                      "problem_quality_gate", "problem_novelty_gate", "problem_human_acceptance",
+                      "root_cause_analysis", "root_cause_gate", "method_design",
+                      "principle_test_human_approval"):
             current = rs._find_phase(state, phase)
-            current["status"] = "accepted" if phase not in ("scope_human_approval", "problem_human_acceptance") else "human_accepted"
-        state["phases"] = state["phases"]
-        import json
-        Path(d, ".aris", "runs", "route-gate.json").write_text(
+            current["status"] = (
+                "human_accepted"
+                if phase in ("scope_human_approval", "problem_human_acceptance", "principle_test_human_approval")
+                else "done" if phase in ("root_cause_analysis",) else "accepted"
+            )
+        Path(d, ".aris", "runs", "principle-gate.json").write_text(
             json.dumps(state), encoding="utf-8"
         )
         contract = Path(d, "idea-stage", "RESEARCH_CONTRACT.md")
@@ -663,18 +667,46 @@ def test_refinement_is_hard_blocked_until_route_is_human_selected_and_materializ
             "accepted field map", encoding="utf-8"
         )
         Path(d, "idea-stage", "PROBLEM_EVIDENCE_CAPSULE.md").write_text("evidence", encoding="utf-8")
-        _advance_through_root_cause(d, "route-gate")
-        rs.set_status(d, "route-gate", "method_design", "running")
-        routes = Path(d, "idea-stage", "METHOD_ROUTES.md")
-        routes.write_text("route R1", encoding="utf-8")
-        Path(d, "idea-stage", "METHOD_ROUTES.jsonl").write_text("{}", encoding="utf-8")
-        rs.set_status(d, "route-gate", "method_design", "done")
-
-        with pytest.raises(ValueError, match="requires selected_id"):
-            rs.approve_human(d, "route-gate", "route_human_selection", "select route")
-        rs.approve_human(d, "route-gate", "route_human_selection", "select route", selected_id="R1")
+        Path(d, "idea-stage", "ROOT_CAUSE_ANALYSIS.json").write_text("{}", encoding="utf-8")
+        Path(d, "idea-stage", "ROOT_CAUSE_VERDICT.json").write_text("{}", encoding="utf-8")
+        Path(d, "idea-stage", "PRINCIPLE_EVALUATION.json").write_text("{}", encoding="utf-8")
+        Path(d, "idea-stage", "PRINCIPLE_EVALUATION_VERDICT.json").write_text("{}", encoding="utf-8")
+        state = rs._load(d, "principle-gate")
+        rs._find_phase(state, "root_cause_analysis")["validated_artifacts"] = {
+            "idea-stage/RESEARCH_CONTRACT.md": _file_sha256(contract),
+            "idea-stage/ROOT_CAUSE_ANALYSIS.json": _file_sha256(
+                Path(d, "idea-stage", "ROOT_CAUSE_ANALYSIS.json")
+            ),
+        }
+        rs._find_phase(state, "root_cause_gate")["validated_artifacts"] = {
+            "idea-stage/ROOT_CAUSE_VERDICT.json": _file_sha256(
+                Path(d, "idea-stage", "ROOT_CAUSE_VERDICT.json")
+            )
+        }
+        rs._find_phase(state, "principle_evaluation")["validated_artifacts"] = {
+            "idea-stage/PRINCIPLE_EVALUATION.json": _file_sha256(
+                Path(d, "idea-stage", "PRINCIPLE_EVALUATION.json")
+            ),
+            "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": _file_sha256(
+                Path(d, "idea-stage", "PRINCIPLE_EVALUATION_VERDICT.json")
+            ),
+        }
+        Path(d, ".aris", "runs", "principle-gate.json").write_text(
+            json.dumps(state), encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="non-terminal dependencies"):
+            rs.set_status(d, "principle-gate", "method_refinement", "running")
+        state = rs._load(d, "principle-gate")
+        rs._find_phase(state, "principle_evaluation")["status"] = "accepted"
+        Path(d, ".aris", "runs", "principle-gate.json").write_text(
+            json.dumps(state), encoding="utf-8"
+        )
         with pytest.raises(ValueError, match="missing required input"):
-            rs.set_status(d, "route-gate", "method_refinement", "running")
+            rs.set_status(d, "principle-gate", "method_refinement", "running")
+        Path(d, "idea-stage", "SELECTED_PRINCIPLE.yaml").write_text(
+            "principle_id: PR-A\nprinciple_version: '1'\n", encoding="utf-8"
+        )
+        rs.set_status(d, "principle-gate", "method_refinement", "running")
 
 
 if __name__ == "__main__":

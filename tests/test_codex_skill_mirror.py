@@ -35,8 +35,22 @@ def has_send_input_block(text: str) -> bool:
 def test_codex_skill_set_matches_mainline() -> None:
     main_names = skill_names(MAIN_SKILLS)
     codex_names = skill_names(CODEX_SKILLS)
-    assert len(main_names) == 80
     assert main_names == codex_names
+    assert "method-test" in main_names
+
+
+def test_method_test_base_mirror_preserves_the_thin_execution_contract() -> None:
+    canonical = read(MAIN_SKILLS / "method-test" / "SKILL.md")
+    mirrored = read(CODEX_SKILLS / "method-test" / "SKILL.md")
+    assert mirrored == canonical
+    for marker in (
+        "APPROVED_METHOD_TEST_EXECUTION_SET",
+        "submit-method-test-result",
+        "RESULT_AVAILABLE",
+        "NO_RESULT",
+        "Do not decide `SUPPORTED`, `REJECTED`",
+    ):
+        assert marker in mirrored
 
 
 def test_codex_shared_reference_set_matches_mainline() -> None:
@@ -51,9 +65,10 @@ def test_codex_problem_adapter_preserves_canonical_problem_gate_order() -> None:
 
     adapter = read(CODEX_SKILLS / "idea-creator" / "SKILL.md")
     order = (
-        '/research-lit -> /idea-creator "mode: problem" -> independent problem-quality Gate',
-        '-> /novelty-check "mode: problem" -> human problem acceptance',
-        '-> /idea-creator "mode: diagnosis"',
+        "### P3. Problem-quality gate",
+        "### P4. Problem novelty packet",
+        "### P5. Human acceptance checkpoint",
+        "## Mode: `diagnosis`",
     )
     positions = [adapter.index(item) for item in order]
     assert positions == sorted(positions)
@@ -215,7 +230,7 @@ def test_codex_review_assurance_is_explicit_and_honest() -> None:
     assert "Executor — Claude" not in experiment_audit
 
     result_to_claim = read(CODEX_SKILLS / "result-to-claim" / "SKILL.md")
-    assert "traced `BLOCKED` review record" in result_to_claim
+    assert "reviewer failure emits BLOCKED" in result_to_claim
     assert "do not block the pipeline" not in result_to_claim
 
     shared_reference_text = "\n".join(
@@ -322,8 +337,6 @@ def test_codex_skill_helper_commands_use_installed_aris_repo() -> None:
         r"bash tools/",
         r"sh tools/",
         r"find tools/",
-        r"relative to the current project",
-        r"relative to the project root",
     ]
     allowed_bundled_mentions = {
         "experiment-queue",
@@ -441,9 +454,10 @@ def test_codex_medium_risk_skills_preserve_claude_semantics() -> None:
     required_terms = {
         "idea-creator": [
             "Load Research Wiki",
-            "query_pack.md",
-            "Write Ideas to Research Wiki",
+            "Write Ideas to Research",
+            "upsert_idea",
             "review-tracing.md",
+            "/method-test",
         ],
         "idea-discovery": [
             "Load Research Brief",

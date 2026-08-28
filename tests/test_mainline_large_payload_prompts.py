@@ -25,10 +25,9 @@ def test_mainline_large_payload_skills_prefer_path_only_codex_prompts() -> None:
             "Read the updated review brief at <absolute path",
         ],
         "research-refine": [
-            "refine-logs/codex_round_1_review_bundle.md",
-            "Read the review bundle at <absolute path",
-            "refine-logs/codex_round_N_review_bundle.md",
-            "Read the re-evaluation bundle at <absolute path",
+            "Persist path-only review bundles for Codex",
+            "refresh-review-request <run_id>",
+            "refine-logs/FINAL_BLIND_REVIEW.md",
         ],
         "grant-proposal": [
             "grant-proposal/codex_panel_review_bundle_round_1.md",
