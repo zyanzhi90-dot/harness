@@ -318,7 +318,10 @@ accepts exactly one Candidate for testing; `request_revision`, `combine`, or
 consume that feedback and preferentially reuse current Evidence, searches, and
 history; acquire new Evidence only for a real knowledge gap. Every revised,
 combined, or new Candidate receives a fresh independent review and another
-Human selection. Selection creates only `selected_for_testing`, not scientific
+Human selection. For `combine`, the Human receipt names the source Candidates
+as comma-separated `ID@version` values; the synthesis Candidate must record the
+same multi-source `derived_from_principles` lineage and combine mechanisms, not
+modules. Selection creates only `selected_for_testing`, not scientific
 support, convergence, a test cycle, or `SELECTED_PRINCIPLE.yaml`.
 
 ### M2. `principle_test_design` — design the current minimum test

@@ -631,6 +631,70 @@ def _latest_return_feedback_ref(state: dict, phase: str) -> str | None:
     return None
 
 
+def _combine_sources_for_method_design_return(
+    state: dict,
+) -> set[tuple[str, str]] | None:
+    from arisctl.validators import ValidationError
+
+    for event in reversed((state.get("scientific_core") or {}).get("return_history") or []):
+        if not isinstance(event, dict) or event.get("return_target") != "method_design":
+            continue
+        if event.get("decision") != "combine":
+            return None
+        packet_path = str(
+            ((state.get("workflow") or {}).get("artifact_manifest") or {}).get(
+                "method_design_packet"
+            )
+            or ""
+        )
+        approval_request_id = event.get("approval_request_id")
+        approval = next(
+            (
+                item
+                for item in reversed((state.get("scientific_core") or {}).get("approvals") or [])
+                if isinstance(item, dict)
+                and item.get("approval_request_id") == approval_request_id
+                and item.get("gate") == "principle_selection"
+                and item.get("decision") == "combine"
+            ),
+            None,
+        )
+        approval_bindings = (approval or {}).get("artifact_bindings")
+        expected_hash = (
+            approval_bindings.get(packet_path)
+            if isinstance(approval_bindings, dict)
+            else None
+        )
+        if event.get("combine_source_packet") != {
+            "path": packet_path,
+            "sha256": expected_hash,
+        }:
+            raise ValidationError(
+                "Human combine source Candidate lineage is not bound to the reviewed packet"
+            )
+        raw_sources = event.get("combine_source_candidates")
+        if not isinstance(raw_sources, list) or len(raw_sources) < 2:
+            raise ValidationError("Human combine return has no valid source Candidate lineage")
+        sources: set[tuple[str, str]] = set()
+        for item in raw_sources:
+            if not isinstance(item, dict):
+                raise ValidationError("Human combine source Candidate lineage is invalid")
+            principle_id = item.get("principle_id")
+            principle_version = item.get("principle_version")
+            if (
+                not isinstance(principle_id, str)
+                or not principle_id
+                or not isinstance(principle_version, str)
+                or not principle_version
+            ):
+                raise ValidationError("Human combine source Candidate lineage is invalid")
+            sources.add((principle_id, principle_version))
+        if len(sources) != len(raw_sources):
+            raise ValidationError("Human combine source Candidate lineage contains duplicates")
+        return sources
+    return None
+
+
 def _load_scientific_history(root: str, state: dict) -> list[dict]:
     workflow = state.get("workflow") or {}
     manifest = workflow.get("artifact_manifest") or {}
@@ -792,6 +856,7 @@ def _validate_method_main_artifact(
                 current_evidence_ids=current_phase_evidence_ids,
                 required_history_refs=_relevant_scientific_history_refs(root, state, packet),
                 required_return_ref=_latest_return_feedback_ref(state, phase),
+                required_combine_sources=_combine_sources_for_method_design_return(state),
             )
         if phase == "principle_test_design":
             packet, _ = _accepted_json_artifact(root, state, "method_design_packet")

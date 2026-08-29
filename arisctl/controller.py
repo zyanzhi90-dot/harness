@@ -3231,6 +3231,39 @@ class ARISController:
             )
         return matches[0]
 
+    def _resolve_combine_source_candidates(
+        self, state: dict[str, Any], selected_id: str | None
+    ) -> list[dict[str, str]]:
+        if not isinstance(selected_id, str) or not selected_id.strip():
+            raise ControllerError(
+                "principle_selection combine requires comma-separated Candidate ID@version sources"
+            )
+        tokens = [item.strip() for item in selected_id.split(",") if item.strip()]
+        if len(tokens) < 2 or len(tokens) != len(set(tokens)):
+            raise ControllerError(
+                "principle_selection combine requires at least two unique Candidate ID@version sources"
+            )
+        packet = self._method_packet(state, accepted=True)
+        eligible = {
+            f"{item['principle_id']}@{item['principle_version']}": item
+            for item in packet["candidate_principles"]
+            if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+        }
+        sources: list[dict[str, str]] = []
+        for token in tokens:
+            if "@" not in token or token not in eligible:
+                raise ControllerError(
+                    "principle_selection combine sources must be current reviewed Candidate ID@version values"
+                )
+            item = eligible[token]
+            sources.append(
+                {
+                    "principle_id": str(item["principle_id"]),
+                    "principle_version": str(item["principle_version"]),
+                }
+            )
+        return sources
+
     def _establish_selected_for_testing(
         self,
         state: dict[str, Any],
@@ -5123,6 +5156,17 @@ class ARISController:
         core = state["scientific_core"]
         novelty_audit: dict[str, Any] | None = None
         candidate_baseline: dict[str, Any] | None = None
+        combine_source_candidates: list[dict[str, str]] | None = None
+        combine_source_packet: dict[str, str] | None = None
+        if phase["phase"] == "principle_human_selection" and decision == "combine":
+            combine_source_candidates = self._resolve_combine_source_candidates(
+                state, selected_id
+            )
+            packet_path = str(self.workflow["artifact_manifest"]["method_design_packet"])
+            packet_hash = request["artifact_bindings"].get(packet_path)
+            if not isinstance(packet_hash, str) or not packet_hash:
+                raise ControllerError("Human combine request is missing its reviewed Candidate packet binding")
+            combine_source_packet = {"path": packet_path, "sha256": packet_hash}
         if phase["phase"] == "problem_human_acceptance":
             if not selected_id:
                 raise ControllerError("Human Gate problem_acceptance requires an explicit selected_id for a non-approval decision")
@@ -5246,6 +5290,16 @@ class ARISController:
                 "confirmed_in": receipt["confirmed_in"],
                 "selected_id": selected_id,
                 "human_feedback": human_feedback,
+                **(
+                    {"combine_source_candidates": combine_source_candidates}
+                    if combine_source_candidates is not None
+                    else {}
+                ),
+                **(
+                    {"combine_source_packet": combine_source_packet}
+                    if combine_source_packet is not None
+                    else {}
+                ),
                 **({"candidate_baseline": candidate_baseline} if candidate_baseline is not None else {}),
                 **({"novelty_audit": novelty_audit} if novelty_audit is not None else {}),
                 **invalidation,
@@ -5425,10 +5479,13 @@ class ARISController:
             if phase["phase"] == "principle_human_selection":
                 if target is None:
                     self._resolve_candidate_selection(state, selected_id)
-                elif not isinstance(human_feedback, str) or not human_feedback.strip():
-                    raise ControllerError(
-                        "Human Gate principle_selection revisions, combinations, and rejection require non-empty human_feedback"
-                    )
+                else:
+                    if not isinstance(human_feedback, str) or not human_feedback.strip():
+                        raise ControllerError(
+                            "Human Gate principle_selection revisions, combinations, and rejection require non-empty human_feedback"
+                        )
+                    if decision == "combine":
+                        self._resolve_combine_source_candidates(state, selected_id)
             if (
                 target is not None
                 and phase["phase"] == "principle_test_human_approval"

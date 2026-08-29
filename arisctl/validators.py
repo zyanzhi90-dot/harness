@@ -1039,6 +1039,7 @@ def validate_method_design_packet(
     current_evidence_ids: set[str] | None = None,
     required_history_refs: set[str] | None = None,
     required_return_ref: str | None = None,
+    required_combine_sources: set[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Validate the machine-resolvable Candidate Principle packet without judging quality."""
 
@@ -1215,6 +1216,7 @@ def validate_method_design_packet(
     assumption_ids: dict[tuple[str, str], set[str]] = {}
     prediction_ids: dict[tuple[str, str], set[str]] = {}
     prediction_assumptions: dict[tuple[str, str], dict[str, set[str]]] = {}
+    derived_sources_by_candidate: dict[tuple[str, str], set[tuple[str, str]]] = {}
     pending_discrimination_refs: list[tuple[str, set[str]]] = []
     statuses = set(contract["candidate_status_enum"])
     for index, raw in enumerate(principles, 1):
@@ -1242,6 +1244,43 @@ def validate_method_design_packet(
             raise ValidationError(f"candidate principle {index}.parent_version is invalid")
         if item["parent_version"] is not None and str(item["parent_version"]) == version:
             raise ValidationError(f"candidate principle {index}.parent_version must identify an earlier version")
+        raw_derived_sources = item.get("derived_from_principles")
+        if raw_derived_sources is not None:
+            if not isinstance(raw_derived_sources, list):
+                raise ValidationError(
+                    f"candidate principle {index}.derived_from_principles must be a list"
+                )
+            derived_sources: set[tuple[str, str]] = set()
+            for number, raw_source in enumerate(raw_derived_sources, 1):
+                source = _require_mapping(
+                    raw_source,
+                    f"candidate principle {index} derived source {number}",
+                )
+                _require_fields(
+                    source,
+                    tuple(contract["candidate_derived_from_principle_fields"]),
+                    f"candidate principle {index} derived source {number}",
+                )
+                source_key = (
+                    _required_text(
+                        source["principle_id"],
+                        f"candidate principle {index} derived source {number}.principle_id",
+                    ),
+                    _required_text(
+                        str(source["principle_version"]),
+                        f"candidate principle {index} derived source {number}.principle_version",
+                    ),
+                )
+                if source_key in derived_sources:
+                    raise ValidationError(
+                        f"candidate principle {index}.derived_from_principles contains duplicates"
+                    )
+                derived_sources.add(source_key)
+            if derived_sources and len(derived_sources) < 2:
+                raise ValidationError(
+                    f"candidate principle {index}.derived_from_principles requires at least two sources"
+                )
+            derived_sources_by_candidate[key] = derived_sources
         for field in (
             "principle", "origin", "intervention", "changed_structure",
             "root_cause_resolution_rationale", "provisional_scientific_delta",
@@ -1317,6 +1356,21 @@ def validate_method_design_packet(
     active_keys = {key for key, item in principle_by_key.items() if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}}
     if not active_keys:
         raise ValidationError("method design packet must retain at least one active Candidate Principle")
+
+    if required_combine_sources is not None:
+        if len(required_combine_sources) < 2:
+            raise ValidationError("Human combine source Candidate lineage requires at least two sources")
+        if not derived_sources_by_candidate:
+            raise ValidationError(
+                "Human combine return requires a synthesis Candidate derived_from_principles"
+            )
+        if not any(
+            sources == required_combine_sources
+            for sources in derived_sources_by_candidate.values()
+        ):
+            raise ValidationError(
+                "Human combine return has no synthesis Candidate whose derived_from_principles match current reviewed Human combine sources"
+            )
 
     history_refs = set(_unique_string_values(packet["relevant_history_refs"], "method design packet.relevant_history_refs", non_empty=False))
     if not set(required_history_refs or set()) <= history_refs:

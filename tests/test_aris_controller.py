@@ -266,7 +266,12 @@ def method_design_packet(*, cycle_id: str = "DESIGN-1", evidence_refs: list[str]
     }
 
 
-def validate_packet_fixture(packet: dict, *, current_evidence_ids: set[str] | None = None) -> dict:
+def validate_packet_fixture(
+    packet: dict,
+    *,
+    current_evidence_ids: set[str] | None = None,
+    required_combine_sources: set[tuple[str, str]] | None = None,
+) -> dict:
     workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))
     return validate_method_design_packet(
         packet,
@@ -279,6 +284,7 @@ def validate_packet_fixture(packet: dict, *, current_evidence_ids: set[str] | No
         root_cause_analysis_sha256="c" * 64,
         primary_causal_chain_ids={"CHAIN-1"},
         current_evidence_ids=current_evidence_ids,
+        required_combine_sources=required_combine_sources,
     )
 
 
@@ -357,6 +363,87 @@ def test_method_design_packet_closes_rmc_capability_obligation_and_candidate_bin
     candidate_with_tests["candidate_principles"][0]["proposed_test_ids"] = ["TEST-OLD"]
     with pytest.raises(ValidationError, match="must not contain test design fields"):
         validate_packet_fixture(candidate_with_tests)
+
+
+def test_method_design_synthesis_lineage_requires_current_multi_candidate_sources() -> None:
+    sources = {("PR-A", "1"), ("PR-B", "1")}
+    packet = method_design_packet()
+    old_synthesis = deepcopy(packet["candidate_principles"][0])
+    old_synthesis.update(
+        {
+            "principle_id": "PR-S-OLD",
+            "principle_version": "1",
+            "parent_version": None,
+            "principle": "Earlier Synthesis Principle",
+            "intervention": "retain an earlier coupled causal intervention",
+            "changed_structure": "the earlier coupled relation between mechanisms",
+            "substantive_difference": "mechanism-level synthesis of historical sources",
+            "derived_from_principles": [
+                {"principle_id": "PR-C", "principle_version": "1"},
+                {"principle_id": "PR-D", "principle_version": "1"},
+            ],
+        }
+    )
+    synthesis = deepcopy(packet["candidate_principles"][0])
+    synthesis.update(
+        {
+            "principle_id": "PR-S",
+            "principle_version": "1",
+            "parent_version": None,
+            "principle": "Synthesis Principle",
+            "intervention": "synthesize the two causal interventions",
+            "changed_structure": "the coupled relation between the two mechanisms",
+            "substantive_difference": "mechanism-level synthesis of PR-A and PR-B",
+            "derived_from_principles": [
+                {"principle_id": "PR-A", "principle_version": "1"},
+                {"principle_id": "PR-B", "principle_version": "1"},
+            ],
+        }
+    )
+    packet["candidate_principles"].append(old_synthesis)
+    packet["candidate_principles"].append(synthesis)
+    validate_packet_fixture(packet, required_combine_sources=sources)
+
+    no_current_synthesis = deepcopy(packet)
+    no_current_synthesis["candidate_principles"].pop()
+    with pytest.raises(ValidationError, match="no synthesis Candidate"):
+        validate_packet_fixture(no_current_synthesis, required_combine_sources=sources)
+
+    too_few = deepcopy(packet)
+    too_few["candidate_principles"][-1]["derived_from_principles"] = [
+        {"principle_id": "PR-A", "principle_version": "1"}
+    ]
+    with pytest.raises(ValidationError, match="at least two sources"):
+        validate_packet_fixture(too_few, required_combine_sources=sources)
+
+    dangling = deepcopy(packet)
+    dangling["candidate_principles"][-1]["derived_from_principles"][1] = {
+        "principle_id": "PR-MISSING", "principle_version": "1"
+    }
+    with pytest.raises(ValidationError, match="no synthesis Candidate"):
+        validate_packet_fixture(dangling, required_combine_sources=sources)
+
+    stale = deepcopy(packet)
+    stale["candidate_principles"][-1]["derived_from_principles"][1] = {
+        "principle_id": "PR-B", "principle_version": "0"
+    }
+    with pytest.raises(ValidationError, match="no synthesis Candidate"):
+        validate_packet_fixture(stale, required_combine_sources=sources)
+
+    duplicate = deepcopy(packet)
+    duplicate["candidate_principles"][-1]["derived_from_principles"] = [
+        {"principle_id": "PR-A", "principle_version": "1"},
+        {"principle_id": "PR-A", "principle_version": "1"},
+    ]
+    with pytest.raises(ValidationError, match="contains duplicates"):
+        validate_packet_fixture(duplicate, required_combine_sources=sources)
+
+    ordinary = method_design_packet()
+    revision = deepcopy(ordinary["candidate_principles"][0])
+    revision["principle_version"] = "2"
+    revision["parent_version"] = "1"
+    ordinary["candidate_principles"].append(revision)
+    validate_packet_fixture(ordinary)
 
 
 def test_principle_test_plan_is_selected_candidate_only_and_atomic() -> None:
@@ -1782,9 +1869,10 @@ def write_and_complete_method_design(
     decision: str = "PRINCIPLE_PACKET_READY",
     cycle_id: str = "DESIGN-1",
     verdict_id: str = "method-review-1",
+    packet: dict | None = None,
 ) -> dict:
     controller.start_current_phase()
-    packet = bound_method_design_packet(controller, cycle_id=cycle_id)
+    packet = packet or bound_method_design_packet(controller, cycle_id=cycle_id)
     path = controller.root / "idea-stage" / "METHOD_DESIGN_PACKET.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(packet), encoding="utf-8")
@@ -5384,8 +5472,17 @@ def test_human_candidate_revision_paths_return_feedback_to_method_design(
         controller, verdict_id="method-review-1"
     )
     feedback = f"{decision}: revise or combine the Candidate mechanisms using current Evidence."
+    if decision == "combine":
+        with pytest.raises(ControllerError, match="current reviewed Candidate ID@version"):
+            controller.validate_human_gate_decision(
+                "principle_selection",
+                "combine",
+                selected_id="PR-A@1,PR-B@0",
+                human_feedback=feedback,
+            )
+    selected_id = "PR-A@1,PR-B@1" if decision == "combine" else None
     request = controller.validate_human_gate_decision(
-        "principle_selection", decision, human_feedback=feedback
+        "principle_selection", decision, selected_id=selected_id, human_feedback=feedback
     )
     approvals.issue_ui_approval_receipt(
         controller.root,
@@ -5393,19 +5490,51 @@ def test_human_candidate_revision_paths_return_feedback_to_method_design(
         "principle_selection",
         request["id"],
         decision,
+        selected_id=selected_id,
         human_feedback=feedback,
         artifact_bindings=request["artifact_bindings"],
     )
     returned = controller.human_approve(
-        "principle_selection", decision, human_feedback=feedback
+        "principle_selection", decision, selected_id=selected_id, human_feedback=feedback
     )
     event = returned["scientific_core"]["return_history"][-1]
     assert returned["scientific_core"]["current_phase"] == "method_design"
     assert returned["scientific_core"]["selected_for_testing"] is None
     assert event["human_feedback"] == feedback
-    revised = write_and_complete_method_design(
-        controller, cycle_id="DESIGN-2", verdict_id=f"method-review-{decision}"
-    )
+    if decision == "combine":
+        assert event["combine_source_candidates"] == [
+            {"principle_id": "PR-A", "principle_version": "1"},
+            {"principle_id": "PR-B", "principle_version": "1"},
+        ]
+        assert event["combine_source_packet"] == {
+            "path": "idea-stage/METHOD_DESIGN_PACKET.json",
+            "sha256": request["artifact_bindings"]["idea-stage/METHOD_DESIGN_PACKET.json"],
+        }
+        revised_packet = bound_method_design_packet(controller, cycle_id="DESIGN-2")
+        synthesis = deepcopy(revised_packet["candidate_principles"][0])
+        synthesis.update(
+            {
+                "principle_id": "PR-S",
+                "principle_version": "1",
+                "parent_version": None,
+                "principle": "Synthesis Principle",
+                "intervention": "synthesize the two causal interventions",
+                "changed_structure": "the coupled relation between the two mechanisms",
+                "substantive_difference": "mechanism-level synthesis of PR-A and PR-B",
+                "derived_from_principles": event["combine_source_candidates"],
+            }
+        )
+        revised_packet["candidate_principles"].append(synthesis)
+        revised = write_and_complete_method_design(
+            controller,
+            cycle_id="DESIGN-2",
+            verdict_id=f"method-review-{decision}",
+            packet=revised_packet,
+        )
+    else:
+        revised = write_and_complete_method_design(
+            controller, cycle_id="DESIGN-2", verdict_id=f"method-review-{decision}"
+        )
     assert event["id"] in revised["return_feedback_refs"]
 
 

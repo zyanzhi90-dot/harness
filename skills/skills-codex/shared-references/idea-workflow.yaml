@@ -47,6 +47,7 @@
       "required_capability_fields": ["capability_id", "mechanism_change_ids", "required_capability", "acceptance_conditions"],
       "design_obligation_fields": ["obligation_id", "mechanism_change_ids", "capability_ids", "design_obligation", "acceptance_conditions"],
       "candidate_principle_fields": ["principle_id", "principle_version", "parent_version", "principle", "origin", "mechanism_change_ids", "capability_ids", "obligation_ids", "causal_chain_ids", "activation_conditions", "intervention", "changed_structure", "root_cause_resolution_rationale", "failure_conditions", "fatal_assumptions", "target_domain_operationalization", "provisional_scientific_delta", "substantive_difference", "predictions", "evidence_refs", "status", "status_rationale"],
+      "candidate_derived_from_principle_fields": ["principle_id", "principle_version"],
       "candidate_forbidden_fields": ["proposed_test_ids", "tests", "execution_set", "estimated_cost"],
       "candidate_status_enum": ["ACTIVE", "REVISED", "WEAKENED", "MERGED", "RETIRED", "REJECTED"],
       "fatal_assumption_fields": ["assumption_id", "assumption", "failure_consequence"],
@@ -376,7 +377,7 @@
       "return_targets": {"request_revision": "method_design", "combine": "method_design", "reject": "method_design"},
       "return_effects": {
         "request_revision": "consume Human feedback and revise the named Candidate using current Evidence/search/history unless a real knowledge gap requires incremental literature",
-        "combine": "consume Human feedback and form a reviewed combined Candidate before returning to Human selection",
+        "combine": "bind at least two exact reviewed Candidate ID/version sources from the Human receipt, consume Human feedback, and form a mechanism-level synthesis Candidate with matching derived_from_principles before returning to Human selection",
         "reject": "consume Human redesign requirements and replace or redesign Candidates before returning to Human selection"
       }
     },

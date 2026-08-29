@@ -209,6 +209,7 @@ Each Candidate Principle contains:
 principle_id:
 principle_version:
 parent_version: null
+derived_from_principles: []  # optional; multi-Candidate synthesis only
 principle:
 origin:
 mechanism_change_ids: []
@@ -238,10 +239,16 @@ status: ACTIVE | REVISED | WEAKENED | MERGED | RETIRED | REJECTED
 status_rationale:
 ```
 
-`parent_version` identifies lineage without overwriting scientific history.
-Revisions, weakening, merging, retirement, and rejection require a scientific
-reason. Candidate differences must be differences in Principle, not parameters,
-backbones, or module names.
+`parent_version` identifies single-Candidate revision lineage without overwriting
+scientific history. `derived_from_principles` is optional and records a
+multi-Candidate synthesis as exact `{principle_id, principle_version}` sources.
+After a Human `combine` decision, its receipt must name at least two exact
+`ID@version` sources from the reviewed packet; the resulting synthesis Candidate
+must carry exactly those sources. The Controller rejects dangling, stale, or
+unreviewed sources. The synthesis must combine mechanisms at the Principle
+level, not concatenate concrete modules. Revisions, weakening, merging,
+retirement, and rejection require a scientific reason. Candidate differences
+must be differences in Principle, not parameters, backbones, or module names.
 
 For each active Candidate, state its critical unknowns and fatal assumptions,
 target-domain operational meaning, predicted observations, primary risks, and
