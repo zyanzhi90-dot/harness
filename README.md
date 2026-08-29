@@ -761,8 +761,10 @@ These skills compose into a full research lifecycle. Each workflow can be used i
 ```
 /research-lit → human scope approval → problem generation → quality + novelty Gates
   → human problem acceptance → root-cause analysis + independent Gate
-  → RMC/Capability/Obligation-bound Candidate Principles + discriminating tests
-  → independent Principle packet review → human test-set approval → /method-test
+  → RMC/Capability/Obligation-bound Candidate Principles
+  → independent Principle packet review → human Candidate selection
+  → selected-Candidate minimum test design → independent test-plan review
+  → human test-set/cost approval → /method-test
   → Evidence Context + Principle evaluation → independent convergence review
   → Selected Principle → method adaptation/refinement + final novelty Gate
   → human method acceptance → METHOD_CONFIRMED_AWAITING_USER_VALIDATION
@@ -786,13 +788,14 @@ The resulting order is fixed:
 1. identify candidate problems from evidence, then independently assess problem quality and novelty;
 2. ask the user to accept one problem and bind `RESEARCH_CONTRACT.md` plus `PROBLEM_EVIDENCE_CAPSULE.md`;
 3. analyze observed failure phenomena into causal chains and pass the independent root-cause Gate;
-4. derive RMCs, Capabilities, and Design Obligations from the accepted causal chains; search first principles, representation transformations, same-field mechanisms, and cross-domain structural isomorphisms to form algorithm-independent Candidate Principles and discriminating tests;
-5. pass an independent Principle-packet review, ask the user to approve the exact test set and cost, execute only those tests through `/method-test`, and evaluate the resulting Evidence until an independent reviewer accepts convergence;
-6. materialize `SELECTED_PRINCIPLE.yaml`, adapt it into a minimal faithful Method, and pass final Method review, novelty, and human acceptance.
+4. derive RMCs, Capabilities, and Design Obligations from the accepted causal chains; search first principles, representation transformations, same-field mechanisms, and cross-domain structural isomorphisms to form algorithm-independent Candidate Principles;
+5. pass an independent Candidate-packet review, let the user select, revise, combine, or reject Candidates, then design and independently review the minimum sufficient fatal-assumption-first test plan for the selected Candidate before asking the user to approve that round's exact test set and cost;
+6. execute only the approved tests through `/method-test` and evaluate the resulting Evidence until an independent reviewer accepts convergence;
+7. materialize `SELECTED_PRINCIPLE.yaml`, adapt it into a minimal faithful Method, and pass final Method review, novelty, and human acceptance.
 
 Its formal outputs include `idea-stage/ACTIVE_FIELD_MAP.md`,
 `idea-stage/SEARCH_LEDGER.jsonl`, the accepted problem and root-cause handoffs,
-`METHOD_DESIGN_PACKET.json`, Principle/Test Evidence ledgers, the active
+`METHOD_DESIGN_PACKET.json`, `PRINCIPLE_TEST_PLAN.json`, Principle/Test Evidence ledgers, the active
 `PRINCIPLE_EVIDENCE_CONTEXT.json`, `SELECTED_PRINCIPLE.yaml`,
 `refine-logs/FINAL_PROPOSAL.md`, and the final human-facing `IDEA_REPORT.md`.
 `IDEA_REPORT.md` is not a handoff to experiments; no `EXPERIMENT_PLAN.md` is

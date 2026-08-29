@@ -34,7 +34,8 @@ active accepted Problem/RCA bindings, convergence artifacts, and
 feedback directed to `method_refinement` and require the refinement execution
 to consume it.
 
-If the current phase is `method_design`, `principle_test_human_approval`, or
+If the current phase is `method_design`, `principle_human_selection`,
+`principle_test_design`, `principle_test_human_approval`, or
 `principle_evaluation`, stop and resume `/idea-discovery`; do not manufacture a
 selection or perform Method adaptation early.
 

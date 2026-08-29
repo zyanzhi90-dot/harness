@@ -28,7 +28,8 @@ python -m arisctl --root . method-test-handoff <run_id>
 Require `handoff_type: APPROVED_METHOD_TEST_EXECUTION_SET`, the run ID,
 `cycle_id`, `execution_set_id`, `approved_test_ids`, estimated total cost,
 complete test records, and `handoff_sha256`. Do not reconstruct or extend this
-set from `METHOD_DESIGN_PACKET.json`, prose, an old cycle, or a user message.
+set from `METHOD_DESIGN_PACKET.json`, `PRINCIPLE_TEST_PLAN.json`, prose, an old
+cycle, or a user message; only the Controller handoff reflects Human approval.
 
 ## Execution
 
@@ -113,6 +114,6 @@ creates that Context nor starts or evaluates the phase.
   execution set, or `PRINCIPLE_EVIDENCE_CONTEXT.json`.
 - Do not add tests, alter targets, expand cost, or silently retry with a changed
   operationalization. A scientific test change returns through Human
-  `request_revision -> method_design`.
+  `request_revision -> principle_test_design`.
 - Do not turn `NO_RESULT` into Evidence for or against a Principle.
 - Do not run Full Validation or write a Final Scientific Delta Claim.

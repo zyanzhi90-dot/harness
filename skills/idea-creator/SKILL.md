@@ -1,19 +1,20 @@
 ---
 name: idea-creator
-description: "Run one independent problem-discovery, root-cause diagnosis, or Principle formation/evaluation module. Use mode: problem to certify an evidence-grounded problem; mode: diagnosis to execute 1a-2b and obtain an independent root-cause verdict; mode: method only after DIAGNOSIS_READY."
-argument-hint: "mode: problem|diagnosis|method; direction or handoff path"
+description: "Run one independent problem-discovery, root-cause diagnosis, Principle formation/evaluation, or selected-Candidate test-design module. Use mode: problem to certify an evidence-grounded problem; mode: diagnosis to execute 1a-2b and obtain an independent root-cause verdict; method work only after DIAGNOSIS_READY."
+argument-hint: "mode: problem|diagnosis|method|principle-test-design; direction or handoff path"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
-# Research Idea Creator — three independent modes
+# Research Idea Creator — independent scientific modes
 
 Run exactly one mode for: **$ARGUMENTS**.
 
 This skill is intentionally split at artifact boundaries. Fresh invocations in
-`mode: diagnosis` and `mode: method` must not inherit the previous module's
-reasoning history. Diagnosis reads the accepted problem handoff; method reads
-the validated diagnosis handoff. The parent orchestrator may call the modes
-sequentially, but it must not skip either boundary.
+`mode: diagnosis`, `mode: method`, and `mode: principle-test-design` must not
+inherit the previous module's reasoning history. Diagnosis reads the accepted
+problem handoff; method reads the validated diagnosis handoff; test design also
+requires the Controller's active Human-selected Candidate binding. The parent
+orchestrator may call the modes sequentially, but it must not skip a boundary.
 
 ## Shared execution contract
 
@@ -77,7 +78,8 @@ different inputs, outputs, and stopping conditions:
 |---|---|---|---|
 | `problem` | Field Evidence Map and source records | `PROBLEM_CANDIDATES.*`, `PROBLEM_QUALITY_VERDICTS.jsonl`, `PROBLEM_NOVELTY_VERDICTS.jsonl`, then the separate `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` after user selection and before the Controller records human acceptance | human problem selection |
 | `diagnosis` | accepted `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` | `ROOT_CAUSE_ANALYSIS.json`, faithful `.md` view, independent `ROOT_CAUSE_VERDICT.json` | `DIAGNOSIS_READY` or return path |
-| `method` | accepted problem plus validated root-cause analysis/verdict; for evaluation, the Controller-formed Evidence Context | `METHOD_DESIGN_PACKET.json`, deterministic `METHOD_DESIGN.md`, or `PRINCIPLE_EVALUATION.json` according to the current phase; formal reviewer verdict artifacts | Principle/Test Human Gate or convergence return/acceptance |
+| `method` | accepted problem plus validated root-cause analysis/verdict; for evaluation, the Controller-formed Evidence Context | candidate-only `METHOD_DESIGN_PACKET.json`, deterministic `METHOD_DESIGN.md`, or `PRINCIPLE_EVALUATION.json` according to the current phase; formal reviewer verdict artifacts | Human Candidate selection or convergence return/acceptance |
+| `principle-test-design` | accepted Method Design packet/review plus active `selected_for_testing` binding | `PRINCIPLE_TEST_PLAN.json`, deterministic Markdown view, and formal independent review | Principle Test Human Gate or return path |
 
 `IDEA_REPORT.md` is a final human-facing report only. It is never the machine
 handoff between these modes.
@@ -272,7 +274,7 @@ If any precondition is absent, return `BLOCKED_PRECONDITION` and do nothing.
 Inspect the Controller's current phase and execute exactly one of the following
 branches. Do not create a private lifecycle inside the skill.
 
-### M1. `method_design` — form the Principle/Test packet
+### M1. `method_design` — form Candidate Principles
 
 Follow `method-design-contract.md` in order:
 
@@ -287,9 +289,7 @@ Follow `method-design-contract.md` in order:
 4. form algorithm-independent Candidate Principles with lineage, bindings,
    activation/failure conditions, fatal assumptions, target-domain
    operationalization, Provisional Scientific Delta, and discriminating
-   predictions;
-5. define multi-target discriminating tests and the cheapest informative atomic
-   execution set with per-test and total cost.
+   predictions, principal risks, and substantive differences.
 
 Use only Controller-current Evidence. Cross-cycle history must be consumed, but
 its Evidence is not current unless it is accepted landscape Evidence, current
@@ -303,43 +303,72 @@ RMC. Cross-domain search may validly conclude that no credible isomorphism was
 found; do not force a transferred Candidate.
 
 Write `METHOD_DESIGN_PACKET.json` and its exact deterministic
-`METHOD_DESIGN.md` view. The packet contains no lifecycle status. Finish all
+`METHOD_DESIGN.md` view. The packet contains no concrete tests, execution set,
+cost, or lifecycle status. The Markdown explains each Candidate's mechanism,
+Scientific Delta, principal risks, and substantive differences in plain
+language. Finish all
 Evidence acquisition/re-adoption, then run `refresh-review-request` so the
 formal review binds the current inputs and final packet. The independent
 reviewer writes `METHOD_DESIGN_REVIEW.json` and returns only
 `PRINCIPLE_PACKET_READY`, `REVISE_PRINCIPLES`, or `RCA_CONFLICT`.
 
-At `principle_test_human_approval`, present the complete recommended execution
-set and total cost. Human `approve` approves the whole set and does not select
-a Principle. Any test-set or cost change uses `request_revision` with concrete
-feedback and returns to `method_design`.
+At `principle_human_selection`, present all reviewed Candidates. Human `select`
+accepts exactly one Candidate for testing; `request_revision`, `combine`, or
+`reject` carries concrete feedback back to Method Design. The next packet must
+consume that feedback and preferentially reuse current Evidence, searches, and
+history; acquire new Evidence only for a real knowledge gap. Every revised,
+combined, or new Candidate receives a fresh independent review and another
+Human selection. Selection creates only `selected_for_testing`, not scientific
+support, convergence, a test cycle, or `SELECTED_PRINCIPLE.yaml`.
 
-### M2. `principle_evaluation` — interpret the approved Evidence
+### M2. `principle_test_design` — design the current minimum test
+
+Require the accepted Method Design packet/review and the Controller's active
+`selected_for_testing` binding. Design tests only for that exact Candidate
+version. The plan must be the current minimum sufficient, highest-information
+set, prioritize falsification of fatal assumptions, and prefer existing data,
+low-cost analysis, or computation. A large physical experiment is allowed only
+with an explicit explanation of why lower-cost tiers cannot decide the present
+question.
+
+Write `PRINCIPLE_TEST_PLAN.json` and its deterministic Markdown view, then
+refresh the review request. The existing `independent_method_reviewer` applies
+the test-plan rubric and returns only `TEST_PLAN_READY`, `REVISE_TEST_PLAN`, or
+`RCA_CONFLICT`. At `principle_test_human_approval`, Human approval binds only
+this round's atomic execution set and total cost. Any test-set or cost change
+returns with feedback to `principle_test_design`. No execution or result
+submission is legal before approval.
+
+### M3. `principle_evaluation` — interpret the approved Evidence
 
 Do not start this phase until the Controller exposes `start_phase`. The pending
 window belongs to `/method-test`, which executes only the Controller-approved
 handoff and submits terminal results. Main must not create or modify
 `PRINCIPLE_EVIDENCE_CONTEXT.json`.
 
-When the phase starts, read the current Evidence Context, accepted
-Principle/Test packet, all Controller-associated cross-cycle history, and the
-latest return feedback. For every active Candidate version, assess
+When the phase starts, read the current Evidence Context, accepted Candidate
+packet and Test Plan, all Controller-associated cross-cycle history, and the
+latest return feedback. For the selected Candidate version, assess
 operationalization fidelity, test validity/discriminativeness, activation
-conditions, and the observations relative to every competing prediction.
+conditions, and the observations relative to its discriminating predictions.
 Update Principles, assumptions, boundaries, or the RCA interpretation; do not
 reduce Evidence Update to performance ranking. `NO_RESULT` can expose an
 operationalization or feasibility problem but cannot support or reject a
 Principle.
 
-Write `PRINCIPLE_EVALUATION.json`, updating every active Candidate and citing
+Write `PRINCIPLE_EVALUATION.json`, updating the selected Candidate and citing
 only Evidence current in the supplied Context. After the final evaluation is
 written, run `refresh-review-request` and dispatch the declared independent
 reviewer. Its formal outcomes are `PRINCIPLE_CONVERGED`,
-`REVISE_EVALUATION`, `MORE_EVIDENCE`, or `RCA_CONFLICT`.
+`REVISE_EVALUATION`, `MORE_EVIDENCE`, `CANDIDATE_REJECTED`, or `RCA_CONFLICT`.
 
 `REVISE_EVALUATION` preserves the cycle and terminal results and revises only
-interpretation. `MORE_EVIDENCE` creates a new design/test cycle and repeats the
-Human test Gate. On convergence, the verdict names one Principle ID/version;
+interpretation. `MORE_EVIDENCE` preserves the selected binding and returns to
+Test Design for the next minimum test and fresh Human approval.
+`CANDIDATE_REJECTED` stops that Candidate version, invalidates the binding, and
+returns the failed Evidence to Method Design. `RCA_CONFLICT` returns to RCA and
+also invalidates the binding. On convergence, the verdict names the selected
+Principle ID/version;
 only the Controller materializes `SELECTED_PRINCIPLE.yaml`. Main never writes
 that artifact.
 
@@ -389,6 +418,9 @@ timing.
                  -> human acceptance
                  -> /idea-creator "mode: diagnosis" -> root-cause Gate
                  -> /idea-creator "mode: method" -> Principle packet review
+                 -> human Candidate selection
+                 -> /idea-creator "mode: principle-test-design"
+                 -> independent Principle test-plan review
                  -> human test approval -> /method-test
                  -> /idea-creator "mode: method" -> Principle convergence
                  -> /research-refine -> /novelty-check "mode: method-final"

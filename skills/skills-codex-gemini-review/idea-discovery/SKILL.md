@@ -18,7 +18,9 @@ independent cross-family challenge; it does not create a second default gate.
 -> independent problem-quality Gate -> /novelty-check "mode: problem"
 -> human problem acceptance -> /idea-creator "mode: diagnosis"
 -> independent root-cause Gate -> /idea-creator "mode: method"
--> independent Principle packet review -> Human test-set approval
+-> independent Principle packet review -> Human Candidate selection
+-> /idea-creator "mode: principle-test-design"
+-> independent Principle test-plan review -> Human test-set approval
 -> /method-test -> /idea-creator "mode: method"
 -> independent Principle convergence review -> /research-refine
 -> /novelty-check "mode: method-final" -> human final method acceptance
@@ -27,7 +29,7 @@ independent cross-family challenge; it does not create a second default gate.
 
 Run each module in a fresh context. Pass compact packets and stable artifact
 paths only: active map, the accepted `RESEARCH_CONTRACT.md` and separate
-`PROBLEM_EVIDENCE_CAPSULE.md`, accepted RCA, current Principle/Test packet,
+`PROBLEM_EVIDENCE_CAPSULE.md`, accepted RCA, current Candidate packet and Test Plan,
 Controller-formed Evidence Context, converged `SELECTED_PRINCIPLE.yaml`, and
 final proposal. The Contract must not embed a second capsule; the independent
 capsule is the sole formal compact evidence handoff. Do not paste the full
@@ -58,8 +60,9 @@ requires post-read assessment.
 
 No Candidate Principle may be formed before `human_accepted` appears in the
 problem contract and the Controller has accepted a `DIAGNOSIS_READY` root-cause
-verdict bound to the current contract, capsule, and 1a–2b analysis. No test may
-run before Human approval; `/method-test` only executes that approved
+verdict bound to the current contract, capsule, and 1a–2b analysis. No Test Plan
+may be formed before Human Candidate selection, and no test may run before the
+second Human approval; `/method-test` only executes that approved
 discriminating-test set and never interprets Evidence or convergence.
 Method adaptation starts only from the Controller-materialized Selected
 Principle. Preliminary novelty is advisory; final method novelty requires

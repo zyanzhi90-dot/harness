@@ -24,7 +24,10 @@ accepted Problem and RCA
   -> Required Capabilities and Design Obligations
   -> Principle Search
   -> Candidate Principles
-  -> fatal assumptions and discriminating predictions/tests
+  -> independent Candidate packet review
+  -> Human Candidate selection
+  -> selected-Candidate minimum-sufficient test design
+  -> independent test-plan review
   -> Human-approved atomic execution set
   -> approved test execution
   -> Controller-formed Principle Evidence Context
@@ -32,8 +35,11 @@ accepted Problem and RCA
   -> Controller-materialized Selected Principle
 ```
 
-The Human test Gate approves execution scope and total cost. It does not select
-a Principle, interpret Evidence, or declare convergence. Before convergence,
+The first Human Gate selects, requests modification of, combines, or rejects
+reviewed Candidates. Acceptance creates only a `selected_for_testing` binding;
+it does not scientifically support or converge the Candidate and does not create
+`SELECTED_PRINCIPLE.yaml`. The second Human Gate approves execution scope and
+total cost. It does not select a Principle, interpret Evidence, or declare convergence. Before convergence,
 any concrete realization is test-only operationalization; it is not a Candidate
 Method, implementation backbone, final composition, or future Method
 commitment.
@@ -61,9 +67,13 @@ must not merely change the current phase and regenerate the same packet.
 Directed feedback has these scientific meanings:
 
 - `REVISE_PRINCIPLES`: repair the semantic reviewer's identified Principle,
-  mapping, assumption, prediction, test, Evidence, or closure defect;
-- Human `request_revision`: change the execution set/test operationalization or
-  cost issue identified by the Human and issue the revised packet;
+  mapping, assumption, prediction, Evidence, or closure defect;
+- Human Candidate `request_revision`, `combine`, or `reject`: consume the exact
+  feedback, preferentially reuse current Evidence/search/history, and modify,
+  combine, replace, or redesign Candidates; conduct incremental literature only
+  for a real knowledge gap;
+- Human test-plan `request_revision`: change only the test set,
+  operationalization, or cost issue identified by the Human;
 - `MORE_EVIDENCE`: consume the prior Evidence Update and convergence guidance
   when designing the next discriminating cycle;
 - `RETHINK`, `RETHINK_PRINCIPLE_DELTA`, or
@@ -216,13 +226,13 @@ fatal_assumptions:
     failure_consequence:
 target_domain_operationalization:
 provisional_scientific_delta:
-predictions:
+  predictions:
   - prediction_id:
     assumption_ids: []
     predicted_observation:
     activation_conditions:
     discriminates_from_principle_ids: []
-proposed_test_ids: []
+substantive_difference:
 evidence_refs: []
 status: ACTIVE | REVISED | WEAKENED | MERGED | RETIRED | REJECTED
 status_rationale:
@@ -234,8 +244,8 @@ reason. Candidate differences must be differences in Principle, not parameters,
 backbones, or module names.
 
 For each active Candidate, state its critical unknowns and fatal assumptions,
-the smallest faithful target-domain operationalization needed to test them, and
-the observation that would distinguish it from substantive competitors. The
+target-domain operational meaning, predicted observations, primary risks, and
+substantive mechanism/Scientific-Delta differences from other Candidates. The
 packet must explain why search did not close at the first feasible Candidate.
 Candidate count is determined by substantive competition, not a quota.
 
@@ -248,14 +258,56 @@ not an established fact. Principle truth/problem-solving ability and the
 strength of its possible scientific delta are separate judgments; a weak
 provisional delta does not mechanically falsify a real Principle.
 
-## D3 — Discriminating predictions and tests
+## D3 — Candidate packet, human view, and semantic review
 
-Tests challenge competing explanations. They are not a collection of
-single-Candidate confirmation exercises. Each test contains:
+`idea-stage/METHOD_DESIGN_PACKET.json` is the machine handoff for one design
+cycle. It contains the RCA → RMC → Capability/Obligation → Principle Search →
+Candidate Principle chain, relevant history references, and current return
+feedback references. It contains no concrete test, execution set, or cost.
+
+`idea-stage/METHOD_DESIGN.md` is its deterministic human-readable view. For
+every Candidate it states in plain language the mechanism, Provisional
+Scientific Delta, primary risks, and substantive differences. It does not hide
+those decisions inside a raw JSON dump.
+
+The Controller-declared `independent_method_reviewer` judges whether Candidates
+are algorithm-independent, causally close the accepted RCA through the declared
+RMCs/Capabilities/Obligations, are substantively distinct, use real structural
+isomorphism rather than surface analogy, state fatal assumptions and predictions
+honestly, consume active return feedback, and avoid premature closure. The
+formal outcomes are:
+
+```text
+PRINCIPLE_PACKET_READY -> principle_human_selection
+REVISE_PRINCIPLES      -> method_design
+RCA_CONFLICT           -> root_cause_analysis
+```
+
+After review acceptance, the Human may `select` exactly one Candidate version,
+`request_revision`, `combine`, or `reject`. Non-acceptance requires feedback and
+returns to `method_design`; the next packet must cite and actually consume that
+return event. Selection establishes the Controller's `selected_for_testing`
+binding and advances to `principle_test_design`. It creates neither a test cycle
+nor a formal Selected Principle.
+
+## D4 — Selected-Candidate minimum-sufficient test plan
+
+`principle_test_design` reads only the active Human-selected Candidate, its
+fatal assumptions/predictions, current formal Evidence, relevant history, and
+return feedback. It designs the current minimum sufficient, highest-information
+execution set and prioritizes falsification of assumptions that could kill the
+Candidate's core mechanism or Scientific Delta. If existing data, low-cost
+analysis, or computation can decide the question, do not escalate to a large or
+physical experiment.
+
+Write `PRINCIPLE_TEST_PLAN.json`, its deterministic
+`PRINCIPLE_TEST_PLAN.md` view, and `PRINCIPLE_TEST_PLAN_REVIEW.json`. Each test
+contains:
 
 ```yaml
 test_id:
 test_type:
+evidence_tier: EXISTING_DATA_ANALYSIS | COMPUTATIONAL | TARGETED_BENCH | PHYSICAL_EXPERIMENT
 operationalization:
 test_only_concrete_realization: {}  # optional; only what the test requires
 targets:
@@ -265,27 +317,17 @@ targets:
     prediction_id:
     mechanism_change_id:
     causal_chain_id:
+information_gain:
+falsification_criterion:
 execution_requirements:
 estimated_cost:
 terminal_outcome_contract:
 ```
 
-Every active Candidate Principle/version is targeted. While more than one
-substantive Candidate remains, the test set and the recommended set include at
-least one shared test whose `targets[]` encode the Candidates' different
-predictions. A killer test may target one Candidate against a null/baseline,
-but the overall set must still discriminate the active competition.
-
-Prefer the cheapest informative or killer tests. Operationalization must be
-faithful enough that a result can bear on the targeted assumption and
-prediction. State activation conditions, confounds, invalidity conditions, raw
-outputs, execution needs, and resource cost. Do not interpret unrun tests.
-
-## D4 — Atomic execution set and canonical packet
-
-`idea-stage/METHOD_DESIGN_PACKET.json` is the machine handoff for one cycle. It
-contains exactly one `cycle_id`, one `execution_set_id`, all linked scientific
-objects above, a `recommended_execution_set`, and `estimated_total_cost`.
+The plan records fatal-assumption priority, minimum-sufficiency and information-
+gain rationales, lower-cost Evidence assessment, and the reason any physical
+experiment is unavoidable. It may contain only tests in the current recommended
+execution set:
 
 ```yaml
 recommended_execution_set:
@@ -294,55 +336,19 @@ recommended_execution_set:
   estimated_total_cost:
 ```
 
-The recommended set covers every active Candidate and preserves shared
-discrimination while remaining the smallest informative set. Approval applies
-to the complete set and total cost. Adding, removing, or changing a test
-requires `request_revision -> method_design`; there is no partial approval.
-
-Also write:
-
-- `idea-stage/METHOD_DESIGN.md` as the deterministic human-readable rendering
-  of the packet, with no independent scientific content;
-- `idea-stage/METHOD_DESIGN_REVIEW.json` as the formal reviewer verdict;
-- proposal/review history only through the existing Controller append actions
-  for `METHOD_PRINCIPLES.jsonl` and `METHOD_TEST_EVIDENCE.jsonl`.
-
-The packet must include every Controller-required `relevant_history_refs` and
-the current `return_feedback_refs`. It is phase-scoped and contains no phase
-status.
-
-After Main finishes any legal Evidence acquisition/re-adoption and writes the
-packet, invoke the Controller's `refresh-review-request`. Dispatch the reviewer
-only after that action binds the current Controller-accepted inputs and the
-final `METHOD_DESIGN_PACKET.json`. If an input or the packet changes after
-dispatch, refresh and obtain a new current review; do not review stale inputs.
-
-## D5 — Principle packet semantic review
-
-The Controller-declared `independent_method_reviewer` judges whether:
-
-- Candidates are algorithm-independent Principles rather than renamed Methods;
-- RCA → RMC → Capability/Obligation → Principle is scientifically closed;
-- active Principles are substantively different;
-- every cross-domain mapping is structural and causally supported;
-- assumptions, predictions, operationalizations, and tests are valid and
-  discriminating;
-- Provisional Scientific Delta is stated honestly;
-- search avoided premature closure.
-
-Structural validation does not replace this scientific judgment. The only
-formal outcomes are:
+The same `independent_method_reviewer` applies the separate test-plan rubric:
 
 ```text
-PRINCIPLE_PACKET_READY -> principle_test_human_approval
-REVISE_PRINCIPLES      -> method_design
-RCA_CONFLICT           -> root_cause_analysis
+TEST_PLAN_READY  -> principle_test_human_approval
+REVISE_TEST_PLAN -> principle_test_design
+RCA_CONFLICT     -> root_cause_analysis
 ```
 
-Every non-accepting verdict includes concrete return guidance. The next
-execution consumes it.
+Only an accepted test-plan review reaches the Human cost/execution Gate. Human
+approval applies atomically to that plan's complete set and total cost. A
+change returns to `principle_test_design` and preserves the selection binding.
 
-## D6 — Approved test execution boundary
+## D5 — Approved test execution boundary
 
 After Human approval and while `principle_evaluation` is pending, obtain the
 Controller-issued handoff with `method-test-handoff`. Execute only its approved
@@ -361,7 +367,7 @@ then forms `PRINCIPLE_EVIDENCE_CONTEXT.json`; Main must not create or edit it.
 ## E0 — Principle Evidence Context and currentness
 
 `PRINCIPLE_EVIDENCE_CONTEXT` is a Controller-formed, cycle-scoped pre-start
-input. It binds active Candidate versions, approved tests and their multi-target
+ input. It binds the one Human-selected Candidate version, approved tests and their target
 relations, terminal outcomes, raw result references, unresolved assumptions,
 execution metadata, historical Evidence references, and current consumable
 Evidence references.
@@ -381,15 +387,15 @@ their scientific relevance and interpretation.
 ## E1 — Evidence Update
 
 Start `principle_evaluation` only after the Controller exposes `start_phase`.
-Read the current Evidence Context, the accepted Candidate Principle/Test packet,
+Read the current Evidence Context, the accepted Candidate packet and accepted Test Plan,
 all Controller-associated cross-cycle history, and the latest return feedback.
 
-For every active Candidate Principle/version, judge:
+For the Human-selected Candidate Principle/version, judge:
 
 1. operationalization fidelity;
 2. test validity and discriminativeness;
 3. whether activation conditions held;
-4. observations relative to every targeted competing prediction;
+4. observations relative to the targeted predictions and falsification criteria;
 5. how Evidence changes assumptions, boundaries, the RCA interpretation, and
    the Candidate's scientific status;
 6. whether a causal-premise conflict requires `RCA_CONFLICT`.
@@ -400,7 +406,7 @@ or invalid results into a scientific rejection.
 
 Write `idea-stage/PRINCIPLE_EVALUATION.json` with the active cycle and execution
 set, the exact Evidence Context reference, operationalization/test-validity/
-activation assessments, prediction comparisons, an update for every active
+activation assessments, prediction comparisons, one update for the selected
 Candidate, RCA conflicts, remaining uncertainties, relevant history references,
 and current return-feedback references. Principle update decisions are:
 
@@ -426,10 +432,8 @@ independent reviewer.
    overturn the bounded Claim;
 3. operationalization fidelity, test validity, and activation conditions were
    checked;
-4. all substantive competitors are rejected, weakened, merged, or shown not to
-   affect the Claim, boundary, or future Method adaptation choice;
-5. no unresolved RCA/causal-premise conflict remains;
-6. Evidence is sufficient for Method adaptation without claiming universal
+4. no unresolved RCA/causal-premise conflict remains;
+5. Evidence is sufficient for Method adaptation without claiming universal
    proof.
 
 The convergence reviewer returns exactly one formal outcome:
@@ -437,7 +441,8 @@ The convergence reviewer returns exactly one formal outcome:
 ```text
 PRINCIPLE_CONVERGED -> method_refinement
 REVISE_EVALUATION   -> principle_evaluation
-MORE_EVIDENCE       -> method_design
+MORE_EVIDENCE       -> principle_test_design
+CANDIDATE_REJECTED  -> method_design
 RCA_CONFLICT        -> root_cause_analysis
 ```
 
@@ -448,10 +453,14 @@ from the reviewed Candidate and register its Problem/RCA/causal-chain/RMC/
 Capability/Obligation bindings, Evidence closure, activation/failure
 conditions, applicability boundaries, and remaining uncertainty.
 
-`REVISE_EVALUATION` preserves the same cycle, tests, and raw results and changes
-only interpretation or attribution; no test is rerun. `MORE_EVIDENCE` ends the
-current Evidence Context and creates a new design/test cycle that must pass the
-Human test Gate again.
+`REVISE_EVALUATION` preserves the same cycle, selection, tests, and raw results
+and changes only interpretation or attribution; no test is rerun.
+`MORE_EVIDENCE` preserves the selected Candidate, ends the current Evidence
+Context, and returns to `principle_test_design` for a new minimum test round and
+Human approval. `CANDIDATE_REJECTED` requires current Evidence rejecting the
+core mechanism or fatal assumption, records the failed version as stopped,
+invalidates the selection binding, and returns that failure Evidence to
+`method_design`. `RCA_CONFLICT` invalidates the binding and reopens RCA.
 
 ## Persistent scientific history
 

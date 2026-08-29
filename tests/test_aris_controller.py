@@ -38,6 +38,7 @@ from arisctl.validators import (
     validate_final_proposal_for_principle,
     validate_method_design_packet,
     validate_method_test_result,
+    validate_principle_test_plan,
     validate_principle_evaluation,
     validate_selected_principle,
     validate_query_plan,
@@ -158,12 +159,11 @@ def test_source_admission_policy_rejects_overlapping_citation_year_ranges() -> N
         validate_source_admission_policy(policy)
 
 
-def method_design_packet(*, cycle_id: str = "CYCLE-1", evidence_refs: list[str] | None = None) -> dict:
-    """Return one mechanically closed packet with a shared two-Principle test."""
+def method_design_packet(*, cycle_id: str = "DESIGN-1", evidence_refs: list[str] | None = None) -> dict:
+    """Return one mechanically closed Candidate-Principle packet without tests."""
 
     evidence_refs = list(evidence_refs or [])
     principles = []
-    targets = []
     for suffix in ("A", "B"):
         principle_id = f"PR-{suffix}"
         assumption_id = f"ASM-{suffix}"
@@ -191,6 +191,7 @@ def method_design_packet(*, cycle_id: str = "CYCLE-1", evidence_refs: list[str] 
                 }],
                 "target_domain_operationalization": {"observable": f"signal {suffix}"},
                 "provisional_scientific_delta": f"delta {suffix}",
+                "substantive_difference": f"mechanism {suffix} changes a distinct relation",
                 "predictions": [{
                     "prediction_id": prediction_id,
                     "assumption_ids": [assumption_id],
@@ -198,26 +199,14 @@ def method_design_packet(*, cycle_id: str = "CYCLE-1", evidence_refs: list[str] 
                     "activation_conditions": ["declared operating condition"],
                     "discriminates_from_principle_ids": [f"PR-{'B' if suffix == 'A' else 'A'}"],
                 }],
-                "proposed_test_ids": ["TEST-SHARED"],
                 "evidence_refs": evidence_refs,
                 "status": "ACTIVE",
                 "status_rationale": "awaiting discriminating Evidence",
             }
         )
-        targets.append(
-            {
-                "principle_id": principle_id,
-                "principle_version": "1",
-                "assumption_id": assumption_id,
-                "prediction_id": prediction_id,
-                "mechanism_change_id": "RMC-1",
-                "causal_chain_id": "CHAIN-1",
-            }
-        )
     return {
         "schema_version": 1,
-        "cycle_id": cycle_id,
-        "execution_set_id": f"EXEC-{cycle_id}",
+        "design_cycle_id": cycle_id,
         "problem_binding": {
             "problem_id": "P-1",
             "problem_version": 1,
@@ -272,22 +261,6 @@ def method_design_packet(*, cycle_id: str = "CYCLE-1", evidence_refs: list[str] 
             "closure_rationale": "all declared search families were recorded",
         },
         "candidate_principles": principles,
-        "discriminating_tests": [{
-            "test_id": "TEST-SHARED",
-            "test_type": "controlled_probe",
-            "operationalization": "compare both predicted observations",
-            "test_only_concrete_realization": {"probe": "bounded executable realization"},
-            "targets": targets,
-            "execution_requirements": {"budget": "one bounded run"},
-            "estimated_cost": 3,
-            "terminal_outcome_contract": ["RESULT_AVAILABLE", "NO_RESULT"],
-        }],
-        "recommended_execution_set": {
-            "execution_set_id": f"EXEC-{cycle_id}",
-            "test_ids": ["TEST-SHARED"],
-            "estimated_total_cost": 3,
-        },
-        "estimated_total_cost": 3,
         "relevant_history_refs": [],
         "return_feedback_refs": [],
     }
@@ -309,13 +282,110 @@ def validate_packet_fixture(packet: dict, *, current_evidence_ids: set[str] | No
     )
 
 
-def test_method_design_packet_closes_rmc_capability_obligation_and_multi_principle_targets() -> None:
+def principle_test_plan(
+    selected_for_testing: dict,
+    *,
+    cycle_id: str = "CYCLE-1",
+    relevant_history_refs: list[str] | None = None,
+    return_feedback_refs: list[str] | None = None,
+) -> dict:
+    binding_fields = (
+        "selection_request_id", "principle_id", "principle_version",
+        "method_design_packet", "method_design_review",
+    )
+    return {
+        "schema_version": 1,
+        "cycle_id": cycle_id,
+        "execution_set_id": f"EXEC-{cycle_id}",
+        "selected_for_testing_binding": {
+            field: deepcopy(selected_for_testing[field]) for field in binding_fields
+        },
+        "test_strategy": {
+            "fatal_assumption_priority": ["ASM-A"],
+            "minimum_sufficiency_rationale": "One existing-data probe resolves the fatal assumption.",
+            "highest_information_gain_rationale": "The outcome directly separates survival from falsification.",
+            "lower_cost_evidence_assessment": "Existing data is sufficient; no larger experiment is needed.",
+            "physical_experiment_escalation_justification": "Not escalated because existing data can decide the question.",
+        },
+        "discriminating_tests": [{
+            "test_id": "TEST-FATAL-A",
+            "test_type": "existing_data_probe",
+            "evidence_tier": "EXISTING_DATA_ANALYSIS",
+            "operationalization": "Measure the selected Candidate's predicted signal.",
+            "test_only_concrete_realization": {"probe": "bounded analysis"},
+            "targets": [{
+                "principle_id": "PR-A",
+                "principle_version": "1",
+                "assumption_id": "ASM-A",
+                "prediction_id": "PRED-A",
+                "mechanism_change_id": "RMC-1",
+                "causal_chain_id": "CHAIN-1",
+            }],
+            "information_gain": "A contrary observation falsifies the fatal assumption.",
+            "falsification_criterion": "The declared signal is absent under the activation condition.",
+            "execution_requirements": {"budget": "one bounded analysis"},
+            "estimated_cost": 1,
+            "terminal_outcome_contract": ["RESULT_AVAILABLE", "NO_RESULT"],
+        }],
+        "recommended_execution_set": {
+            "execution_set_id": f"EXEC-{cycle_id}",
+            "test_ids": ["TEST-FATAL-A"],
+            "estimated_total_cost": 1,
+        },
+        "estimated_total_cost": 1,
+        "relevant_history_refs": list(relevant_history_refs or []),
+        "return_feedback_refs": list(return_feedback_refs or []),
+    }
+
+
+def test_method_design_packet_closes_rmc_capability_obligation_and_candidate_bindings() -> None:
     validated = validate_packet_fixture(method_design_packet(evidence_refs=["E-CROSS"]), current_evidence_ids={"E-CROSS"})
     assert validated["mechanism_change_ids"] == ["RMC-1"]
     assert validated["capability_ids"] == ["CAP-1"]
     assert validated["obligation_ids"] == ["OBL-1"]
     assert validated["principle_keys"] == [("PR-A", "1"), ("PR-B", "1")]
-    assert validated["approved_test_ids"] == ["TEST-SHARED"]
+    assert validated["design_cycle_id"] == "DESIGN-1"
+    assert not any(
+        field in validated["packet"]
+        for field in ("discriminating_tests", "recommended_execution_set", "estimated_total_cost")
+    )
+    with_tests = method_design_packet()
+    with_tests["discriminating_tests"] = []
+    with pytest.raises(ValidationError, match="must not contain test design fields"):
+        validate_packet_fixture(with_tests)
+    candidate_with_tests = method_design_packet()
+    candidate_with_tests["candidate_principles"][0]["proposed_test_ids"] = ["TEST-OLD"]
+    with pytest.raises(ValidationError, match="must not contain test design fields"):
+        validate_packet_fixture(candidate_with_tests)
+
+
+def test_principle_test_plan_is_selected_candidate_only_and_atomic() -> None:
+    workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+    packet = method_design_packet()
+    selection = {
+        "selection_request_id": "selection-1",
+        "principle_id": "PR-A",
+        "principle_version": "1",
+        "method_design_packet": {"path": "idea-stage/METHOD_DESIGN_PACKET.json", "sha256": "a" * 64},
+        "method_design_review": {"path": "idea-stage/METHOD_DESIGN_REVIEW.json", "sha256": "b" * 64},
+    }
+    plan = principle_test_plan(selection)
+    validated = validate_principle_test_plan(
+        plan,
+        contract=workflow["artifact_contracts"]["principle_test_plan"],
+        selected_for_testing=selection,
+        candidate=packet["candidate_principles"][0],
+    )
+    assert validated["approved_test_ids"] == ["TEST-FATAL-A"]
+    broken = deepcopy(plan)
+    broken["discriminating_tests"][0]["targets"][0]["principle_id"] = "PR-B"
+    with pytest.raises(ValidationError, match="non-selected"):
+        validate_principle_test_plan(
+            broken,
+            contract=workflow["artifact_contracts"]["principle_test_plan"],
+            selected_for_testing=selection,
+            candidate=packet["candidate_principles"][0],
+        )
 
 
 @pytest.mark.parametrize(
@@ -323,8 +393,7 @@ def test_method_design_packet_closes_rmc_capability_obligation_and_multi_princip
     [
         (lambda packet: packet["required_capabilities"][0].update(mechanism_change_ids=["RMC-MISSING"]), "unknown mechanism change"),
         (lambda packet: packet["candidate_principles"][0].update(causal_chain_ids=["CHAIN-MISSING"]), "unresolved ID"),
-        (lambda packet: packet["discriminating_tests"][0]["targets"][0].update(prediction_id="PRED-MISSING"), "unknown assumption or prediction"),
-        (lambda packet: packet["recommended_execution_set"].update(estimated_total_cost=4), "cost"),
+        (lambda packet: packet["candidate_principles"][0].update(substantive_difference=""), "substantive_difference"),
     ],
 )
 def test_method_design_packet_rejects_broken_machine_bindings(mutation, message: str) -> None:
@@ -494,16 +563,17 @@ def test_diagnosis_ready_requires_every_root_cause_rubric_to_pass() -> None:
 
 def approve(controller: ARISController, gate: str, *, selected_id: str | None = None) -> dict:
     request = controller.validate_human_gate_request(gate)
+    decision = "select" if gate == "principle_selection" else "approve"
     approvals.issue_ui_approval_receipt(
         controller.root,
         controller.run_id,
         gate,
         request["id"],
-        "approve",
+        decision,
         selected_id=selected_id,
         artifact_bindings=request["artifact_bindings"],
     )
-    return controller.human_approve(gate, "approve", selected_id=selected_id)
+    return controller.human_approve(gate, decision, selected_id=selected_id)
 
 
 def request_human_gate_revision(
@@ -515,7 +585,9 @@ def request_human_gate_revision(
 ) -> dict:
     if gate == "problem_acceptance" and selected_id is None:
         selected_id = "P-1"
-    feedback = human_feedback if gate == "problem_acceptance" else None
+    feedback = human_feedback if gate in {
+        "problem_acceptance", "principle_selection", "principle_test_approval"
+    } else None
     request = controller.validate_human_gate_decision(
         gate, "request_revision", selected_id=selected_id, human_feedback=feedback
     )
@@ -1286,6 +1358,8 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "root_cause_analysis": "done",
         "root_cause_gate": "accepted",
         "method_design": "accepted",
+        "principle_human_selection": "human_accepted",
+        "principle_test_design": "accepted",
         "principle_test_human_approval": "human_accepted",
         "principle_evaluation": "accepted",
         "method_refinement": "accepted",
@@ -1640,7 +1714,7 @@ def controller_at_method_design(root: Path) -> ARISController:
     return controller
 
 
-def bound_method_design_packet(controller: ARISController, *, cycle_id: str = "CYCLE-1") -> dict:
+def bound_method_design_packet(controller: ARISController, *, cycle_id: str = "DESIGN-1") -> dict:
     packet = method_design_packet(cycle_id=cycle_id)
     active = controller.status()["scientific_core"]["active_problem_version"]
     packet["problem_binding"] = {
@@ -1673,6 +1747,7 @@ def json_review_payload(
     request = phase["review_request"]
     main_path = {
         "method_design": "idea-stage/METHOD_DESIGN_PACKET.json",
+        "principle_test_design": "idea-stage/PRINCIPLE_TEST_PLAN.json",
         "principle_evaluation": "idea-stage/PRINCIPLE_EVALUATION.json",
     }[phase["phase"]]
     payload = {
@@ -1688,7 +1763,9 @@ def json_review_payload(
             "sha256": request["artifact_bindings"][main_path],
         },
         "findings": [{"finding_id": "F-1", "summary": "mechanical review finding"}],
-        "return_guidance": None if decision in {"PRINCIPLE_PACKET_READY", "PRINCIPLE_CONVERGED"} else {
+        "return_guidance": None if decision in {
+            "PRINCIPLE_PACKET_READY", "TEST_PLAN_READY", "PRINCIPLE_CONVERGED"
+        } else {
             "missing_evidence": ["A declared uncertainty remains unresolved."],
             "decision_target": "Revise the declared scientific artifact.",
             "required_check": ["Consume this formal feedback."],
@@ -1703,7 +1780,7 @@ def write_and_complete_method_design(
     controller: ARISController,
     *,
     decision: str = "PRINCIPLE_PACKET_READY",
-    cycle_id: str = "CYCLE-1",
+    cycle_id: str = "DESIGN-1",
     verdict_id: str = "method-review-1",
 ) -> dict:
     controller.start_current_phase()
@@ -1720,6 +1797,71 @@ def write_and_complete_method_design(
     controller.complete_current_phase()
     attest_current_review(controller, verdict_id, "claude-sonnet-4", decision=decision)
     return packet
+
+
+def select_candidate_for_testing(
+    controller: ARISController, *, selected_id: str = "PR-A@1"
+) -> dict:
+    selected = approve(controller, "principle_selection", selected_id=selected_id)
+    assert selected["scientific_core"]["method_test_cycle"] is None
+    assert not (controller.root / "idea-stage" / "SELECTED_PRINCIPLE.yaml").exists()
+    return selected
+
+
+def write_and_complete_principle_test_design(
+    controller: ARISController,
+    *,
+    decision: str = "TEST_PLAN_READY",
+    cycle_id: str = "CYCLE-1",
+    verdict_id: str = "test-plan-review-1",
+) -> dict:
+    controller.start_current_phase()
+    state = controller.status()
+    packet = json.loads(
+        (controller.root / "idea-stage" / "METHOD_DESIGN_PACKET.json").read_text(encoding="utf-8")
+    )
+    history_refs = sorted(
+        run_state._relevant_scientific_history_refs(str(controller.root), state, packet)
+    )
+    feedback_ref = run_state._latest_return_feedback_ref(state, "principle_test_design")
+    plan = principle_test_plan(
+        state["scientific_core"]["selected_for_testing"],
+        cycle_id=cycle_id,
+        relevant_history_refs=history_refs,
+        return_feedback_refs=[feedback_ref] if feedback_ref else [],
+    )
+    path = controller.root / "idea-stage" / "PRINCIPLE_TEST_PLAN.json"
+    path.write_text(json.dumps(plan), encoding="utf-8")
+    request = controller.refresh_current_review_request()
+    assert request["artifact_bindings"]["idea-stage/PRINCIPLE_TEST_PLAN.json"] == sha256_file(path)
+    verdict = json_review_payload(controller, decision=decision, verdict_id=verdict_id)
+    (controller.root / "idea-stage" / "PRINCIPLE_TEST_PLAN_REVIEW.json").write_text(
+        json.dumps(verdict), encoding="utf-8"
+    )
+    controller.complete_current_phase()
+    attest_current_review(controller, verdict_id, "claude-sonnet-4", decision=decision)
+    return plan
+
+
+def reach_principle_test_human_approval(
+    controller: ARISController,
+    *,
+    cycle_id: str = "CYCLE-1",
+    test_plan_verdict_id: str = "test-plan-review-1",
+) -> dict:
+    write_and_complete_method_design(controller)
+    accept_current_scientific_gate_from_validated_prefix_fixture(
+        controller, verdict_id="method-review-1"
+    )
+    select_candidate_for_testing(controller)
+    plan = write_and_complete_principle_test_design(
+        controller, cycle_id=cycle_id, verdict_id=test_plan_verdict_id
+    )
+    accept_current_scientific_gate_from_validated_prefix_fixture(
+        controller, verdict_id=test_plan_verdict_id
+    )
+    assert controller.current_stage() == "PRINCIPLE_TEST_HUMAN_APPROVAL"
+    return plan
 
 
 def accept_current_scientific_gate_from_validated_prefix_fixture(
@@ -1783,18 +1925,15 @@ def principle_evaluation_payload(controller: ARISController) -> dict:
         "operationalization_assessments": ["operationalization held"],
         "test_validity_assessments": ["test valid"],
         "activation_condition_assessments": ["condition active"],
-        "prediction_comparisons": ["PR-A matched more closely"],
-        "principle_updates": [
-            {
-                "principle_id": principle_id,
-                "principle_version": "1",
-                "evidence_refs": [evidence_path],
-                "decision": "SUPPORTED" if principle_id == "PR-A" else "WEAKENED",
-                "rationale": "bound result updates this Principle",
-                "updated_boundary_or_assumption_refs": [f"ASM-{principle_id[-1]}"],
-            }
-            for principle_id in ("PR-A", "PR-B")
-        ],
+        "prediction_comparisons": ["PR-A prediction was tested against the falsification criterion"],
+        "principle_updates": [{
+            "principle_id": "PR-A",
+            "principle_version": "1",
+            "evidence_refs": [evidence_path],
+            "decision": "SUPPORTED",
+            "rationale": "bound result updates the Human-selected Candidate",
+            "updated_boundary_or_assumption_refs": ["ASM-A"],
+        }],
         "rca_conflicts": [],
         "remaining_uncertainties": ["external validity"],
         "relevant_history_refs": sorted(
@@ -1815,6 +1954,11 @@ def write_and_complete_principle_evaluation(
 ) -> tuple[dict, dict]:
     controller.start_current_phase()
     evaluation = principle_evaluation_payload(controller)
+    if decision == "CANDIDATE_REJECTED":
+        evaluation["principle_updates"][0]["decision"] = "REJECTED"
+        evaluation["principle_updates"][0]["rationale"] = (
+            "Current Evidence falsifies the selected Candidate's fatal assumption."
+        )
     evaluation_path = controller.root / "idea-stage" / "PRINCIPLE_EVALUATION.json"
     evaluation_path.write_text(json.dumps(evaluation), encoding="utf-8")
     request = controller.refresh_current_review_request()
@@ -5204,7 +5348,81 @@ def test_method_design_completion_registers_validated_snapshot_for_human_gate(
         )
     }
     controller.accept_current_phase("method-review-1", "claude-sonnet-4")
-    assert controller.current_stage() == "PRINCIPLE_TEST_HUMAN_APPROVAL"
+    assert controller.current_stage() == "PRINCIPLE_HUMAN_SELECTION"
+    assert controller.status()["scientific_core"]["method_test_cycle"] is None
+    assert not (tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml").exists()
+
+
+def test_human_candidate_selection_binds_one_version_without_test_cycle_or_convergence(
+    tmp_path: Path,
+) -> None:
+    controller = controller_at_method_design(tmp_path)
+    write_and_complete_method_design(controller)
+    accept_current_scientific_gate_from_validated_prefix_fixture(
+        controller, verdict_id="method-review-1"
+    )
+    with pytest.raises(ControllerError, match="resolve exactly one"):
+        controller.validate_human_gate_decision(
+            "principle_selection", "select", selected_id="PR-MISSING@1"
+        )
+    selected = select_candidate_for_testing(controller)
+    binding = selected["scientific_core"]["selected_for_testing"]
+    assert binding["binding_type"] == "selected_for_testing"
+    assert (binding["principle_id"], binding["principle_version"]) == ("PR-A", "1")
+    assert selected["scientific_core"]["current_phase"] == "principle_test_design"
+    assert selected["scientific_core"]["method_test_cycle"] is None
+    assert not (tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml").exists()
+
+
+@pytest.mark.parametrize("decision", ["request_revision", "combine", "reject"])
+def test_human_candidate_revision_paths_return_feedback_to_method_design(
+    tmp_path: Path, decision: str
+) -> None:
+    controller = controller_at_method_design(tmp_path)
+    write_and_complete_method_design(controller)
+    accept_current_scientific_gate_from_validated_prefix_fixture(
+        controller, verdict_id="method-review-1"
+    )
+    feedback = f"{decision}: revise or combine the Candidate mechanisms using current Evidence."
+    request = controller.validate_human_gate_decision(
+        "principle_selection", decision, human_feedback=feedback
+    )
+    approvals.issue_ui_approval_receipt(
+        controller.root,
+        controller.run_id,
+        "principle_selection",
+        request["id"],
+        decision,
+        human_feedback=feedback,
+        artifact_bindings=request["artifact_bindings"],
+    )
+    returned = controller.human_approve(
+        "principle_selection", decision, human_feedback=feedback
+    )
+    event = returned["scientific_core"]["return_history"][-1]
+    assert returned["scientific_core"]["current_phase"] == "method_design"
+    assert returned["scientific_core"]["selected_for_testing"] is None
+    assert event["human_feedback"] == feedback
+    revised = write_and_complete_method_design(
+        controller, cycle_id="DESIGN-2", verdict_id=f"method-review-{decision}"
+    )
+    assert event["id"] in revised["return_feedback_refs"]
+
+
+def test_principle_test_design_fails_closed_without_human_selection(tmp_path: Path) -> None:
+    controller = controller_at_method_design(tmp_path)
+    write_and_complete_method_design(controller)
+    accept_current_scientific_gate_from_validated_prefix_fixture(
+        controller, verdict_id="method-review-1"
+    )
+    with controller._store.mutate() as state:
+        selection_phase = run_state._find_phase(state, "principle_human_selection")
+        selection_phase["status"] = "human_accepted"
+        state["scientific_core"]["current_phase"] = "principle_test_design"
+        state["scientific_core"]["approval_request"] = None
+        state["scientific_core"]["selected_for_testing"] = None
+    with pytest.raises(ControllerError, match="Human-selected Candidate"):
+        controller.start_current_phase()
 
 
 def test_method_test_window_is_human_gated_atomic_and_terminal_outcomes_form_context(
@@ -5213,24 +5431,20 @@ def test_method_test_window_is_human_gated_atomic_and_terminal_outcomes_form_con
     controller = controller_at_method_design(tmp_path)
     with pytest.raises(ControllerError, match="pending principle_evaluation"):
         controller.method_test_handoff()
-    packet = write_and_complete_method_design(controller)
-    accept_current_scientific_gate_from_validated_prefix_fixture(
-        controller, verdict_id="method-review-1"
-    )
-    assert controller.current_stage() == "PRINCIPLE_TEST_HUMAN_APPROVAL"
+    plan = reach_principle_test_human_approval(controller)
     assert not (tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml").exists()
     with pytest.raises(ControllerError, match="pending principle_evaluation"):
         controller.method_test_handoff()
 
     approve(controller, "principle_test_approval")
     cycle = controller.status()["scientific_core"]["method_test_cycle"]
-    assert cycle["approved_test_ids"] == packet["recommended_execution_set"]["test_ids"]
-    assert cycle["execution_set_id"] == packet["execution_set_id"]
-    assert cycle["estimated_total_cost"] == packet["estimated_total_cost"]
+    assert cycle["approved_test_ids"] == plan["recommended_execution_set"]["test_ids"]
+    assert cycle["execution_set_id"] == plan["execution_set_id"]
+    assert cycle["estimated_total_cost"] == plan["estimated_total_cost"]
     handoff = controller.method_test_handoff()
-    assert handoff["approved_test_ids"] == ["TEST-SHARED"]
+    assert handoff["approved_test_ids"] == ["TEST-FATAL-A"]
     assert handoff["tests"][0]["test_only_concrete_realization"] == {
-        "probe": "bounded executable realization"
+        "probe": "bounded analysis"
     }
     assert not (tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml").exists()
 
@@ -5239,7 +5453,7 @@ def test_method_test_window_is_human_gated_atomic_and_terminal_outcomes_form_con
     with pytest.raises(ControllerError, match="not in the approved execution set"):
         controller.submit_method_test_result(outside)
     assert set(controller.status()["scientific_core"]["method_test_cycle"]["terminal_outcomes"]) != {
-        "TEST-SHARED"
+        "TEST-FATAL-A"
     }
     assert "start_phase" not in controller.allowed_actions()
     with pytest.raises(ControllerError, match="missing required input|all approved tests must be terminal"):
@@ -5252,13 +5466,12 @@ def test_method_test_window_is_human_gated_atomic_and_terminal_outcomes_form_con
         (tmp_path / "idea-stage" / "PRINCIPLE_EVIDENCE_CONTEXT.json").read_text(encoding="utf-8")
     )
     assert context["terminal_outcomes"] == [
-        {"test_id": "TEST-SHARED", "outcome": "NO_RESULT", "reason": "unavailable"}
+        {"test_id": "TEST-FATAL-A", "outcome": "NO_RESULT", "reason": "unavailable"}
     ]
     assert context["active_principles"] == [
         {"principle_id": "PR-A", "principle_version": "1"},
-        {"principle_id": "PR-B", "principle_version": "1"},
     ]
-    assert len(context["test_targets"]) == 2
+    assert len(context["test_targets"]) == 1
     assert "decision" not in context["terminal_outcomes"][0]
     controller.start_current_phase()
 
@@ -5267,21 +5480,21 @@ def test_human_revision_replaces_the_atomic_execution_set_before_any_test(
     tmp_path: Path,
 ) -> None:
     controller = controller_at_method_design(tmp_path)
-    write_and_complete_method_design(controller)
-    accept_current_scientific_gate_from_validated_prefix_fixture(
-        controller, verdict_id="method-review-1"
-    )
+    reach_principle_test_human_approval(controller)
+    selection_before = deepcopy(controller.status()["scientific_core"]["selected_for_testing"])
     request_human_gate_revision(controller, "principle_test_approval")
     state = controller.status()
-    assert state["scientific_core"]["current_phase"] == "method_design"
+    assert state["scientific_core"]["current_phase"] == "principle_test_design"
     assert state["scientific_core"]["method_test_cycle"] is None
+    assert state["scientific_core"]["selected_for_testing"] == selection_before
     assert not (tmp_path / "idea-stage" / "PRINCIPLE_EVIDENCE_CONTEXT.json").exists()
 
-    write_and_complete_method_design(
-        controller, cycle_id="CYCLE-2", verdict_id="method-review-2"
+    plan = write_and_complete_principle_test_design(
+        controller, cycle_id="CYCLE-2", verdict_id="test-plan-review-2"
     )
+    assert state["scientific_core"]["return_history"][-1]["id"] in plan["return_feedback_refs"]
     accept_current_scientific_gate_from_validated_prefix_fixture(
-        controller, verdict_id="method-review-2"
+        controller, verdict_id="test-plan-review-2"
     )
     approve(controller, "principle_test_approval")
     cycle = controller.status()["scientific_core"]["method_test_cycle"]
@@ -5309,10 +5522,7 @@ def test_revise_evaluation_reuses_cycle_results_and_equivalent_context_without_r
     tmp_path: Path,
 ) -> None:
     controller = controller_at_method_design(tmp_path)
-    write_and_complete_method_design(controller)
-    accept_current_scientific_gate_from_validated_prefix_fixture(
-        controller, verdict_id="method-review-1"
-    )
+    reach_principle_test_human_approval(controller)
     approve(controller, "principle_test_approval")
     controller.method_test_handoff()
     controller.submit_method_test_result(terminal_result(controller))
@@ -5364,10 +5574,7 @@ def test_accepted_convergence_initializes_acceptance_artifacts_and_materializes_
     tmp_path: Path,
 ) -> None:
     controller = controller_at_method_design(tmp_path)
-    write_and_complete_method_design(controller)
-    accept_current_scientific_gate_from_validated_prefix_fixture(
-        controller, verdict_id="method-review-1"
-    )
+    reach_principle_test_human_approval(controller)
     approve(controller, "principle_test_approval")
     controller.method_test_handoff()
     controller.submit_method_test_result(terminal_result(controller))
@@ -5387,10 +5594,7 @@ def test_principle_convergence_requires_one_selected_principle_id_and_version(
     tmp_path: Path,
 ) -> None:
     controller = controller_at_method_design(tmp_path)
-    write_and_complete_method_design(controller)
-    accept_current_scientific_gate_from_validated_prefix_fixture(
-        controller, verdict_id="method-review-1"
-    )
+    reach_principle_test_human_approval(controller)
     approve(controller, "principle_test_approval")
     controller.method_test_handoff()
     controller.submit_method_test_result(terminal_result(controller))
@@ -5412,7 +5616,8 @@ def test_principle_convergence_requires_one_selected_principle_id_and_version(
 @pytest.mark.parametrize(
     ("decision", "target"),
     [
-        ("MORE_EVIDENCE", "method_design"),
+        ("MORE_EVIDENCE", "principle_test_design"),
+        ("CANDIDATE_REJECTED", "method_design"),
         ("RCA_CONFLICT", "root_cause_analysis"),
     ],
 )
@@ -5420,10 +5625,7 @@ def test_evaluation_returns_deactivate_context_preserve_ledgers_and_bind_feedbac
     tmp_path: Path, decision: str, target: str
 ) -> None:
     controller = controller_at_method_design(tmp_path)
-    write_and_complete_method_design(controller)
-    accept_current_scientific_gate_from_validated_prefix_fixture(
-        controller, verdict_id="method-review-1"
-    )
+    reach_principle_test_human_approval(controller)
     approve(controller, "principle_test_approval")
     controller.method_test_handoff()
     controller.submit_method_test_result(terminal_result(controller))
@@ -5445,17 +5647,23 @@ def test_evaluation_returns_deactivate_context_preserve_ledgers_and_bind_feedbac
     if decision == "MORE_EVIDENCE":
         assert core["method_test_cycle"] is None
         assert core["last_method_test_cycle_id"] == "CYCLE-1"
-        packet = write_and_complete_method_design(
-            controller, cycle_id="CYCLE-2", verdict_id="method-review-2"
+        plan = write_and_complete_principle_test_design(
+            controller, cycle_id="CYCLE-2", verdict_id="test-plan-review-2"
         )
-        assert event["id"] in packet["return_feedback_refs"]
-        assert packet["relevant_history_refs"]
+        assert event["id"] in plan["return_feedback_refs"]
+        assert plan["relevant_history_refs"]
         accept_current_scientific_gate_from_validated_prefix_fixture(
-            controller, verdict_id="method-review-2"
+            controller, verdict_id="test-plan-review-2"
         )
         assert controller.current_stage() == "PRINCIPLE_TEST_HUMAN_APPROVAL"
         approve(controller, "principle_test_approval")
         assert controller.status()["scientific_core"]["method_test_cycle"]["cycle_id"] == "CYCLE-2"
+        assert controller.status()["scientific_core"]["selected_for_testing"]["status"] == "ACTIVE"
+    else:
+        assert core["selected_for_testing"] is None
+    if decision == "CANDIDATE_REJECTED":
+        history = (tmp_path / "idea-stage" / "METHOD_PRINCIPLES.jsonl").read_text(encoding="utf-8")
+        assert '"event_type": "REJECTED"' in history
 
 
 def test_validation_handoff_rejects_prompt_or_legacy_files_without_formal_route(
@@ -5752,7 +5960,15 @@ def test_compatible_migration_allows_new_identity_and_unexecuted_suffix_mapping(
     controller = start_controller(tmp_path)
     state = run_state._load(tmp_path, controller.run_id)
     state["workflow_sha256"] = "1" * 64
-    state["workflow"]["workflow_id"] = "idea-discovery-v2"
+    state["workflow"]["workflow_id"] = "idea-discovery-v3"
+    for phase_name in ("principle_human_selection", "principle_test_design"):
+        state["workflow"]["scientific_core"]["phases"].remove(phase_name)
+        state["workflow"]["phases"] = [
+            spec for spec in state["workflow"]["phases"] if spec["phase"] != phase_name
+        ]
+        state["phases"] = [
+            phase for phase in state["phases"] if phase["phase"] != phase_name
+        ]
     state["workflow"]["artifact_manifest"]["method_design_packet"] = (
         "idea-stage/LEGACY_PENDING_METHOD_PACKET.json"
     )
@@ -5765,6 +5981,17 @@ def test_compatible_migration_allows_new_identity_and_unexecuted_suffix_mapping(
     assert restored["workflow"]["artifact_manifest"]["method_design_packet"] == (
         controller.workflow["artifact_manifest"]["method_design_packet"]
     )
+    assert restored["workflow"]["workflow_id"] == "idea-discovery-v4"
+    assert restored["scientific_core"]["selected_for_testing"] is None
+    phase_names = [phase["phase"] for phase in restored["phases"]]
+    method_index = phase_names.index("method_design")
+    assert phase_names[method_index : method_index + 5] == [
+        "method_design",
+        "principle_human_selection",
+        "principle_test_design",
+        "principle_test_human_approval",
+        "principle_evaluation",
+    ]
 
 
 def test_compatible_workflow_migration_rejects_changed_literature_protocol(tmp_path: Path) -> None:
@@ -6302,6 +6529,19 @@ def test_codex_configuration_registers_all_declared_subagents_and_ui_prompt_rule
         ]
     )
     assert human_revision.decision == "request_revision"
+    human_selection = build_parser().parse_args(
+        [
+            "human-approve",
+            "run-1",
+            "principle_selection",
+            "--decision",
+            "combine",
+            "--human-feedback",
+            "Combine PR-A and PR-B around the shared invariant.",
+        ]
+    )
+    assert human_selection.gate == "principle_selection"
+    assert human_selection.decision == "combine"
     assert build_parser().parse_args(["start-phase", "run-1"]).command == "start-phase"
     accepted = build_parser().parse_args(
         [

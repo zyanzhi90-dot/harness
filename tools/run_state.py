@@ -684,7 +684,9 @@ def _relevant_scientific_history_events(root: str, state: dict, packet: dict) ->
     context_ids.update((packet.get("root_cause_binding") or {}).get("causal_chain_ids") or [])
     relevant: list[dict] = []
     for event in _load_scientific_history(root, state):
-        if event.get("cycle_id") == packet.get("cycle_id"):
+        if event.get("cycle_id") in {
+            packet.get("cycle_id"), packet.get("design_cycle_id")
+        }:
             continue
         event_ids: set[str] = set()
         for field in ("principle_id", "test_id", "cycle_id", "execution_set_id"):
@@ -749,6 +751,7 @@ def _validate_method_main_artifact(
         ValidationError,
         validate_final_proposal_for_principle,
         validate_method_design_packet,
+        validate_principle_test_plan,
         validate_principle_evaluation,
     )
 
@@ -790,6 +793,34 @@ def _validate_method_main_artifact(
                 required_history_refs=_relevant_scientific_history_refs(root, state, packet),
                 required_return_ref=_latest_return_feedback_ref(state, phase),
             )
+        if phase == "principle_test_design":
+            packet, _ = _accepted_json_artifact(root, state, "method_design_packet")
+            selection = (state.get("scientific_core") or {}).get("selected_for_testing")
+            if not isinstance(selection, dict) or selection.get("status") != "ACTIVE":
+                raise ValidationError("Principle test design requires an active Human selection")
+            candidate = next(
+                (
+                    item for item in packet.get("candidate_principles") or []
+                    if str(item.get("principle_id")) == str(selection.get("principle_id"))
+                    and str(item.get("principle_version")) == str(selection.get("principle_version"))
+                    and item.get("status") in {"ACTIVE", "REVISED", "WEAKENED"}
+                ),
+                None,
+            )
+            if candidate is None:
+                raise ValidationError("active Human selection does not resolve to a reviewed Candidate")
+            plan_path = str(workflow["artifact_manifest"]["principle_test_plan"])
+            plan = json.loads(_artifact_path(root, plan_path).read_text(encoding="utf-8"))
+            return validate_principle_test_plan(
+                plan,
+                contract=contracts["principle_test_plan"],
+                selected_for_testing=selection,
+                candidate=candidate,
+                required_history_refs=_relevant_scientific_history_refs(
+                    root, state, {**packet, "cycle_id": plan["cycle_id"]}
+                ),
+                required_return_ref=_latest_return_feedback_ref(state, phase),
+            )
         if phase == "principle_evaluation":
             packet, _ = _accepted_json_artifact(root, state, "method_design_packet")
             evidence_context, evidence_path = _accepted_json_artifact(
@@ -809,10 +840,9 @@ def _validate_method_main_artifact(
             for item in evidence_context.get("result_refs") or []:
                 if isinstance(item, dict) and isinstance(item.get("path"), str):
                     current_refs.add(item["path"])
+            selection = (state.get("scientific_core") or {}).get("selected_for_testing") or {}
             candidate_keys = {
-                (str(item["principle_id"]), str(item["principle_version"]))
-                for item in packet.get("candidate_principles") or []
-                if isinstance(item, dict) and item.get("status") in {"ACTIVE", "REVISED", "WEAKENED"}
+                (str(selection.get("principle_id") or ""), str(selection.get("principle_version") or ""))
             }
             return {
                 "evaluation": validate_principle_evaluation(
@@ -823,7 +853,9 @@ def _validate_method_main_artifact(
                     evidence_context_ref=evidence_ref,
                     candidate_principles=candidate_keys,
                     current_evidence_refs=current_refs,
-                    required_history_refs=_relevant_scientific_history_refs(root, state, packet),
+                    required_history_refs=_relevant_scientific_history_refs(
+                        root, state, {**packet, "cycle_id": cycle.get("cycle_id")}
+                    ),
                     required_return_ref=_latest_return_feedback_ref(state, phase),
                 )
             }
@@ -858,12 +890,13 @@ def _validate_principle_method_outputs(
     *,
     current_phase_evidence_ids: set[str] | None = None,
 ) -> dict | None:
-    if phase not in {"method_design", "principle_evaluation", "method_refinement"}:
+    if phase not in {"method_design", "principle_test_design", "principle_evaluation", "method_refinement"}:
         return None
     from arisctl.validators import (
         ValidationError,
         validate_json_review_verdict_artifact,
         validate_method_design_view,
+        validate_principle_test_plan_view,
     )
 
     main = _validate_method_main_artifact(
@@ -891,6 +924,24 @@ def _validate_principle_method_outputs(
                 artifact_bindings=request["artifact_bindings"],
                 decisions=set(request["allowed_review_verdicts"]),
                 reviewed_artifact_path=str(workflow["artifact_manifest"]["method_design_packet"]),
+            )
+            result.update(
+                design_cycle_id=main["design_cycle_id"],
+            )
+        elif phase == "principle_test_design":
+            plan = main["plan"]
+            view_path = str(workflow["artifact_manifest"]["principle_test_plan_view"])
+            validate_principle_test_plan_view(
+                _artifact_path(root, view_path).read_text(encoding="utf-8"), plan
+            )
+            verdict_path = str(workflow["artifact_manifest"]["principle_test_plan_review"])
+            verdict = validate_json_review_verdict_artifact(
+                json.loads(_artifact_path(root, verdict_path).read_text(encoding="utf-8")),
+                label="Principle test plan review",
+                request_id=request["id"],
+                artifact_bindings=request["artifact_bindings"],
+                decisions=set(request["allowed_review_verdicts"]),
+                reviewed_artifact_path=str(workflow["artifact_manifest"]["principle_test_plan"]),
             )
             result.update(
                 cycle_id=main["cycle_id"],

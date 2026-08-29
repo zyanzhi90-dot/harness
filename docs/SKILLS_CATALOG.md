@@ -26,7 +26,7 @@ not one automatic chain from a research direction to a paper.
 | Skill | Role | Requires |
 |---|---|---|
 | [`/research-pipeline`](../skills/research-pipeline/SKILL.md) | **Canonical validation continuation** — input is a canonical run ID; user-initiated after `METHOD_CONFIRMED_AWAITING_USER_VALIDATION` to bind planning, execution, and result interpretation | Controller state, GPU |
-| [`/idea-discovery`](../skills/idea-discovery/SKILL.md) | **Canonical problem-first discovery** — field map → problem Gates → accepted RCA → Principle formation → Human-approved discriminating tests → Evidence-driven Principle convergence → Method refinement/final Gates; stops before Full Validation | Codex MCP |
+| [`/idea-discovery`](../skills/idea-discovery/SKILL.md) | **Canonical problem-first discovery** — field map → problem Gates → accepted RCA → Candidate formation/review → Human Candidate selection → selected-Candidate Test Plan/review → Human-approved execution → Evidence-driven Principle convergence → Method refinement/final Gates; stops before Full Validation | Codex MCP |
 | [`/experiment-bridge`](../skills/experiment-bridge/SKILL.md) | **Experiment implementation** — execute a bound formal plan after validation handoff, or an explicitly non-canonical ad-hoc plan | GPU (local / remote / Vast / Modal) |
 | [`/auto-review-loop`](../skills/auto-review-loop/SKILL.md) | **Workflow 2** — autonomous review → fix → re-review until positive or max rounds; uses Codex MCP reviewer | Codex MCP |
 | [`/auto-review-loop-llm`](../skills/auto-review-loop-llm/SKILL.md) | Same as Workflow 2 but uses any OpenAI-compatible LLM via [`llm-chat`](../mcp-servers/llm-chat/) MCP server | llm-chat MCP |
@@ -65,7 +65,7 @@ Generating, refining, planning research ideas before implementation.
 
 | Skill | Role | Requires |
 |---|---|---|
-| [`/idea-creator`](../skills/idea-creator/SKILL.md) | Run the Controller-assigned scientific module: certify a problem, perform RCA, form/review Candidate Principles and tests, or evaluate Evidence toward Principle convergence | Codex MCP |
+| [`/idea-creator`](../skills/idea-creator/SKILL.md) | Run the Controller-assigned scientific module: certify a problem, perform RCA, form/review Candidate Principles, design/review the selected Candidate's minimum Test Plan, or evaluate Evidence toward Principle convergence | Codex MCP |
 | [`/research-refine`](../skills/research-refine/SKILL.md) | Selected Principle → target adaptation → minimal faithful realization/composition → bounded Final Scientific Delta Claim → fresh final review | Codex MCP |
 | [`/experiment-plan`](../skills/experiment-plan/SKILL.md) | Turn a Controller validation handoff or explicit ad-hoc proposal into a claim-driven experiment roadmap — ablations, budgets, run order | None |
 | [`/ablation-planner`](../skills/ablation-planner/SKILL.md) | Design ablation studies from a reviewer's perspective (after main results pass `/result-to-claim`) | Codex MCP |

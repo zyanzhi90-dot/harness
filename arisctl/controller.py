@@ -46,6 +46,7 @@ from .validators import (
     validate_selected_principle,
     render_field_map,
     render_method_design_view,
+    render_principle_test_plan_view,
     sha256_file,
     validate_canonical_registry,
     validate_coverage_review,
@@ -346,6 +347,7 @@ class ARISController:
                 "active_problem_version": None,
                 "pending_problem_revision": None,
                 "problem_revision_request": None,
+                "selected_for_testing": None,
                 "method_test_cycle": None,
                 "validation_entry": {
                     "status": "BLOCKED_UNTIL_METHOD_CONFIRMATION",
@@ -713,7 +715,21 @@ class ARISController:
             state.setdefault("workflow_migrations", []).append(record)
             state["workflow"] = deepcopy(self.workflow)
             state["workflow_sha256"] = self.workflow_sha256
-            state["scientific_core"]["current_phase"] = "method_design"
+            core = state["scientific_core"]
+            core.setdefault("selected_for_testing", None)
+            if core.get("status") == "ACTIVE":
+                core_phase_names = set(self.workflow["scientific_core"]["phases"])
+                current = next(
+                    (
+                        item["phase"] for item in state["phases"]
+                        if item["phase"] in core_phase_names
+                        and item.get("status") not in set(self.workflow["terminal_statuses"])
+                    ),
+                    None,
+                )
+                core["current_phase"] = current
+            elif core.get("status") == "NOT_STARTED":
+                core["current_phase"] = None
             run_state._save(str(self.root), self.run_id, state)
             return {
                 "migration": record,
@@ -2666,6 +2682,8 @@ class ARISController:
                     )
         if phase_name in {
             "method_design",
+            "principle_human_selection",
+            "principle_test_design",
             "principle_test_human_approval",
             "principle_evaluation",
             "method_refinement",
@@ -2673,6 +2691,12 @@ class ARISController:
             "final_method_human_acceptance",
         }:
             self._assert_active_problem_version_current(state)
+        if phase_name in {
+            "principle_test_design",
+            "principle_test_human_approval",
+            "principle_evaluation",
+        }:
+            self._selected_for_testing_candidate(state)
 
     def _assert_active_problem_version_current(self, state: dict) -> dict[str, Any]:
         """Verify that downstream method work consumes the accepted problem version."""
@@ -3124,6 +3148,121 @@ class ARISController:
             raise ControllerError("method design packet must be a JSON object")
         return packet
 
+    def _principle_test_plan(self, state: dict[str, Any], *, accepted: bool) -> dict[str, Any]:
+        raw_path = str(self.workflow["artifact_manifest"]["principle_test_plan"])
+        path = self.root / raw_path
+        if accepted:
+            record = (state["scientific_core"].get("accepted_artifacts") or {}).get(raw_path)
+            if (
+                not isinstance(record, dict)
+                or not path.is_file()
+                or record.get("sha256") != sha256_file(path)
+            ):
+                raise ControllerError("current Principle test plan is not Controller-accepted")
+        try:
+            plan = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ControllerError("Principle test plan is not valid JSON") from exc
+        if not isinstance(plan, dict):
+            raise ControllerError("Principle test plan must be a JSON object")
+        return plan
+
+    def _selected_for_testing_candidate(
+        self, state: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        core = state["scientific_core"]
+        selection = core.get("selected_for_testing")
+        if not isinstance(selection, dict) or selection.get("status") != "ACTIVE":
+            raise ControllerError("Principle test work requires an active Human-selected Candidate")
+        packet_path = str(self.workflow["artifact_manifest"]["method_design_packet"])
+        review_path = str(self.workflow["artifact_manifest"]["method_design_review"])
+        accepted = core.get("accepted_artifacts") or {}
+        for field, raw_path in (
+            ("method_design_packet", packet_path),
+            ("method_design_review", review_path),
+        ):
+            record = accepted.get(raw_path)
+            expected = selection.get(field)
+            path = self.root / raw_path
+            if (
+                not isinstance(expected, dict)
+                or expected != {"path": raw_path, "sha256": (record or {}).get("sha256")}
+                or not isinstance(record, dict)
+                or not path.is_file()
+                or sha256_file(path) != record.get("sha256")
+            ):
+                raise ControllerError("Human-selected Candidate binding is stale")
+        packet = self._method_packet(state, accepted=True)
+        candidate = next(
+            (
+                item
+                for item in packet["candidate_principles"]
+                if str(item["principle_id"]) == str(selection.get("principle_id"))
+                and str(item["principle_version"]) == str(selection.get("principle_version"))
+                and item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+            ),
+            None,
+        )
+        if candidate is None:
+            raise ControllerError("Human-selected Candidate no longer resolves to the reviewed packet")
+        return selection, candidate
+
+    def _resolve_candidate_selection(
+        self, state: dict[str, Any], selected_id: str | None
+    ) -> dict[str, Any]:
+        if not isinstance(selected_id, str) or not selected_id.strip():
+            raise ControllerError("principle_selection requires one explicit Candidate ID/version")
+        token = selected_id.strip()
+        packet = self._method_packet(state, accepted=True)
+        eligible = [
+            item for item in packet["candidate_principles"]
+            if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+        ]
+        matches = [
+            item for item in eligible
+            if token in {
+                str(item["principle_id"]),
+                f"{item['principle_id']}@{item['principle_version']}",
+            }
+        ]
+        if len(matches) != 1:
+            raise ControllerError(
+                "principle_selection selected_id must resolve exactly one active Candidate; use principle_id@principle_version when needed"
+            )
+        return matches[0]
+
+    def _establish_selected_for_testing(
+        self,
+        state: dict[str, Any],
+        *,
+        candidate: dict[str, Any],
+        request: dict[str, Any],
+        receipt: dict[str, Any],
+    ) -> dict[str, Any]:
+        core = state["scientific_core"]
+        packet_path = str(self.workflow["artifact_manifest"]["method_design_packet"])
+        review_path = str(self.workflow["artifact_manifest"]["method_design_review"])
+        accepted = core["accepted_artifacts"]
+        binding = {
+            "status": "ACTIVE",
+            "binding_type": "selected_for_testing",
+            "selection_request_id": request["id"],
+            "principle_id": str(candidate["principle_id"]),
+            "principle_version": str(candidate["principle_version"]),
+            "method_design_packet": {
+                "path": packet_path,
+                "sha256": accepted[packet_path]["sha256"],
+            },
+            "method_design_review": {
+                "path": review_path,
+                "sha256": accepted[review_path]["sha256"],
+            },
+            "confirmed_in": receipt["confirmed_in"],
+            "selected_at": now(),
+        }
+        core["selected_for_testing"] = binding
+        return binding
+
     def _append_method_history_event(self, manifest_name: str, event: dict[str, Any]) -> None:
         path = self.root / str(self.workflow["artifact_manifest"][manifest_name])
         append_jsonl(path, event)
@@ -3133,7 +3272,6 @@ class ARISController:
         refs: set[str] = set()
         for field in (
             "mechanism_change_ids", "capability_ids", "obligation_ids", "causal_chain_ids",
-            "proposed_test_ids",
         ):
             refs.update(str(value) for value in candidate.get(field) or [])
         for item in candidate.get("fatal_assumptions") or []:
@@ -3158,7 +3296,7 @@ class ARISController:
         recorded_at = now()
         if phase_name == "method_design":
             packet = self._method_packet(state, accepted=False)
-            cycle_id = str(packet["cycle_id"])
+            cycle_id = str(packet["design_cycle_id"])
             for candidate in packet["candidate_principles"]:
                 event = {
                     "schema_version": 1,
@@ -3175,19 +3313,21 @@ class ARISController:
                     "record_refs": [{"path": reviewed[0], "sha256": digest}],
                 }
                 self._append_method_history_event("method_principles", event)
-            for test in packet["discriminating_tests"]:
+        elif phase_name == "principle_test_design":
+            plan = self._principle_test_plan(state, accepted=False)
+            for test in plan["discriminating_tests"]:
                 self._append_method_history_event(
                     "method_test_evidence",
                     {
                         "schema_version": 1,
                         "event_id": f"method-test-{uuid.uuid4().hex}",
                         "event_type": "PROPOSED",
-                        "cycle_id": cycle_id,
-                        "execution_set_id": str(packet["execution_set_id"]),
+                        "cycle_id": str(plan["cycle_id"]),
+                        "execution_set_id": str(plan["execution_set_id"]),
                         "test_id": str(test["test_id"]),
                         "targets": deepcopy(test["targets"]),
                         "record_refs": [{"path": reviewed[0], "sha256": digest}],
-                        "reason": "candidate discriminating test proposed in reviewed packet",
+                        "reason": "minimum selected-Candidate test proposed in reviewed plan",
                         "recorded_at": recorded_at,
                     },
                 )
@@ -3306,6 +3446,14 @@ class ARISController:
                 view_path.write_text(
                     render_method_design_view(main_artifact["packet"]), encoding="utf-8"
                 )
+            elif phase["phase"] == "principle_test_design":
+                view_path = self.root / str(
+                    self.workflow["artifact_manifest"]["principle_test_plan_view"]
+                )
+                view_path.parent.mkdir(parents=True, exist_ok=True)
+                view_path.write_text(
+                    render_principle_test_plan_view(main_artifact["plan"]), encoding="utf-8"
+                )
             self._record_reviewed_artifact_history(state, phase)
             expected = self._phase_review_bindings(state, str(phase["phase"]))
             request = phase.get("review_request")
@@ -3331,24 +3479,25 @@ class ARISController:
             return dict(request)
 
     def _initialize_method_test_cycle(self, state: dict[str, Any]) -> dict[str, Any]:
-        packet = self._method_packet(state, accepted=True)
-        execution = packet["recommended_execution_set"]
+        self._selected_for_testing_candidate(state)
+        plan = self._principle_test_plan(state, accepted=True)
+        execution = plan["recommended_execution_set"]
         previous_cycle_id = state["scientific_core"].get("last_method_test_cycle_id")
-        if previous_cycle_id is not None and str(packet["cycle_id"]) == str(previous_cycle_id):
-            raise ControllerError("a reopened method design must establish a new test cycle")
+        if previous_cycle_id is not None and str(plan["cycle_id"]) == str(previous_cycle_id):
+            raise ControllerError("a new Principle test design round must establish a new test cycle")
         approved_ids = list(execution["test_ids"])
         tests = {
             str(item["test_id"]): deepcopy(item)
-            for item in packet["discriminating_tests"]
+            for item in plan["discriminating_tests"]
             if item["test_id"] in set(approved_ids)
         }
         if set(tests) != set(approved_ids):
-            raise ControllerError("approved execution set cannot resolve every test from the packet")
+            raise ControllerError("approved execution set cannot resolve every test from the plan")
         cycle = {
-            "cycle_id": str(packet["cycle_id"]),
-            "execution_set_id": str(packet["execution_set_id"]),
+            "cycle_id": str(plan["cycle_id"]),
+            "execution_set_id": str(plan["execution_set_id"]),
             "approved_test_ids": approved_ids,
-            "estimated_total_cost": packet["estimated_total_cost"],
+            "estimated_total_cost": plan["estimated_total_cost"],
             "tests": tests,
             "terminal_outcomes": {},
             "handoff_issued": False,
@@ -3357,8 +3506,8 @@ class ARISController:
             "approved_at": now(),
         }
         state["scientific_core"]["method_test_cycle"] = cycle
-        packet_path = str(self.workflow["artifact_manifest"]["method_design_packet"])
-        packet_record = state["scientific_core"]["accepted_artifacts"][packet_path]
+        plan_path = str(self.workflow["artifact_manifest"]["principle_test_plan"])
+        plan_record = state["scientific_core"]["accepted_artifacts"][plan_path]
         for test_id in approved_ids:
             self._append_method_history_event(
                 "method_test_evidence",
@@ -3370,7 +3519,7 @@ class ARISController:
                     "execution_set_id": cycle["execution_set_id"],
                     "test_id": test_id,
                     "targets": deepcopy(tests[test_id]["targets"]),
-                    "record_refs": [{"path": packet_path, "sha256": packet_record["sha256"]}],
+                    "record_refs": [{"path": plan_path, "sha256": plan_record["sha256"]}],
                     "reason": "Human approved the complete atomic execution set",
                     "recorded_at": cycle["approved_at"],
                 },
@@ -3434,13 +3583,12 @@ class ARISController:
         if set(terminal) != approved:
             raise ControllerError("cannot form Evidence Context before every approved test is terminal")
         packet = self._method_packet(state, accepted=True)
+        selection, selected_candidate = self._selected_for_testing_candidate(state)
         active_principles = [
             {
-                "principle_id": str(item["principle_id"]),
-                "principle_version": str(item["principle_version"]),
+                "principle_id": str(selection["principle_id"]),
+                "principle_version": str(selection["principle_version"]),
             }
-            for item in packet["candidate_principles"]
-            if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
         ]
         targets = [
             {"test_id": test_id, **deepcopy(target)}
@@ -3466,9 +3614,7 @@ class ARISController:
         unresolved = sorted(
             {
                 assumption["assumption_id"]
-                for item in packet["candidate_principles"]
-                if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
-                for assumption in item["fatal_assumptions"]
+                for assumption in selected_candidate["fatal_assumptions"]
             }
         )
         context = {
@@ -3505,11 +3651,10 @@ class ARISController:
     ) -> dict[str, Any]:
         approved = set(cycle["approved_test_ids"])
         terminal = cycle.get("terminal_outcomes") or {}
-        packet = self._method_packet(state, accepted=True)
+        self._method_packet(state, accepted=True)
+        selection, _ = self._selected_for_testing_candidate(state)
         expected_active_principles = {
-            (str(item["principle_id"]), str(item["principle_version"]))
-            for item in packet["candidate_principles"]
-            if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+            (str(selection["principle_id"]), str(selection["principle_version"]))
         }
         expected_test_targets = [
             {"test_id": test_id, **deepcopy(target)}
@@ -3583,7 +3728,8 @@ class ARISController:
             raise ControllerError("active Evidence Context is missing or stale")
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            packet = self._method_packet(state, accepted=True)
+            self._method_packet(state, accepted=True)
+            selection, _ = self._selected_for_testing_candidate(state)
             validate_principle_evidence_context(
                 payload,
                 contract=self.workflow["artifact_contracts"]["principle_evidence_context"],
@@ -3592,9 +3738,7 @@ class ARISController:
                 approved_test_ids=approved,
                 terminal_outcomes=terminal,
                 expected_active_principles={
-                    (str(item["principle_id"]), str(item["principle_version"]))
-                    for item in packet["candidate_principles"]
-                    if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}
+                    (str(selection["principle_id"]), str(selection["principle_version"]))
                 },
                 expected_test_targets=[
                     {"test_id": test_id, **deepcopy(target)}
@@ -3692,6 +3836,12 @@ class ARISController:
         principle_version = str(phase.get("selected_principle_version") or "")
         if not principle_id or not principle_version:
             raise ControllerError("accepted convergence has no unique selected Principle ID/version")
+        selection, _ = self._selected_for_testing_candidate(state)
+        if (
+            principle_id != str(selection["principle_id"])
+            or principle_version != str(selection["principle_version"])
+        ):
+            raise ControllerError("accepted convergence must name the Human-selected Candidate version")
         packet = self._method_packet(state, accepted=True)
         candidate = next(
             (
@@ -4384,7 +4534,7 @@ class ARISController:
                         "reviewed_analysis_sha256", "review_request_id",
                         "reviewed_artifact_hashes",
                         "candidate_ids", "survivor_ids", "return_guidance",
-                        "cycle_id", "execution_set_id", "test_ids",
+                        "design_cycle_id", "cycle_id", "execution_set_id", "test_ids",
                         "selected_principle_id", "selected_principle_version",
                     ):
                         if key in validation_result:
@@ -4469,6 +4619,10 @@ class ARISController:
                 accepted_record["acceptance"] = dict(acceptance)
             if phase["phase"] == "principle_evaluation":
                 self._materialize_selected_principle(state, phase, acceptance)
+                selection = core.get("selected_for_testing")
+                if isinstance(selection, dict):
+                    selection["status"] = "CONVERGED"
+                    selection["converged_at"] = accepted_at
                 self._deactivate_principle_evidence_context(
                     state, reason="PRINCIPLE_CONVERGED"
                 )
@@ -4599,6 +4753,12 @@ class ARISController:
             if isinstance(prior_cycle, dict) and prior_cycle.get("cycle_id"):
                 core["last_method_test_cycle_id"] = prior_cycle["cycle_id"]
             core["method_test_cycle"] = None
+            core["selected_for_testing"] = None
+        elif target == "principle_test_design":
+            prior_cycle = core.get("method_test_cycle")
+            if isinstance(prior_cycle, dict) and prior_cycle.get("cycle_id"):
+                core["last_method_test_cycle_id"] = prior_cycle["cycle_id"]
+            core["method_test_cycle"] = None
         elif "principle_evaluation" in reset_names:
             cycle = core.get("method_test_cycle")
             if isinstance(cycle, dict):
@@ -4692,6 +4852,36 @@ class ARISController:
                 for path, record in verdict_records.items()
                 if isinstance(record, dict)
             }
+            if decision == "CANDIDATE_REJECTED" and phase["phase"] == "principle_evaluation":
+                selection, candidate = self._selected_for_testing_candidate(state)
+                evaluation_path = str(self.workflow["artifact_manifest"]["principle_evaluation"])
+                evaluation = json.loads((self.root / evaluation_path).read_text(encoding="utf-8"))
+                update = next(
+                    item for item in evaluation["principle_updates"]
+                    if str(item["principle_id"]) == str(selection["principle_id"])
+                    and str(item["principle_version"]) == str(selection["principle_version"])
+                )
+                if update["decision"] != "REJECTED":
+                    raise ControllerError(
+                        "CANDIDATE_REJECTED requires the reviewed evaluation to reject the Human-selected Candidate"
+                    )
+                self._append_method_history_event(
+                    "method_principles",
+                    {
+                        "schema_version": 1,
+                        "event_id": f"principle-{uuid.uuid4().hex}",
+                        "event_type": "REJECTED",
+                        "cycle_id": str(evaluation["cycle_id"]),
+                        "principle_id": str(selection["principle_id"]),
+                        "principle_version": str(selection["principle_version"]),
+                        "parent_version": candidate.get("parent_version"),
+                        "scientific_context_refs": self._candidate_scientific_context_refs(candidate),
+                        "evidence_refs": list(update.get("evidence_refs") or []),
+                        "reason": str(update["rationale"]),
+                        "recorded_at": now(),
+                        "record_refs": [{"path": evaluation_path, "sha256": sha256_file(self.root / evaluation_path)}],
+                    },
+                )
             self._return_to_phase(
                 state,
                 from_phase=str(phase["phase"]),
@@ -4843,6 +5033,7 @@ class ARISController:
             if isinstance(prior_cycle, dict) and prior_cycle.get("cycle_id"):
                 core["last_method_test_cycle_id"] = prior_cycle["cycle_id"]
             core["method_test_cycle"] = None
+            core["selected_for_testing"] = None
             core["approvals"].append(
                 {
                     "gate": "problem_revision",
@@ -5029,6 +5220,7 @@ class ARISController:
             if isinstance(prior_cycle, dict) and prior_cycle.get("cycle_id"):
                 core["last_method_test_cycle_id"] = prior_cycle["cycle_id"]
             core["method_test_cycle"] = None
+            core["selected_for_testing"] = None
         core["approvals"].append(
             {
                 "gate": request["gate"],
@@ -5230,6 +5422,21 @@ class ARISController:
             phase = self._current_core_phase(state)
             spec = self._phase_spec(state, phase["phase"])
             target = self._human_gate_decision_target(spec, decision)
+            if phase["phase"] == "principle_human_selection":
+                if target is None:
+                    self._resolve_candidate_selection(state, selected_id)
+                elif not isinstance(human_feedback, str) or not human_feedback.strip():
+                    raise ControllerError(
+                        "Human Gate principle_selection revisions, combinations, and rejection require non-empty human_feedback"
+                    )
+            if (
+                target is not None
+                and phase["phase"] == "principle_test_human_approval"
+                and (not isinstance(human_feedback, str) or not human_feedback.strip())
+            ):
+                raise ControllerError(
+                    "Human Gate principle_test_approval revision requires non-empty human_feedback"
+                )
             if (
                 target is not None
                 and phase["phase"] == "problem_human_acceptance"
@@ -5362,6 +5569,15 @@ class ARISController:
                         registered=registered,
                         acceptance=phase["human_decision"],
                     )
+                elif phase["phase"] == "principle_human_selection":
+                    candidate = self._resolve_candidate_selection(state, selected_id)
+                    binding = self._establish_selected_for_testing(
+                        state,
+                        candidate=candidate,
+                        request=request,
+                        receipt=receipt,
+                    )
+                    phase["selected_for_testing"] = deepcopy(binding)
                 elif phase["phase"] == "principle_test_human_approval":
                     self._initialize_method_test_cycle(state)
                 phase["artifact"] = next(iter(registered), None)

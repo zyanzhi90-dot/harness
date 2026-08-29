@@ -1,7 +1,7 @@
 ---
 name: idea-creator
-description: "Gemini cross-family adapter for independent problem discovery, 1a–2b diagnosis, or Principle formation/evaluation."
-argument-hint: "mode: problem|diagnosis|method; direction or handoff path"
+description: "Gemini cross-family adapter for independent problem discovery, 1a–2b diagnosis, Principle formation/evaluation, or selected-Candidate test design."
+argument-hint: "mode: problem|diagnosis|method|principle-test-design; direction or handoff path"
 ---
 
 # Research Idea Creator — Gemini overlay
@@ -67,10 +67,24 @@ cross-domain candidates require source Evidence, structural mapping, causal
 direction, activation-transfer conditions, disanalogies, and boundaries. Form
 algorithm-independent Candidate Principles with lineage, fatal assumptions,
 target operationalization, Provisional Scientific Delta, discriminating
-predictions, and multi-Principle tests. Write `METHOD_DESIGN_PACKET.json`, its
+predictions, principal risks, and substantive differences. Write the
+candidate-only `METHOD_DESIGN_PACKET.json`, its
 deterministic Markdown view, and the Gemini reviewer-backed
 `METHOD_DESIGN_REVIEW.json`. Only `PRINCIPLE_PACKET_READY` reaches Human
-approval of the recommended execution set and cost.
+Candidate selection. Revision, combination, or rejection feedback returns to
+Method Design and must be consumed. Selection creates only the Controller's
+`selected_for_testing` binding.
+
+## `mode: principle-test-design`
+
+Require the active Human-selected Candidate binding. Design only the current
+minimum sufficient, highest-information tests for that Candidate, prioritizing
+fatal-assumption falsification and preferring existing data, analysis, or
+computation over large physical experiments. Write `PRINCIPLE_TEST_PLAN.json`,
+its deterministic Markdown view, and the Gemini reviewer-backed independent
+test-plan review. Only `TEST_PLAN_READY` reaches Human approval of this round's
+execution set and cost; revision returns to test design. No test may execute
+before that approval.
 
 After all approved tests have terminal outcomes, require the Controller-formed
 `PRINCIPLE_EVIDENCE_CONTEXT.json`. Assess operationalization and test validity,
@@ -78,7 +92,10 @@ activation conditions, prediction-level outcomes, and Evidence-supported
 Principle updates. Write `PRINCIPLE_EVALUATION.json`; the independent Gemini
 review produces `PRINCIPLE_EVALUATION_VERDICT.json`. `PRINCIPLE_CONVERGED`
 materializes `SELECTED_PRINCIPLE.yaml`; `REVISE_EVALUATION`, `MORE_EVIDENCE`,
-and `RCA_CONFLICT` follow their fixed Controller return targets.
+`CANDIDATE_REJECTED`, and `RCA_CONFLICT` follow their fixed Controller return
+targets. `MORE_EVIDENCE` preserves selection and returns to test design;
+Candidate rejection returns failed Evidence to Method Design; RCA conflict
+returns to RCA.
 
 Keep problem novelty, Principle/Scientific-Delta novelty, and concrete Method
 embodiment novelty separate. Pre-convergence realization is test-only and must

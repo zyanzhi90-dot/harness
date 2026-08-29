@@ -420,9 +420,14 @@ def test_default_discovery_cannot_cross_human_or_test_gates() -> None:
     for root in (MAIN, CODEX):
         workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
         approval = next(item for item in workflow["phases"] if item["phase"] == "principle_test_human_approval")
+        selection = next(item for item in workflow["phases"] if item["phase"] == "principle_human_selection")
+        test_design = next(item for item in workflow["phases"] if item["phase"] == "principle_test_design")
         evaluation = next(item for item in workflow["phases"] if item["phase"] == "principle_evaluation")
+        assert selection["human_checkpoint"] is True
+        assert selection["accepted_decisions"] == ["select"]
+        assert test_design["reviewer_role"] == "independent_method_reviewer"
         assert approval["human_checkpoint"] is True
-        assert approval["approval_subject"] == "method_design_packet.recommended_execution_set_and_estimated_total_cost"
+        assert approval["approval_subject"] == "principle_test_plan.recommended_execution_set_and_estimated_total_cost"
         assert evaluation["pre_start_conditions"] == [
             "approved_execution_set_all_tests_terminal",
             "active_principle_evidence_context_matches_approved_cycle",
@@ -501,7 +506,8 @@ def test_formal_negative_verdicts_have_fixed_earlier_return_targets() -> None:
     }
     assert by_phase["principle_evaluation"]["return_targets"] == {
         "REVISE_EVALUATION": "principle_evaluation",
-        "MORE_EVIDENCE": "method_design",
+        "MORE_EVIDENCE": "principle_test_design",
+        "CANDIDATE_REJECTED": "method_design",
         "RCA_CONFLICT": "root_cause_analysis",
     }
     assert by_phase["final_method_novelty_gate"]["return_targets"] == {
@@ -539,9 +545,9 @@ def test_research_pipeline_cannot_bypass_the_canonical_scientific_lifecycle() ->
     for root in (MAIN, CODEX):
         workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
         phases = workflow["scientific_core"]["phases"]
-        assert phases[6:10] == [
-            "method_design", "principle_test_human_approval",
-            "principle_evaluation", "method_refinement",
+        assert phases[6:12] == [
+            "method_design", "principle_human_selection", "principle_test_design",
+            "principle_test_human_approval", "principle_evaluation", "method_refinement",
         ]
         pipeline = skill(root, "research-refine-pipeline")
         assert "accepted Selected Principle" in pipeline
@@ -550,9 +556,10 @@ def test_research_pipeline_cannot_bypass_the_canonical_scientific_lifecycle() ->
 def test_public_routing_and_iteration_log_are_consistent_with_principle_first_workflow() -> None:
     for root in (MAIN, CODEX):
         workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
-        assert workflow["workflow_id"] == "idea-discovery-v3"
+        assert workflow["workflow_id"] == "idea-discovery-v4"
         discovery = skill(root, "idea-discovery")
-        assert "human approval of the atomic test execution set" in discovery
+        assert "human Candidate selection" in discovery
+        assert "independent Principle test-plan review" in discovery
         assert "/method-test" in discovery
         assert "Principle convergence" in discovery
         assert "Selected Principle" in skill(root, "research-refine-pipeline")

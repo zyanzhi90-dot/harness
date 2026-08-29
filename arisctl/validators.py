@@ -1040,15 +1040,20 @@ def validate_method_design_packet(
     required_history_refs: set[str] | None = None,
     required_return_ref: str | None = None,
 ) -> dict[str, Any]:
-    """Validate the machine-resolvable Principle/Test packet without judging quality."""
+    """Validate the machine-resolvable Candidate Principle packet without judging quality."""
 
     packet = _require_mapping(payload, "method design packet")
     _require_fields(packet, tuple(contract["required_fields"]), "method design packet")
+    forbidden = set(contract.get("forbidden_fields") or []) & set(packet)
+    if forbidden:
+        raise ValidationError(
+            "method design packet must not contain test design fields: "
+            + ", ".join(sorted(forbidden))
+        )
     if packet["schema_version"] != contract.get("schema_version", 1):
         raise ValidationError("method design packet schema_version is invalid")
-    cycle_id = _required_text(packet["cycle_id"], "method design packet.cycle_id")
-    execution_set_id = _required_text(
-        packet["execution_set_id"], "method design packet.execution_set_id"
+    design_cycle_id = _required_text(
+        packet["design_cycle_id"], "method design packet.design_cycle_id"
     )
 
     problem = _require_mapping(packet["problem_binding"], "method design packet.problem_binding")
@@ -1210,7 +1215,6 @@ def validate_method_design_packet(
     assumption_ids: dict[tuple[str, str], set[str]] = {}
     prediction_ids: dict[tuple[str, str], set[str]] = {}
     prediction_assumptions: dict[tuple[str, str], dict[str, set[str]]] = {}
-    proposed_tests: dict[tuple[str, str], set[str]] = {}
     pending_discrimination_refs: list[tuple[str, set[str]]] = []
     statuses = set(contract["candidate_status_enum"])
     for index, raw in enumerate(principles, 1):
@@ -1219,6 +1223,12 @@ def validate_method_design_packet(
             field for field in contract["candidate_principle_fields"] if field != "parent_version"
         )
         _require_fields(item, candidate_fields, f"candidate principle {index}")
+        candidate_forbidden = set(contract.get("candidate_forbidden_fields") or []) & set(item)
+        if candidate_forbidden:
+            raise ValidationError(
+                f"candidate principle {index} must not contain test design fields: "
+                + ", ".join(sorted(candidate_forbidden))
+            )
         if "parent_version" not in item:
             raise ValidationError(f"candidate principle {index} is missing parent_version")
         principle_id = _required_text(item["principle_id"], f"candidate principle {index}.principle_id")
@@ -1234,7 +1244,8 @@ def validate_method_design_packet(
             raise ValidationError(f"candidate principle {index}.parent_version must identify an earlier version")
         for field in (
             "principle", "origin", "intervention", "changed_structure",
-            "root_cause_resolution_rationale", "provisional_scientific_delta", "status_rationale",
+            "root_cause_resolution_rationale", "provisional_scientific_delta",
+            "substantive_difference", "status_rationale",
         ):
             _required_text(item[field], f"candidate principle {index}.{field}")
         for field, allowed_ids in (
@@ -1292,7 +1303,6 @@ def validate_method_design_packet(
                     ),
                 )
             )
-        proposed_tests[key] = set(_unique_string_values(item["proposed_test_ids"], f"candidate principle {index}.proposed_test_ids"))
         evidence_refs = _unique_string_values(item["evidence_refs"], f"candidate principle {index}.evidence_refs", non_empty=False)
         if current_evidence_ids is not None and not set(evidence_refs) <= current_evidence_ids:
             raise ValidationError(f"candidate principle {index} cites Evidence outside the current formal context")
@@ -1304,81 +1314,9 @@ def validate_method_design_packet(
         if not refs <= known_principle_ids:
             raise ValidationError(f"{label} discriminates against an unknown Principle")
 
-    tests = _require_list(packet, "discriminating_tests", "method design packet", non_empty=True)
-    test_ids = _unique_ids(tests, "test_id", "method design packet.discriminating_tests")
-    targeted_principles: set[tuple[str, str]] = set()
-    has_competing_test = False
-    target_principles_by_test: dict[str, set[tuple[str, str]]] = {}
-    for index, raw in enumerate(tests, 1):
-        item = _require_mapping(raw, f"discriminating test {index}")
-        _require_fields(item, tuple(contract["discriminating_test_required_fields"]), f"discriminating test {index}")
-        for field in ("test_type", "operationalization"):
-            _required_text(item[field], f"discriminating test {index}.{field}")
-        if not isinstance(item["execution_requirements"], (str, list, dict)) or item["execution_requirements"] in ("", [], {}):
-            raise ValidationError(f"discriminating test {index}.execution_requirements must be non-empty")
-        if item.get("test_only_concrete_realization") is not None and (
-            not isinstance(item["test_only_concrete_realization"], (str, dict))
-            or item["test_only_concrete_realization"] in ("", {})
-        ):
-            raise ValidationError(f"discriminating test {index}.test_only_concrete_realization is invalid")
-        targets = _require_list(item, "targets", f"discriminating test {index}", non_empty=True)
-        seen_targets: set[tuple[str, ...]] = set()
-        target_principles: set[tuple[str, str]] = set()
-        for number, raw_target in enumerate(targets, 1):
-            target = _require_mapping(raw_target, f"discriminating test {index} target {number}")
-            _require_fields(target, tuple(contract["test_target_fields"]), f"discriminating test {index} target {number}")
-            key = (str(target["principle_id"]), str(target["principle_version"]))
-            if key not in principle_keys:
-                raise ValidationError(f"discriminating test {index} targets an unknown Principle version")
-            if target["assumption_id"] not in assumption_ids[key] or target["prediction_id"] not in prediction_ids[key]:
-                raise ValidationError(f"discriminating test {index} targets an unknown assumption or prediction")
-            if target["assumption_id"] not in prediction_assumptions[key][target["prediction_id"]]:
-                raise ValidationError(f"discriminating test {index} target does not bind its prediction to its assumption")
-            principle = principle_by_key[key]
-            if (
-                target["mechanism_change_id"] not in principle["mechanism_change_ids"]
-                or target["causal_chain_id"] not in principle["causal_chain_ids"]
-            ):
-                raise ValidationError(f"discriminating test {index} target is not bound through its Principle to RCA")
-            identity = tuple(str(target[field]) for field in contract["test_target_fields"])
-            if identity in seen_targets:
-                raise ValidationError(f"discriminating test {index} contains a duplicate target")
-            seen_targets.add(identity)
-            target_principles.add(key)
-        has_competing_test = has_competing_test or len(target_principles) > 1
-        targeted_principles.update(target_principles)
-        target_principles_by_test[item["test_id"]] = target_principles
-    for key, ids in proposed_tests.items():
-        if not ids <= test_ids:
-            raise ValidationError(f"candidate Principle {key[0]} references an unknown proposed test")
-        if any(key not in target_principles_by_test[test_id] for test_id in ids):
-            raise ValidationError(f"candidate Principle {key[0]} proposed tests do not target that Principle version")
     active_keys = {key for key, item in principle_by_key.items() if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}}
     if not active_keys:
         raise ValidationError("method design packet must retain at least one active Candidate Principle")
-    if not active_keys <= targeted_principles:
-        raise ValidationError("discriminating test set does not cover every active competing Principle")
-    if len(active_keys) > 1 and not has_competing_test:
-        raise ValidationError("competing Principles require at least one shared discriminating test")
-
-    recommended = _require_mapping(packet["recommended_execution_set"], "method design packet.recommended_execution_set")
-    _require_fields(recommended, tuple(contract["recommended_execution_set_fields"]), "method design packet.recommended_execution_set")
-    if recommended["execution_set_id"] != execution_set_id:
-        raise ValidationError("recommended execution set ID does not match the packet")
-    approved_ids = _unique_string_values(recommended["test_ids"], "method design packet.recommended_execution_set.test_ids")
-    if not set(approved_ids) <= test_ids:
-        raise ValidationError("recommended execution set references an unknown test")
-    if recommended["estimated_total_cost"] != packet["estimated_total_cost"]:
-        raise ValidationError("recommended execution-set cost does not match estimated_total_cost")
-    recommended_targets = set().union(
-        *(target_principles_by_test[test_id] for test_id in approved_ids)
-    )
-    if not active_keys <= recommended_targets:
-        raise ValidationError("recommended execution set does not cover every active Candidate Principle")
-    if len(active_keys) > 1 and not any(
-        len(target_principles_by_test[test_id] & active_keys) > 1 for test_id in approved_ids
-    ):
-        raise ValidationError("recommended execution set lacks a shared competing-Principle test")
 
     history_refs = set(_unique_string_values(packet["relevant_history_refs"], "method design packet.relevant_history_refs", non_empty=False))
     if not set(required_history_refs or set()) <= history_refs:
@@ -1388,10 +1326,7 @@ def validate_method_design_packet(
         raise ValidationError("method design packet omits the current return feedback")
     return {
         "packet": packet,
-        "cycle_id": cycle_id,
-        "execution_set_id": execution_set_id,
-        "test_ids": sorted(test_ids),
-        "approved_test_ids": approved_ids,
+        "design_cycle_id": design_cycle_id,
         "principle_keys": sorted(principle_keys),
         "mechanism_change_ids": sorted(mechanism_ids),
         "capability_ids": sorted(capability_ids),
@@ -1400,8 +1335,36 @@ def validate_method_design_packet(
 
 
 def render_method_design_view(packet: dict[str, Any]) -> str:
-    serialized = json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True)
-    return f"# Method Design\n\n```json\n{serialized}\n```\n"
+    lines = [
+        "# Method Design — Candidate Principles",
+        "",
+        f"Design cycle: `{packet['design_cycle_id']}`",
+        "",
+        "This packet presents Candidate Principles for Human discussion and selection. It does not contain a test plan, execution set, or cost approval.",
+    ]
+    for candidate in packet["candidate_principles"]:
+        lines.extend(
+            [
+                "",
+                f"## {candidate['principle_id']} · version {candidate['principle_version']}",
+                "",
+                f"**Principle.** {candidate['principle']}",
+                "",
+                f"**Mechanism.** {candidate['intervention']} This changes {candidate['changed_structure']}. {candidate['root_cause_resolution_rationale']}",
+                "",
+                f"**Provisional Scientific Delta.** {candidate['provisional_scientific_delta']}",
+                "",
+                "**Primary risks.** " + "; ".join(
+                    f"{item['assumption']} → {item['failure_consequence']}"
+                    for item in candidate["fatal_assumptions"]
+                ),
+                "",
+                f"**Substantive difference.** {candidate['substantive_difference']}",
+                "",
+                f"**Status.** {candidate['status']}: {candidate['status_rationale']}",
+            ]
+        )
+    return "\n".join(lines) + "\n"
 
 
 def validate_method_design_view(text: Any, packet: dict[str, Any]) -> str:
@@ -1409,6 +1372,207 @@ def validate_method_design_view(text: Any, packet: dict[str, Any]) -> str:
     if text != expected:
         raise ValidationError(
             "method design view must exactly match the deterministic packet rendering"
+        )
+    return text
+
+
+def validate_principle_test_plan(
+    payload: Any,
+    *,
+    contract: dict[str, Any],
+    selected_for_testing: dict[str, Any],
+    candidate: dict[str, Any],
+    required_history_refs: set[str] | None = None,
+    required_return_ref: str | None = None,
+) -> dict[str, Any]:
+    """Validate one selected-Candidate, minimum-set test plan mechanically."""
+
+    plan = _require_mapping(payload, "Principle test plan")
+    _require_fields(plan, tuple(contract["required_fields"]), "Principle test plan")
+    if plan["schema_version"] != contract.get("schema_version", 1):
+        raise ValidationError("Principle test plan schema_version is invalid")
+    cycle_id = _required_text(plan["cycle_id"], "Principle test plan.cycle_id")
+    execution_set_id = _required_text(
+        plan["execution_set_id"], "Principle test plan.execution_set_id"
+    )
+    binding = _require_mapping(
+        plan["selected_for_testing_binding"],
+        "Principle test plan.selected_for_testing_binding",
+    )
+    _require_fields(
+        binding,
+        tuple(contract["selected_for_testing_binding_fields"]),
+        "Principle test plan.selected_for_testing_binding",
+    )
+    expected_binding = {
+        field: selected_for_testing[field]
+        for field in contract["selected_for_testing_binding_fields"]
+    }
+    if binding != expected_binding:
+        raise ValidationError("Principle test plan does not bind the active Human-selected Candidate")
+
+    strategy = _require_mapping(plan["test_strategy"], "Principle test plan.test_strategy")
+    _require_fields(
+        strategy,
+        tuple(contract["test_strategy_fields"]),
+        "Principle test plan.test_strategy",
+    )
+    for field in contract["test_strategy_fields"]:
+        if not isinstance(strategy[field], (str, list, dict)) or strategy[field] in ("", [], {}):
+            raise ValidationError(f"Principle test plan.test_strategy.{field} must be non-empty")
+
+    principle_key = (str(candidate["principle_id"]), str(candidate["principle_version"]))
+    assumption_ids = {
+        str(item["assumption_id"]): item for item in candidate["fatal_assumptions"]
+    }
+    prediction_by_id = {
+        str(item["prediction_id"]): item for item in candidate["predictions"]
+    }
+    tests = _require_list(plan, "discriminating_tests", "Principle test plan", non_empty=True)
+    test_ids = _unique_ids(tests, "test_id", "Principle test plan.discriminating_tests")
+    targeted_assumptions: set[str] = set()
+    tiers = set(contract["evidence_tier_enum"])
+    for index, raw in enumerate(tests, 1):
+        item = _require_mapping(raw, f"Principle test {index}")
+        _require_fields(
+            item,
+            tuple(contract["discriminating_test_required_fields"]),
+            f"Principle test {index}",
+        )
+        for field in ("test_type", "operationalization", "information_gain", "falsification_criterion"):
+            _required_text(item[field], f"Principle test {index}.{field}")
+        if item["evidence_tier"] not in tiers:
+            raise ValidationError(f"Principle test {index}.evidence_tier is invalid")
+        if not isinstance(item["execution_requirements"], (str, list, dict)) or item["execution_requirements"] in ("", [], {}):
+            raise ValidationError(f"Principle test {index}.execution_requirements must be non-empty")
+        if item.get("test_only_concrete_realization") is not None and (
+            not isinstance(item["test_only_concrete_realization"], (str, dict))
+            or item["test_only_concrete_realization"] in ("", {})
+        ):
+            raise ValidationError(f"Principle test {index}.test_only_concrete_realization is invalid")
+        targets = _require_list(item, "targets", f"Principle test {index}", non_empty=True)
+        seen_targets: set[tuple[str, ...]] = set()
+        for number, raw_target in enumerate(targets, 1):
+            target = _require_mapping(raw_target, f"Principle test {index} target {number}")
+            _require_fields(
+                target,
+                tuple(contract["test_target_fields"]),
+                f"Principle test {index} target {number}",
+            )
+            if (str(target["principle_id"]), str(target["principle_version"])) != principle_key:
+                raise ValidationError(f"Principle test {index} targets a non-selected Candidate")
+            assumption_id = str(target["assumption_id"])
+            prediction_id = str(target["prediction_id"])
+            if assumption_id not in assumption_ids or prediction_id not in prediction_by_id:
+                raise ValidationError(f"Principle test {index} targets an unknown assumption or prediction")
+            if assumption_id not in {
+                str(value) for value in prediction_by_id[prediction_id]["assumption_ids"]
+            }:
+                raise ValidationError(f"Principle test {index} target does not bind its prediction to its assumption")
+            if (
+                target["mechanism_change_id"] not in candidate["mechanism_change_ids"]
+                or target["causal_chain_id"] not in candidate["causal_chain_ids"]
+            ):
+                raise ValidationError(f"Principle test {index} target is not bound through the selected Candidate to RCA")
+            identity = tuple(str(target[field]) for field in contract["test_target_fields"])
+            if identity in seen_targets:
+                raise ValidationError(f"Principle test {index} contains a duplicate target")
+            seen_targets.add(identity)
+            targeted_assumptions.add(assumption_id)
+
+    priority_ids = set(
+        _unique_string_values(
+            strategy["fatal_assumption_priority"],
+            "Principle test plan.test_strategy.fatal_assumption_priority",
+        )
+    )
+    if not priority_ids <= set(assumption_ids) or not priority_ids <= targeted_assumptions:
+        raise ValidationError("Principle test plan does not test every prioritized fatal assumption")
+    recommended = _require_mapping(
+        plan["recommended_execution_set"], "Principle test plan.recommended_execution_set"
+    )
+    _require_fields(
+        recommended,
+        tuple(contract["recommended_execution_set_fields"]),
+        "Principle test plan.recommended_execution_set",
+    )
+    if recommended["execution_set_id"] != execution_set_id:
+        raise ValidationError("Principle test plan execution-set ID is inconsistent")
+    approved_ids = _unique_string_values(
+        recommended["test_ids"], "Principle test plan.recommended_execution_set.test_ids"
+    )
+    if set(approved_ids) != test_ids:
+        raise ValidationError("Principle test plan may contain only tests in the current execution set")
+    if recommended["estimated_total_cost"] != plan["estimated_total_cost"]:
+        raise ValidationError("Principle test plan execution-set cost is inconsistent")
+    history_refs = set(
+        _unique_string_values(
+            plan["relevant_history_refs"],
+            "Principle test plan.relevant_history_refs",
+            non_empty=False,
+        )
+    )
+    if not set(required_history_refs or set()) <= history_refs:
+        raise ValidationError("Principle test plan omits relevant cross-cycle Principle/Test history")
+    return_refs = set(
+        _unique_string_values(
+            plan["return_feedback_refs"],
+            "Principle test plan.return_feedback_refs",
+            non_empty=False,
+        )
+    )
+    if required_return_ref is not None and required_return_ref not in return_refs:
+        raise ValidationError("Principle test plan omits the current return feedback")
+    return {
+        "plan": plan,
+        "cycle_id": cycle_id,
+        "execution_set_id": execution_set_id,
+        "test_ids": sorted(test_ids),
+        "approved_test_ids": approved_ids,
+    }
+
+
+def render_principle_test_plan_view(plan: dict[str, Any]) -> str:
+    binding = plan["selected_for_testing_binding"]
+    lines = [
+        "# Principle Test Plan",
+        "",
+        f"Selected Candidate: `{binding['principle_id']}` version `{binding['principle_version']}`",
+        "",
+        f"Test cycle: `{plan['cycle_id']}` · execution set: `{plan['execution_set_id']}`",
+        "",
+        f"**Minimum sufficiency.** {plan['test_strategy']['minimum_sufficiency_rationale']}",
+        "",
+        f"**Highest information gain.** {plan['test_strategy']['highest_information_gain_rationale']}",
+        "",
+        f"**Lower-cost evidence first.** {plan['test_strategy']['lower_cost_evidence_assessment']}",
+        "",
+        f"**Physical-experiment escalation.** {plan['test_strategy']['physical_experiment_escalation_justification']}",
+    ]
+    for test in plan["discriminating_tests"]:
+        lines.extend(
+            [
+                "",
+                f"## {test['test_id']} · {test['evidence_tier']}",
+                "",
+                f"**Operationalization.** {test['operationalization']}",
+                "",
+                f"**Information gain.** {test['information_gain']}",
+                "",
+                f"**Fatal falsification criterion.** {test['falsification_criterion']}",
+                "",
+                f"**Estimated cost.** {test['estimated_cost']}",
+            ]
+        )
+    lines.extend(["", f"**Total current execution-set cost.** {plan['estimated_total_cost']}"])
+    return "\n".join(lines) + "\n"
+
+
+def validate_principle_test_plan_view(text: Any, plan: dict[str, Any]) -> str:
+    expected = render_principle_test_plan_view(plan)
+    if text != expected:
+        raise ValidationError(
+            "Principle test plan view must exactly match the deterministic plan rendering"
         )
     return text
 
@@ -1448,7 +1612,7 @@ def validate_json_review_verdict_artifact(
     }:
         raise ValidationError(f"{label}.reviewed_artifact does not identify the declared Main artifact")
     _require_list(verdict, "findings", label)
-    if verdict["decision"] not in {"PRINCIPLE_PACKET_READY", "PRINCIPLE_CONVERGED"}:
+    if verdict["decision"] not in {"PRINCIPLE_PACKET_READY", "TEST_PLAN_READY", "PRINCIPLE_CONVERGED"}:
         _validate_return_guidance(verdict, label=label, required=True)
     elif verdict["return_guidance"] not in (None, {}):
         _validate_return_guidance(verdict, label=label, required=False)

@@ -26,6 +26,9 @@ research-lit
   -> independent root-cause gate
   -> idea-creator(mode: method)
   -> independent Principle packet review
+  -> human Candidate selection
+  -> idea-creator(mode: principle-test-design)
+  -> independent Principle test-plan review
   -> human approval of the atomic test execution set
   -> method-test
   -> idea-creator(mode: method) Principle Evidence Update
@@ -53,7 +56,8 @@ sequence before method work may resume.
   `acceptance_status: human_accepted`.
 - No method design before `ROOT_CAUSE_VERDICT.json` is validated as
   `DIAGNOSIS_READY` against the current problem, evidence, and analysis hashes.
-- No approved test execution before the Principle/Test Human Gate, and no
+- No Principle test design before Human selection of one reviewed Candidate.
+- No approved test execution before the Principle Test Human Gate, and no
   Principle interpretation inside `/method-test`.
 - No Method adaptation or final implementation commitment before accepted
   Principle convergence and Controller materialization of
@@ -228,7 +232,7 @@ generation, quality, novelty, and human-acceptance sequence. The Controller
 executes non-accepting paths via `return-phase`; the Agent cannot select a
 different target.
 
-## Phase 4 — Principle formation, test approval, and convergence
+## Phase 4 — Principle formation, selection, test design, and convergence
 
 Start a new module execution with the accepted contract:
 
@@ -239,22 +243,41 @@ Start a new module execution with the accepted contract:
 The module derives Required Mechanism Changes, Required Capabilities, and Design
 Obligations from every accepted primary causal chain. It then executes all four
 Principle Search dimensions, forms algorithm-independent Candidate Principles,
-states fatal assumptions and Provisional Scientific Delta, and builds
-multi-target discriminating tests plus one atomic recommended execution set.
-It consumes all Controller-associated cross-cycle Principle/Test history and
-the latest directed return feedback without treating historical Evidence as
-automatically current.
+and states each Candidate's mechanism, fatal assumptions, Provisional
+Scientific Delta, principal risks, and substantive differences in plain
+language. Method Design does not produce concrete tests, an execution set, or
+cost. It consumes the latest directed Human/reviewer feedback and reuses current
+Evidence/search/history; it acquires new Evidence only for a real knowledge gap.
 
 Require `METHOD_DESIGN_PACKET.json`, its deterministic `METHOD_DESIGN.md` view,
 and the formal `METHOD_DESIGN_REVIEW.json`. All legal Evidence acquisition or
 re-adoption must finish before `refresh-review-request` binds the final packet
-for independent review. `PRINCIPLE_PACKET_READY` advances to the Human test
-Gate; `REVISE_PRINCIPLES` returns to this phase; `RCA_CONFLICT` returns linked
-Evidence and guidance to RCA.
+for independent review. `PRINCIPLE_PACKET_READY` advances to the Human
+Candidate-selection Gate; `REVISE_PRINCIPLES` returns to this phase;
+`RCA_CONFLICT` returns linked Evidence and guidance to RCA.
 
-At `principle_test_human_approval`, present the full recommended execution set
-and total cost. Approval is atomic and does not select a Principle. A change to
-tests or cost uses `request_revision -> method_design`.
+At `principle_human_selection`, the Human may select one Candidate, request a
+Candidate revision, request a combination, or reject all Candidates with
+redesign feedback. A selection creates only an active `selected_for_testing`
+binding; it does not create a test cycle, establish scientific support, or
+materialize `SELECTED_PRINCIPLE.yaml`. Every non-accepting decision returns to
+Method Design, where the feedback must be consumed before fresh independent
+review and another human Candidate selection.
+
+After selection, invoke `idea-creator(mode: principle-test-design)`. It designs
+only the current minimum sufficient, highest-information tests for the selected
+Candidate, prioritizing falsification of fatal assumptions. Existing data,
+analysis, or computation must be preferred whenever sufficient; a large
+physical experiment requires an explicit insufficiency justification. Require
+`PRINCIPLE_TEST_PLAN.json`, its deterministic Markdown view, and an independent
+Principle test-plan review from `independent_method_reviewer` under the test-plan
+rubric. `TEST_PLAN_READY` advances to `principle_test_human_approval`;
+`REVISE_TEST_PLAN` returns to Test Design; `RCA_CONFLICT` returns to RCA.
+
+At `principle_test_human_approval`, present only the reviewed atomic execution
+set and total cost for this round. A test or cost change uses
+`request_revision -> principle_test_design`. No test may execute or submit a
+result before this approval.
 
 After approval, while `principle_evaluation` is pending, invoke `/method-test`.
 It reads `method-test-handoff`, runs only approved tests through existing
@@ -264,15 +287,16 @@ interpretation. The Controller forms `PRINCIPLE_EVIDENCE_CONTEXT.json` only
 after every approved test is terminal.
 
 Then invoke `idea-creator(mode: method)` again for `principle_evaluation`. Main
-must compare observations with every competing prediction, assess
+must compare observations with the selected Candidate's predictions, assess
 operationalization fidelity/test validity/activation conditions, and update
 Principles, assumptions, boundaries, or RCA understanding—not only performance
 rankings. Refresh the review request against the final
 `PRINCIPLE_EVALUATION.json`. `PRINCIPLE_CONVERGED` names one Principle
 ID/version and causes the Controller to materialize `SELECTED_PRINCIPLE.yaml`;
-`REVISE_EVALUATION` preserves the same cycle/results, `MORE_EVIDENCE` opens a
-new design/test cycle and repeats Human approval, and `RCA_CONFLICT` returns to
-RCA.
+`REVISE_EVALUATION` preserves the same cycle/results, `MORE_EVIDENCE` preserves
+the selected binding and returns to Test Design for the next minimum test,
+`CANDIDATE_REJECTED` invalidates the binding and returns the failed Evidence to
+Method Design, and `RCA_CONFLICT` invalidates it and returns to RCA.
 
 ## Phase 5 — Refinement and final gates
 
@@ -312,7 +336,7 @@ not a scientific gate.
 Start one Controller-managed run from the checked-in workflow spec, for example:
 
 ```text
-python -m arisctl --root . start idea-v3-001 --executor codex-gpt-5.6-sol
+python -m arisctl --root . start idea-v4-001 --executor codex-gpt-5.6-sol
 ```
 
 Use `start-phase -> complete-phase` for execution and `accept-phase` only for

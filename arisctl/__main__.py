@@ -107,11 +107,16 @@ def build_parser() -> argparse.ArgumentParser:
             "source_policy_approval",
             "scope_human_approval",
             "problem_acceptance",
+            "principle_selection",
             "principle_test_approval",
             "method_acceptance",
         ),
     )
-    approve.add_argument("--decision", choices=("approve", "request_revision", "reject"), required=True)
+    approve.add_argument(
+        "--decision",
+        choices=("approve", "select", "request_revision", "combine", "reject"),
+        required=True,
+    )
     approve.add_argument("--selected-id")
     approve.add_argument("--human-feedback")
 

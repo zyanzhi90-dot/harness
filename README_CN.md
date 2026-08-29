@@ -714,8 +714,10 @@ ARIS 全流程完成并进入投稿/审稿阶段的真实项目。**所列分数
 ```
 /research-lit → 人工确认范围 → 问题生成 → 问题质量 + 新颖性 Gate
   → 用户接受问题 → 根因分析 + 独立 Gate
-  → 绑定 RMC/Capability/Obligation 的 Candidate Principles + 判别测试
-  → 独立 Principle packet 评审 → 人工批准测试集 → /method-test
+  → 绑定 RMC/Capability/Obligation 的 Candidate Principles
+  → 独立 Candidate packet 评审 → 人工选择/修改/组合/拒绝 Candidate
+  → 针对已选 Candidate 的最小测试设计 → 独立 Test Plan 评审
+  → 人工批准本轮测试集与成本 → /method-test
   → Evidence Context + Principle 评估 → 独立收敛评审
   → Selected Principle → Method 适配/精炼 + 最终新颖性 Gate
   → 用户接受最终方法
@@ -736,13 +738,14 @@ ARIS 全流程完成并进入投稿/审稿阶段的真实项目。**所列分数
 1. 从证据生成候选问题，再独立完成问题质量和问题新颖性判断；
 2. 用户接受一个问题，并绑定 `RESEARCH_CONTRACT.md` 与 `PROBLEM_EVIDENCE_CAPSULE.md`；
 3. 将观察到的失效现象分析为因果链，并通过独立根因 Gate；
-4. 从已接受的因果链推导 RMC、Capability 和 Design Obligation，正式记录第一性原理、表示变换、同领域机制与跨领域结构同构搜索，形成算法无关的 Candidate Principles 和判别测试；
-5. 通过独立 Principle packet 评审，由用户批准确切测试集与成本，仅通过 `/method-test` 执行这些测试，并消费 Evidence 直到独立 reviewer 接受 Principle 收敛；
-6. 固化 `SELECTED_PRINCIPLE.yaml`，将其适配为最小忠实 Method，再通过最终 Method 评审、新颖性与人工接受。
+4. 从已接受的因果链推导 RMC、Capability 和 Design Obligation，正式记录第一性原理、表示变换、同领域机制与跨领域结构同构搜索，形成算法无关的 Candidate Principles；
+5. 通过独立 Candidate packet 评审，由用户选择、修改、组合或拒绝 Candidate，再只为已选 Candidate 设计优先证伪 fatal assumption 的最小充分测试，并通过独立 Test Plan 评审；
+6. 由用户批准备选本轮确切测试集与成本，仅通过 `/method-test` 执行这些测试，并消费 Evidence 直到独立 reviewer 接受 Principle 收敛；
+7. 固化 `SELECTED_PRINCIPLE.yaml`，将其适配为最小忠实 Method，再通过最终 Method 评审、新颖性与人工接受。
 
 正式产物包括 `idea-stage/ACTIVE_FIELD_MAP.md`、
 `idea-stage/SEARCH_LEDGER.jsonl`、已接受的问题和根因交接物、
-`METHOD_DESIGN_PACKET.json`、Principle/Test Evidence ledgers、当前
+`METHOD_DESIGN_PACKET.json`、`PRINCIPLE_TEST_PLAN.json`、Principle/Test Evidence ledgers、当前
 `PRINCIPLE_EVIDENCE_CONTEXT.json`、`SELECTED_PRINCIPLE.yaml`、
 `refine-logs/FINAL_PROPOSAL.md` 以及供人阅读的最终 `IDEA_REPORT.md`。
 `IDEA_REPORT.md` 不是实验交接物；此阶段不会生成 `EXPERIMENT_PLAN.md`，也不会自动开始验证。只有用户在方法确认状态下显式调用
