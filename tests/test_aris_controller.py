@@ -6953,6 +6953,142 @@ def test_incremental_problem_binding_uses_field_map_then_existing_reopen_provena
     assert reopened["problem_return_event_id"] == "return-problem-1"
 
 
+def _register_re_adoption_test_evidence(
+    controller: ARISController, source_id: str = "P2"
+) -> dict[str, str]:
+    card_path = (
+        controller.root / ".aris" / "canonical" / controller.run_id / f"evidence-{source_id}.json"
+    )
+    card_path.parent.mkdir(parents=True, exist_ok=True)
+    read_event_id = f"R-{source_id}"
+    card = {"source_id": source_id, "read_event_id": read_event_id}
+    card_path.write_text(json.dumps(card), encoding="utf-8")
+    registry = controller.root / "idea-stage" / "EVIDENCE_REGISTRY.jsonl"
+    with registry.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(card) + "\n")
+    record = {
+        "path": str(card_path.relative_to(controller.root)),
+        "sha256": sha256_file(card_path),
+        "read_event_id": read_event_id,
+        "validator_result": "PASS",
+    }
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        research["accepted_artifacts"][f"evidence:{source_id}"] = record
+        research["read_events"][read_event_id] = {
+            "paper_id": source_id,
+            "status": "complete",
+        }
+        research["papers"][source_id] = {"source_origin": "user_supplied"}
+    return record
+
+
+def _activate_re_adoption_method_phase(
+    controller: ARISController, phase_name: str
+) -> None:
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        core["status"] = "ACTIVE"
+        core["current_phase"] = phase_name
+        core["validation_entry"] = None
+        run_state._find_phase(state, phase_name)["status"] = "running"
+        run_state._find_phase(state, "root_cause_analysis")["validated_artifacts"] = {
+            raw_path: core["accepted_artifacts"][raw_path]["sha256"]
+            for raw_path in (
+                "idea-stage/RESEARCH_CONTRACT.md",
+                "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/ROOT_CAUSE_ANALYSIS.json",
+            )
+        }
+        run_state._find_phase(state, "root_cause_gate")["validated_artifacts"] = {
+            "idea-stage/ROOT_CAUSE_VERDICT.json": core["accepted_artifacts"][
+                "idea-stage/ROOT_CAUSE_VERDICT.json"
+            ]["sha256"]
+        }
+        state["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
+
+
+def test_method_re_adoption_discovery_requires_current_design_obligations(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    record = _register_re_adoption_test_evidence(controller)
+    _activate_re_adoption_method_phase(controller, "method_design")
+    with controller._store.mutate() as state:
+        state["research_lit"]["incremental_evidence_by_phase"] = {
+            "method_design": {
+                "evidence:P2": {
+                    **record,
+                    "evidence_key": "evidence:P2",
+                    "phase_binding_anchor": {
+                        "phase": "method_design",
+                        "required_inputs": {},
+                        "design_obligation_binding": {
+                            "source": "historical_test_context",
+                            "obligation_ids": ["OBL-OLD"],
+                        },
+                    },
+                }
+            }
+        }
+
+    assert controller._current_method_obligation_binding(
+        controller.status(), "method_design"
+    ) is None
+    assert "readopt_evidence" not in controller.allowed_actions()
+
+
+def test_method_re_adoption_rejects_registered_evidence_never_phase_bound(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    _register_re_adoption_test_evidence(controller)
+    _activate_re_adoption_method_phase(controller, "method_refinement")
+
+    assert "readopt_evidence" not in controller.allowed_actions()
+    with pytest.raises(ControllerError, match="prior formal phase-scoped binding"):
+        controller.readopt_incremental_evidence("P2", obligation_ids=["OBL-1"])
+
+    assert "method_refinement" not in (
+        controller.status()["research_lit"].get("incremental_evidence_by_phase") or {}
+    )
+
+
+def test_method_re_adopts_historical_problem_phase_evidence(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    record = _register_re_adoption_test_evidence(controller)
+    _activate_re_adoption_method_phase(controller, "method_refinement")
+    with controller._store.mutate() as state:
+        state["research_lit"]["incremental_evidence_by_phase"] = {
+            "problem_generation": {
+                "evidence:P2": {
+                    **record,
+                    "evidence_key": "evidence:P2",
+                    "phase_binding_anchor": {
+                        "phase": "problem_generation",
+                        "required_inputs": {},
+                        "lifecycle_return_event_id": None,
+                    },
+                }
+            }
+        }
+
+    assert "readopt_evidence" in controller.allowed_actions()
+    assert controller.readopt_incremental_evidence(
+        "P2", obligation_ids=["OBL-1"]
+    ) == {
+        "status": "RE_ADOPTED",
+        "evidence_id": "P2",
+        "phase": "method_refinement",
+    }
+    assert "P2" in controller._current_phase_evidence_ids(
+        controller.status(), "method_refinement"
+    )
+    assert "readopt_evidence" not in controller.allowed_actions()
+
+
 def test_re_adoption_preserves_history_and_search_cycle_authorization_is_boundary_only(
     tmp_path: Path,
 ) -> None:

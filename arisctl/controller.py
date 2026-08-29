@@ -1531,8 +1531,25 @@ class ARISController:
                 and bool(records)
             )
         if phase_name in {"method_design", "method_refinement", "final_method_novelty_gate"}:
-            records = (research.get("incremental_evidence_by_phase") or {}).get(phase_name)
-            return isinstance(records, dict) and bool(records)
+            if phase.get("status") not in {"pending", "running"}:
+                return False
+            try:
+                anchor = self._phase_evidence_anchor(state, phase_name)
+            except ControllerError:
+                return False
+            if not isinstance(anchor.get("design_obligation_binding"), dict):
+                return False
+            for evidence_key in self._historical_phase_evidence_keys(research):
+                source_id = evidence_key.split(":", 1)[1]
+                try:
+                    self._registered_evidence_card(research, source_id)
+                except ControllerError:
+                    continue
+                if self._method_re_adoption_mechanical_status(
+                    research, phase_name, evidence_key, anchor
+                ) == "eligible":
+                    return True
+            return False
         if phase_name != "root_cause_analysis" or not self._phase_lifecycle_return_id(state, phase_name):
             return False
         method_phases = {"method_design", "method_refinement", "final_method_novelty_gate"}
@@ -1991,6 +2008,50 @@ class ARISController:
         if not registry_has_card:
             raise ControllerError("Evidence Card is absent from the Evidence Registry")
         return record, card
+
+    def _historical_phase_evidence_keys(self, research: dict[str, Any]) -> set[str]:
+        """Return Evidence keys with a binding under a declared literature phase."""
+
+        permitted_phases = set(
+            (self.workflow.get("scientific_core") or {})
+            .get("incremental_literature", {})
+            .get("permitted_phases", [])
+        )
+        by_phase = research.get("incremental_evidence_by_phase") or {}
+        if not isinstance(by_phase, dict):
+            return set()
+        return {
+            evidence_key
+            for phase_name, records in by_phase.items()
+            if phase_name in permitted_phases and isinstance(records, dict)
+            for binding_key, binding in records.items()
+            if isinstance(binding, dict)
+            for evidence_key in [binding.get("evidence_key") or binding_key]
+            if isinstance(evidence_key, str) and evidence_key.startswith("evidence:")
+        }
+
+    def _method_re_adoption_mechanical_status(
+        self,
+        research: dict[str, Any],
+        phase_name: str,
+        evidence_key: str,
+        anchor: dict[str, Any],
+    ) -> str:
+        """Classify only the mechanics shared by Method discovery and execution."""
+
+        if not isinstance(anchor.get("design_obligation_binding"), dict):
+            return "missing_obligation_context"
+        if evidence_key not in self._historical_phase_evidence_keys(research):
+            return "not_historical_phase_evidence"
+        records = (research.get("incremental_evidence_by_phase") or {}).get(phase_name)
+        if isinstance(records, dict) and any(
+            isinstance(binding, dict)
+            and (binding.get("evidence_key") or binding_key) == evidence_key
+            and binding.get("phase_binding_anchor") == anchor
+            for binding_key, binding in records.items()
+        ):
+            return "already_current"
+        return "eligible"
 
     @staticmethod
     def _evidence_has_method_context(
@@ -8205,10 +8266,12 @@ class ARISController:
     ) -> dict[str, Any]:
         """Create one new, current phase binding for an existing Evidence Card.
 
-        This is intentionally limited to the two legitimate cross-context uses:
-        method evidence under the current obligation context, and method
-        evidence used in a formally reopened root-cause analysis.  It never
-        rewrites the Card, query/read provenance, or an older binding.
+        The three legitimate uses are returned Problem Generation reusing
+        existing Problem-phase Evidence; Method phases re-adopting historical
+        phase-scoped Evidence under the current Design Obligation context; and
+        formally reopened RCA re-adopting Evidence that previously entered a
+        Method context.  This never rewrites the Card, query/read provenance,
+        or an older binding.
         """
 
         source_id = str(evidence_id or "").strip()
@@ -8265,13 +8328,22 @@ class ARISController:
                     return {"status": "ALREADY_CURRENT", "evidence_id": source_id, "phase": phase_name}
                 anchor["reopened_rca_return_event_id"] = return_id
             else:
+                mechanical_status = self._method_re_adoption_mechanical_status(
+                    research, phase_name, evidence_key, anchor
+                )
                 context = anchor.get("design_obligation_binding")
-                if not isinstance(context, dict):
+                if mechanical_status == "missing_obligation_context":
                     raise ControllerError("method evidence re-adoption requires a current Design Obligation binding")
+                if mechanical_status == "not_historical_phase_evidence":
+                    raise ControllerError(
+                        "method evidence re-adoption requires a prior formal phase-scoped binding"
+                    )
                 legal_ids = set(context.get("obligation_ids") or [])
                 requested_ids = set(obligation_ids or [])
                 if not requested_ids or not requested_ids.issubset(legal_ids):
                     raise ControllerError("re-adopted obligation IDs are not in the current Design Obligation context")
+                if mechanical_status == "already_current":
+                    return {"status": "ALREADY_CURRENT", "evidence_id": source_id, "phase": phase_name}
             phase_evidence = research.setdefault("incremental_evidence_by_phase", {}).setdefault(phase_name, {})
             if not isinstance(phase_evidence, dict):
                 raise ControllerError("incremental evidence records are invalid")
