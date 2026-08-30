@@ -26,6 +26,7 @@ from arisctl.gateways import (
     ProviderUnavailable,
     SearchOutcome,
     append_jsonl,
+    ledger_event,
 )
 from arisctl.validators import (
     ValidationError,
@@ -273,7 +274,11 @@ def method_design_packet(*, cycle_id: str = "DESIGN-1", evidence_refs: list[str]
                 "novelty_closure_id": f"NOVELTY-{suffix}",
                 "nearest_target_prior_evidence_refs": [bridge_evidence],
                 "causal_equivalent_intervention_check": "UNCOVERED",
-                "evidence_search_provenance": ["query:target-prior-1"],
+                "evidence_search_provenance": [{
+                    "query_plan_sha256": "3" * 64,
+                    "plan_item_id": "target-prior-1",
+                    "query_id": "Q-TARGET-PRIOR",
+                }],
                 "uncovered_residual_delta": f"Target residual delta {suffix}",
                 "mechanism_delta": f"Target mechanism delta {suffix}",
                 "scientific_delta": f"Target scientific delta {suffix}",
@@ -436,6 +441,50 @@ def method_design_packet(*, cycle_id: str = "DESIGN-1", evidence_refs: list[str]
     }
 
 
+def method_design_query_provenance_fixture() -> dict[str, dict]:
+    return {
+        "1" * 64: {
+            "order": 1,
+            "is_current": False,
+            "search_step_by_plan_item": {"domain-discovery-1": "DOMAIN_DISCOVERY"},
+            "domain_hypothesis_ids": ["DH-MODEL-1"],
+            "terminology_map_ids": [],
+            "evidence_ids_by_plan_item": {"domain-discovery-1": ["E-BRIDGE"]},
+            "completed_query_ids_by_plan_item": {
+                "domain-discovery-1": ["Q-BRIDGE"]
+            },
+        },
+        "2" * 64: {
+            "order": 2,
+            "is_current": False,
+            "search_step_by_plan_item": {
+                "terminology-grounding-1": "TERMINOLOGY_GROUNDING"
+            },
+            "domain_hypothesis_ids": [],
+            "terminology_map_ids": ["TERM-1"],
+            "evidence_ids_by_plan_item": {},
+            "completed_query_ids_by_plan_item": {
+                "terminology-grounding-1": ["Q-TERMINOLOGY"]
+            },
+        },
+        "3" * 64: {
+            "order": 3,
+            "is_current": True,
+            "search_step_by_plan_item": {
+                "source-search-1": "SOURCE_SEARCH",
+                "target-prior-1": "SOURCE_SEARCH",
+            },
+            "domain_hypothesis_ids": [],
+            "terminology_map_ids": ["TERM-1"],
+            "evidence_ids_by_plan_item": {},
+            "completed_query_ids_by_plan_item": {
+                "source-search-1": ["Q-SOURCE"],
+                "target-prior-1": ["Q-TARGET-PRIOR"],
+            },
+        },
+    }
+
+
 def validate_packet_fixture(
     packet: dict,
     *,
@@ -444,6 +493,8 @@ def validate_packet_fixture(
     query_plan_provenance: dict[str, dict] | None = None,
 ) -> dict:
     workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+    if query_plan_provenance is None:
+        query_plan_provenance = method_design_query_provenance_fixture()
     return validate_method_design_packet(
         packet,
         contract=workflow["artifact_contracts"]["method_design_packet"],
@@ -574,14 +625,7 @@ def test_derivation_origins_need_no_literature_query_and_scientific_quality_is_r
 
 def test_academic_bridge_can_close_without_fabricating_a_domain_hypothesis() -> None:
     plan_sha = "1" * 64
-    provenance = {
-        plan_sha: {
-            "order": 1,
-            "search_step_by_plan_item": {"domain-discovery-1": "DOMAIN_DISCOVERY"},
-            "domain_hypothesis_ids": ["DH-MODEL-1"],
-            "evidence_ids_by_plan_item": {"domain-discovery-1": ["E-BRIDGE"]},
-        }
-    }
+    provenance = method_design_query_provenance_fixture()
     packet = method_design_packet()
     validated = validate_packet_fixture(
         packet,
@@ -600,6 +644,65 @@ def test_academic_bridge_can_close_without_fabricating_a_domain_hypothesis() -> 
             current_evidence_ids={"E-BRIDGE"},
             query_plan_provenance=missing_read,
         )
+
+
+def test_early_target_novelty_accepts_real_current_completed_query_provenance() -> None:
+    packet = method_design_packet()
+    validated = validate_packet_fixture(
+        packet,
+        query_plan_provenance=method_design_query_provenance_fixture(),
+    )
+    assert validated["packet"]["candidate_principles"][0][
+        "target_intervention_novelty"
+    ]["evidence_search_provenance"] == [{
+        "query_plan_sha256": "3" * 64,
+        "plan_item_id": "target-prior-1",
+        "query_id": "Q-TARGET-PRIOR",
+    }]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda packet, provenance: packet["candidate_principles"][0][
+                "target_intervention_novelty"
+            ].update(evidence_search_provenance=["query:forged-target-prior"]),
+            "must be a JSON object",
+        ),
+        (
+            lambda packet, provenance: packet["candidate_principles"][0][
+                "target_intervention_novelty"
+            ]["evidence_search_provenance"][0].update(query_plan_sha256="f" * 64),
+            "unknown accepted Method Design Query Plan",
+        ),
+        (
+            lambda packet, provenance: packet["candidate_principles"][0][
+                "target_intervention_novelty"
+            ]["evidence_search_provenance"][0].update(plan_item_id="missing-plan-item"),
+            "unknown Method Design plan item",
+        ),
+        (
+            lambda packet, provenance: provenance["3" * 64][
+                "completed_query_ids_by_plan_item"
+            ].update({"target-prior-1": []}),
+            "completed current Method Design query event",
+        ),
+        (
+            lambda packet, provenance: provenance["3" * 64].update(is_current=False),
+            "stale Method Design Query Plan",
+        ),
+    ],
+)
+def test_early_target_novelty_rejects_forged_unknown_unfinished_or_stale_provenance(
+    mutation,
+    message: str,
+) -> None:
+    packet = method_design_packet()
+    provenance = method_design_query_provenance_fixture()
+    mutation(packet, provenance)
+    with pytest.raises(ValidationError, match=message):
+        validate_packet_fixture(packet, query_plan_provenance=provenance)
 
 
 def test_source_efficacy_alignment_and_target_novelty_are_hard_machine_gates() -> None:
@@ -633,23 +736,9 @@ def test_source_efficacy_alignment_and_target_novelty_are_hard_machine_gates() -
 
 def test_post_hoc_cross_domain_discovery_and_unresolved_budget_closure_are_rejected() -> None:
     packet = method_design_packet(evidence_refs=["E-CROSS"])
-    provenance = {
-        "1" * 64: {
-            "order": 3,
-            "search_step_by_plan_item": {"domain-discovery-1": "DOMAIN_DISCOVERY"},
-            "domain_hypothesis_ids": ["DH-MODEL-1"],
-            "evidence_ids_by_plan_item": {"domain-discovery-1": ["E-BRIDGE"]},
-        },
-        "2" * 64: {
-            "order": 2,
-            "search_step_by_plan_item": {"terminology-grounding-1": "TERMINOLOGY_GROUNDING"},
-        },
-        "3" * 64: {
-            "order": 1,
-            "search_step_by_plan_item": {"source-search-1": "SOURCE_SEARCH"},
-            "terminology_map_ids": ["TERM-1"],
-        },
-    }
+    provenance = method_design_query_provenance_fixture()
+    provenance["1" * 64]["order"] = 3
+    provenance["3" * 64]["order"] = 1
     with pytest.raises(ValidationError, match="pre-Source discovery and terminology"):
         validate_packet_fixture(
             packet,
@@ -2247,6 +2336,12 @@ def controller_at_method_design(root: Path) -> ARISController:
             if item["search_step"] == "DOMAIN_DISCOVERY"
         )
         domain_item["plan_item_id"] = "domain-discovery-1"
+        target_prior_item = next(
+            item
+            for item in query_plan["queries"]
+            if item["search_dimension"] == "SAME_FIELD_MECHANISM"
+            and item["search_step"] == "SOURCE_SEARCH"
+        )
         plan_path = root / "idea-stage" / "QUERY_PLAN_METHOD_DESIGN_FIXTURE.json"
         plan_path.write_text(json.dumps(query_plan, indent=2), encoding="utf-8")
         plan_sha256 = sha256_file(plan_path)
@@ -2287,6 +2382,25 @@ def controller_at_method_design(root: Path) -> ARISController:
             "plan_item_id": "domain-discovery-1",
             "status": "complete",
         }
+        state["research_lit"]["query_events"]["Q-TARGET-PRIOR"] = {
+            "query_plan_sha256": plan_sha256,
+            "plan_item_id": target_prior_item["plan_item_id"],
+            "status": "complete",
+        }
+        append_jsonl(
+            root / "idea-stage" / "SEARCH_LEDGER.jsonl",
+            ledger_event(
+                run_id=controller.run_id,
+                stage="METADATA_RETRIEVAL",
+                action="query",
+                query_id="Q-TARGET-PRIOR",
+                query=target_prior_item["query"],
+                tool="fixture-search",
+                result_status="complete",
+                event_id="EVENT-TARGET-PRIOR",
+                details={"plan_item_id": target_prior_item["plan_item_id"]},
+            ),
+        )
         state["research_lit"]["read_events"]["READ-BRIDGE"] = {
             "paper_id": "E-BRIDGE",
             "status": "complete",
@@ -2334,12 +2448,59 @@ def bound_method_design_packet(controller: ARISController, *, cycle_id: str = "D
     packet["principle_search_record"]["discovery_executions"][1][
         "query_plan_sha256"
     ] = plan_sha256
+    plan_record = state["research_lit"]["accepted_artifacts"][
+        "incremental-query-plan-method_design"
+    ]
+    plan = json.loads(
+        (controller.root / plan_record["path"]).read_text(encoding="utf-8")
+    )
+    target_prior_item = next(
+        item
+        for item in plan["queries"]
+        if item["search_dimension"] == "SAME_FIELD_MECHANISM"
+        and item["search_step"] == "SOURCE_SEARCH"
+    )
+    for candidate in packet["candidate_principles"]:
+        candidate["target_intervention_novelty"]["evidence_search_provenance"] = [{
+            "query_plan_sha256": plan_sha256,
+            "plan_item_id": target_prior_item["plan_item_id"],
+            "query_id": "Q-TARGET-PRIOR",
+        }]
     packet["relevant_history_refs"] = sorted(
         run_state._relevant_scientific_history_refs(str(controller.root), state, packet)
     )
     feedback_ref = run_state._latest_return_feedback_ref(state, "method_design")
     packet["return_feedback_refs"] = [feedback_ref] if feedback_ref else []
     return packet
+
+
+def test_method_design_query_plan_provenance_indexes_only_real_terminal_queries(
+    tmp_path: Path,
+) -> None:
+    controller = controller_at_method_design(tmp_path)
+    state = controller.status()
+    plan_sha256 = state["research_lit"]["accepted_artifacts"][
+        "incremental-query-plan-method_design"
+    ]["sha256"]
+    provenance = run_state._method_design_query_plan_provenance(
+        str(controller.root), state
+    )
+    current = provenance[plan_sha256]
+    assert current["is_current"] is True
+    assert current["completed_query_ids_by_plan_item"]["method-search-1"] == [
+        "Q-TARGET-PRIOR"
+    ]
+
+    with controller._store.mutate() as live_state:
+        live_state["research_lit"]["query_events"]["Q-TARGET-PRIOR"][
+            "status"
+        ] = "started"
+    unfinished = run_state._method_design_query_plan_provenance(
+        str(controller.root), controller.status()
+    )
+    assert "method-search-1" not in unfinished[plan_sha256][
+        "completed_query_ids_by_plan_item"
+    ]
 
 
 def activate_method_design_admission_context(

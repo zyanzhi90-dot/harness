@@ -1911,10 +1911,63 @@ def validate_method_design_packet(
                 f"candidate principle {index}.target_intervention_novelty.nearest_target_prior_evidence_refs",
             )
         )
-        _unique_string_values(
-            novelty["evidence_search_provenance"],
-            f"candidate principle {index}.target_intervention_novelty.evidence_search_provenance",
+        novelty_provenance = _require_list(
+            novelty,
+            "evidence_search_provenance",
+            f"candidate principle {index}.target_intervention_novelty",
+            non_empty=True,
         )
+        if query_plan_provenance is None:
+            raise ValidationError(
+                f"candidate principle {index} target novelty requires current Method Design query provenance"
+            )
+        seen_novelty_provenance: set[tuple[str, str, str]] = set()
+        for number, raw_provenance in enumerate(novelty_provenance, 1):
+            provenance = _require_mapping(
+                raw_provenance,
+                f"candidate principle {index} target novelty search provenance {number}",
+            )
+            _require_fields(
+                provenance,
+                ("query_plan_sha256", "plan_item_id", "query_id"),
+                f"candidate principle {index} target novelty search provenance {number}",
+            )
+            plan_sha256 = _required_text(
+                provenance["query_plan_sha256"],
+                f"candidate principle {index} target novelty search provenance {number}.query_plan_sha256",
+            )
+            plan_item_id = _required_text(
+                provenance["plan_item_id"],
+                f"candidate principle {index} target novelty search provenance {number}.plan_item_id",
+            )
+            query_id = _required_text(
+                provenance["query_id"],
+                f"candidate principle {index} target novelty search provenance {number}.query_id",
+            )
+            provenance_key = (plan_sha256, plan_item_id, query_id)
+            if provenance_key in seen_novelty_provenance:
+                raise ValidationError(
+                    f"candidate principle {index} target novelty search provenance contains duplicates"
+                )
+            seen_novelty_provenance.add(provenance_key)
+            plan_record = query_plan_provenance.get(plan_sha256)
+            if not isinstance(plan_record, dict):
+                raise ValidationError(
+                    f"candidate principle {index} target novelty cites an unknown accepted Method Design Query Plan"
+                )
+            if plan_record.get("is_current") is not True:
+                raise ValidationError(
+                    f"candidate principle {index} target novelty cites a stale Method Design Query Plan"
+                )
+            if plan_item_id not in (plan_record.get("search_step_by_plan_item") or {}):
+                raise ValidationError(
+                    f"candidate principle {index} target novelty cites an unknown Method Design plan item"
+                )
+            completed_by_item = plan_record.get("completed_query_ids_by_plan_item") or {}
+            if query_id not in set(completed_by_item.get(plan_item_id) or []):
+                raise ValidationError(
+                    f"candidate principle {index} target novelty does not resolve to a completed current Method Design query event"
+                )
         for field in ("uncovered_residual_delta", "mechanism_delta", "scientific_delta"):
             _required_text(
                 novelty[field],

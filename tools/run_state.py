@@ -895,6 +895,7 @@ def _method_design_query_plan_provenance(root: str, state: dict) -> dict[str, di
     current = (research.get("accepted_artifacts") or {}).get(
         "incremental-query-plan-method_design"
     )
+    current_digest = str(current.get("sha256") or "") if isinstance(current, dict) else ""
     if isinstance(current, dict):
         records.append(current)
     ordered = sorted(
@@ -934,7 +935,62 @@ def _method_design_query_plan_provenance(root: str, state: dict) -> dict[str, di
                 if isinstance(item, dict) and isinstance(item.get("terminology_map_id"), str)
             ],
             "evidence_ids_by_plan_item": {},
+            "completed_query_ids_by_plan_item": {},
+            "is_current": digest == current_digest,
         }
+    if current_digest and current_digest not in resolved:
+        raise ValueError("current Method Design Query Plan provenance is invalid")
+
+    terminal_ledger_query_ids: set[str] = set()
+    search_log_path = str(
+        ((state.get("workflow") or {}).get("artifact_manifest") or {}).get("search_log")
+        or ""
+    )
+    search_log = _artifact_path(root, search_log_path)
+    if search_log.is_file():
+        for line_number, line in enumerate(
+            search_log.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Search Ledger has invalid JSON at line {line_number}"
+                ) from exc
+            if (
+                isinstance(row, dict)
+                and row.get("run_id") == state.get("run_id")
+                and row.get("action") == "query"
+                and row.get("result_status")
+                in {"complete", "complete_human", "complete_with_human_followup"}
+                and isinstance(row.get("query_id"), str)
+                and row["query_id"]
+            ):
+                terminal_ledger_query_ids.add(row["query_id"])
+
+    query_events = research.get("query_events") or {}
+    for query_id, event in query_events.items():
+        if (
+            not isinstance(query_id, str)
+            or not isinstance(event, dict)
+            or event.get("status") not in {"complete", "complete_human"}
+            or query_id not in terminal_ledger_query_ids
+        ):
+            continue
+        plan_sha256 = str(event.get("query_plan_sha256") or "")
+        plan_record = resolved.get(plan_sha256)
+        plan_item_id = event.get("plan_item_id")
+        if (
+            not isinstance(plan_record, dict)
+            or not isinstance(plan_item_id, str)
+            or plan_item_id not in plan_record["search_step_by_plan_item"]
+        ):
+            continue
+        plan_record["completed_query_ids_by_plan_item"].setdefault(
+            plan_item_id, []
+        ).append(query_id)
     evidence_records: dict[str, dict] = {
         key: value
         for key, value in (research.get("accepted_artifacts") or {}).items()
@@ -947,7 +1003,6 @@ def _method_design_query_plan_provenance(root: str, state: dict) -> dict[str, di
         ).items()
         if key.startswith("evidence:") and isinstance(value, dict)
     })
-    query_events = research.get("query_events") or {}
     for artifact_name, record in evidence_records.items():
         path = _artifact_path(root, str(record.get("path") or ""))
         digest = str(record.get("sha256") or "")
@@ -981,6 +1036,12 @@ def _method_design_query_plan_provenance(root: str, state: dict) -> dict[str, di
         plan_record["evidence_ids_by_plan_item"] = {
             plan_item_id: sorted(set(evidence_ids))
             for plan_item_id, evidence_ids in plan_record["evidence_ids_by_plan_item"].items()
+        }
+        plan_record["completed_query_ids_by_plan_item"] = {
+            plan_item_id: sorted(set(query_ids))
+            for plan_item_id, query_ids in plan_record[
+                "completed_query_ids_by_plan_item"
+            ].items()
         }
     return resolved
 
