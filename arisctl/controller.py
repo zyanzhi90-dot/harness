@@ -719,11 +719,21 @@ class ARISController:
             core.setdefault("selected_for_testing", None)
             if core.get("status") == "ACTIVE":
                 core_phase_names = set(self.workflow["scientific_core"]["phases"])
+                phase_specs = {
+                    item["phase"]: item
+                    for item in self.workflow["phases"]
+                    if isinstance(item, dict) and isinstance(item.get("phase"), str)
+                }
+                terminal_statuses = set(self.workflow["terminal_statuses"])
                 current = next(
                     (
                         item["phase"] for item in state["phases"]
                         if item["phase"] in core_phase_names
-                        and item.get("status") not in set(self.workflow["terminal_statuses"])
+                        and item.get("status") not in terminal_statuses
+                        and not (
+                            item.get("status") == "done"
+                            and not phase_specs[item["phase"]].get("formal_gate")
+                        )
                     ),
                     None,
                 )

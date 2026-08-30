@@ -6123,6 +6123,21 @@ def test_compatible_migration_allows_new_identity_and_unexecuted_suffix_mapping(
     ]
 
 
+def test_compatible_migration_skips_completed_non_gate_done_prefix(
+    tmp_path: Path,
+) -> None:
+    controller = controller_at_method_design(tmp_path)
+    state = run_state._load(tmp_path, controller.run_id)
+    state["workflow_sha256"] = "1" * 64
+    run_state._save(tmp_path, controller.run_id, state)
+
+    controller.migrate_workflow_if_compatible()
+
+    restored = controller.status()
+    assert restored["scientific_core"]["current_phase"] == "method_design"
+    assert "start_phase" in controller.allowed_actions()
+
+
 def test_compatible_workflow_migration_rejects_changed_literature_protocol(tmp_path: Path) -> None:
     controller = start_controller(tmp_path)
     state = run_state._load(tmp_path, controller.run_id)
