@@ -253,6 +253,10 @@ def _load_workflow(path: Optional[str]) -> Optional[dict]:
             raise ValueError(
                 f"phase {item.get('phase')!r} accepted_verdicts must be a non-empty string list"
             )
+        if accepted_verdicts is not None and len(accepted_verdicts) != len(set(accepted_verdicts)):
+            raise ValueError(
+                f"phase {item.get('phase')!r} accepted_verdicts must be unique"
+            )
         accepted_decisions = item.get("accepted_decisions")
         if item.get("human_checkpoint"):
             if (
@@ -286,6 +290,39 @@ def _load_workflow(path: Optional[str]) -> Optional[dict]:
             if accepted_decisions is not None and set(accepted_decisions) & set(return_targets):
                 raise ValueError(
                     f"phase {item.get('phase')!r} accepted_decisions and return_targets overlap"
+                )
+            if accepted_verdicts is not None and set(accepted_verdicts) & set(return_targets):
+                raise ValueError(
+                    f"phase {item.get('phase')!r} accepted_verdicts and return_targets overlap"
+                )
+        terminal_verdicts = item.get("terminal_verdicts")
+        if terminal_verdicts is not None:
+            if not isinstance(terminal_verdicts, dict) or not terminal_verdicts:
+                raise ValueError(
+                    f"phase {item.get('phase')!r} terminal_verdicts must be a non-empty object"
+                )
+            if not item.get("formal_gate") or item.get("human_checkpoint"):
+                raise ValueError(
+                    f"phase {item.get('phase')!r} terminal_verdicts require a reviewer-owned formal Gate"
+                )
+            for decision, terminal in terminal_verdicts.items():
+                if not isinstance(decision, str) or not decision or not isinstance(terminal, dict):
+                    raise ValueError(
+                        f"phase {item.get('phase')!r} terminal_verdicts are invalid"
+                    )
+                if terminal != {
+                    "action": "terminate_scientific_core",
+                    "status": "SCIENTIFIC_NO_GO",
+                }:
+                    raise ValueError(
+                        f"phase {item.get('phase')!r} terminal verdict {decision!r} must use the canonical scientific terminal"
+                    )
+            accepted = set(accepted_verdicts or [])
+            returns = set((return_targets or {}).keys())
+            terminals = set(terminal_verdicts)
+            if accepted & terminals or returns & terminals:
+                raise ValueError(
+                    f"phase {item.get('phase')!r} accepted_verdicts, return_targets, and terminal_verdicts must be pairwise disjoint"
                 )
     return workflow
 
@@ -803,6 +840,51 @@ def _accepted_json_artifact(root: str, state: dict, manifest_name: str) -> tuple
     return payload, raw_path
 
 
+def _accepted_necessity_binding(root: str, state: dict) -> dict:
+    """Return the exact accepted residual-failure handoff required by RCA."""
+
+    workflow = state.get("workflow") or {}
+    if state.get("controller_managed"):
+        closure, closure_path = _accepted_json_artifact(root, state, "necessity_closure")
+        verdict, verdict_path = _accepted_json_artifact(root, state, "necessity_verdict")
+    else:
+        closure_path = str(workflow["artifact_manifest"]["necessity_closure"])
+        verdict_path = str(workflow["artifact_manifest"]["necessity_verdict"])
+        try:
+            closure = json.loads(_artifact_path(root, closure_path).read_text(encoding="utf-8"))
+            verdict = json.loads(_artifact_path(root, verdict_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError("root-cause analysis requires readable accepted Necessity artifacts") from exc
+    phase = _find_phase(state, "problem_necessity")
+    if phase.get("status") != "accepted" or verdict.get("decision") != "RESIDUAL_SAME_PROBLEM":
+        raise ValueError("root-cause analysis requires accepted RESIDUAL_SAME_PROBLEM Necessity")
+    if verdict.get("necessity_id") != closure.get("necessity_id"):
+        raise ValueError("accepted Necessity Closure and Verdict identities do not match")
+    closure_sha256 = _sha256(_artifact_path(root, closure_path))
+    verdict_sha256 = _sha256(_artifact_path(root, verdict_path))
+    if verdict.get("reviewed_closure_sha256") != closure_sha256:
+        raise ValueError("accepted Necessity Verdict is stale for the current Closure")
+    residuals = closure.get("residual_failure_envelope")
+    if not isinstance(residuals, list) or not residuals:
+        raise ValueError("accepted residual Necessity has no Residual Failure Envelope")
+    residual_ids = [
+        item.get("residual_failure_id") for item in residuals if isinstance(item, dict)
+    ]
+    if (
+        len(residual_ids) != len(residuals)
+        or any(not isinstance(item, str) or not item for item in residual_ids)
+        or len(residual_ids) != len(set(residual_ids))
+    ):
+        raise ValueError("accepted Necessity has invalid residual failure identities")
+    return {
+        "necessity_id": closure["necessity_id"],
+        "closure_sha256": closure_sha256,
+        "verdict_id": verdict["verdict_id"],
+        "verdict_sha256": verdict_sha256,
+        "residual_failure_ids": residual_ids,
+    }
+
+
 def _validate_method_main_artifact(
     root: str,
     state: dict,
@@ -817,13 +899,40 @@ def _validate_method_main_artifact(
         validate_method_design_packet,
         validate_principle_test_plan,
         validate_principle_evaluation,
+        validate_necessity_closure,
     )
 
     workflow = state.get("workflow") or {}
     contracts = workflow.get("artifact_contracts") or {}
     output_paths = _resolve_artifact_refs(workflow, spec.get("produced_artifacts", []), phase)
-    context = _method_principle_context(root, state)
     try:
+        if phase == "problem_necessity":
+            closure_path = str(workflow["artifact_manifest"]["necessity_closure"])
+            closure = json.loads(_artifact_path(root, closure_path).read_text(encoding="utf-8"))
+            problem_version = (state.get("scientific_core") or {}).get("active_problem_version")
+            if not isinstance(problem_version, dict):
+                raise ValidationError("Necessity requires an active accepted Problem")
+            current_ids = (
+                current_phase_evidence_ids
+                if current_phase_evidence_ids is not None
+                else set(_current_formal_evidence_paths(root, state))
+            )
+            validated = validate_necessity_closure(
+                closure,
+                contract=contracts["necessity_closure"],
+                run_id=state["run_id"],
+                problem_version=problem_version,
+                current_evidence_ids=current_ids,
+            )
+            return {
+                "closure": validated,
+                "necessity_id": validated["necessity_id"],
+                "residual_failure_ids": [
+                    item["residual_failure_id"]
+                    for item in validated["residual_failure_envelope"]
+                ],
+            }
+        context = _method_principle_context(root, state)
         if phase == "method_design":
             packet_path = str(workflow["artifact_manifest"]["method_design_packet"])
             packet = json.loads(_artifact_path(root, packet_path).read_text(encoding="utf-8"))
@@ -955,13 +1064,14 @@ def _validate_principle_method_outputs(
     *,
     current_phase_evidence_ids: set[str] | None = None,
 ) -> dict | None:
-    if phase not in {"method_design", "principle_test_design", "principle_evaluation", "method_refinement"}:
+    if phase not in {"problem_necessity", "method_design", "principle_test_design", "principle_evaluation", "method_refinement"}:
         return None
     from arisctl.validators import (
         ValidationError,
         validate_json_review_verdict_artifact,
         validate_method_design_view,
         validate_principle_test_plan_view,
+        validate_necessity_verdict,
     )
 
     main = _validate_method_main_artifact(
@@ -977,7 +1087,29 @@ def _validate_principle_method_outputs(
         return None
     result: dict = {"validated_artifacts": _artifact_hashes(root, output_paths)}
     try:
-        if phase == "method_design":
+        if phase == "problem_necessity":
+            closure = main["closure"]
+            closure_path = str(workflow["artifact_manifest"]["necessity_closure"])
+            verdict_path = str(workflow["artifact_manifest"]["necessity_verdict"])
+            problem_version = (state.get("scientific_core") or {}).get("active_problem_version")
+            if not isinstance(problem_version, dict):
+                raise ValidationError("Necessity review requires an active accepted Problem")
+            verdict = validate_necessity_verdict(
+                json.loads(_artifact_path(root, verdict_path).read_text(encoding="utf-8")),
+                contract=(workflow.get("artifact_contracts") or {})["necessity_verdict"],
+                run_id=state["run_id"],
+                request_id=request["id"],
+                artifact_bindings=request["artifact_bindings"],
+                closure=closure,
+                reviewed_closure_sha256=_sha256(_artifact_path(root, closure_path)),
+                problem_contract_sha256=problem_version["contract_sha256"],
+                evidence_capsule_sha256=problem_version["evidence_capsule_sha256"],
+            )
+            result.update(
+                necessity_id=closure["necessity_id"],
+                residual_failure_ids=main["residual_failure_ids"],
+            )
+        elif phase == "method_design":
             packet = main["packet"]
             view_path = str(workflow["artifact_manifest"]["method_design_view"])
             validate_method_design_view(_artifact_path(root, view_path).read_text(encoding="utf-8"), packet)
@@ -1110,11 +1242,12 @@ def _assert_outputs(
         )
 
         input_paths = _resolve_artifact_refs(workflow, spec.get("required_inputs", []), phase)
-        problem_contract, evidence_capsule = input_paths
+        problem_contract, evidence_capsule, necessity_closure, necessity_verdict = input_paths
         analysis_path = output_paths[0]
         problem_hash = _sha256(_artifact_path(root, problem_contract))
         evidence_hash = _sha256(_artifact_path(root, evidence_capsule))
         raw_analysis = load_json(_artifact_path(root, analysis_path))
+        accepted_necessity = _accepted_necessity_binding(root, state)
         active_problem_id: str | None = None
         formal_evidence_sources: dict[str, str] | None = None
         diagnostic_pilots: list[dict[str, str]] = []
@@ -1137,6 +1270,7 @@ def _assert_outputs(
             evidence_capsule_sha256=evidence_hash,
             active_problem_id=active_problem_id,
             formal_evidence_sources=formal_evidence_sources,
+            necessity_binding=accepted_necessity,
         )
         validate_root_cause_view(
             _artifact_path(root, output_paths[1]).read_text(encoding="utf-8"),
@@ -1149,13 +1283,24 @@ def _assert_outputs(
             "analysis_id": analysis["analysis_id"],
             "problem_contract_sha256": problem_hash,
             "evidence_capsule_sha256": evidence_hash,
+            "necessity_id": accepted_necessity["necessity_id"],
+            "necessity_closure_sha256": accepted_necessity["closure_sha256"],
+            "necessity_verdict_sha256": accepted_necessity["verdict_sha256"],
+            "residual_failure_ids": list(accepted_necessity["residual_failure_ids"]),
             "diagnostic_pilot_artifacts": diagnostic_pilots,
         }
     if spec.get("gate_id") == "root_cause_quality":
         from arisctl.validators import load_json, validate_root_cause_verdict
 
         input_paths = _resolve_artifact_refs(workflow, spec.get("required_inputs", []), phase)
-        problem_contract, evidence_capsule, analysis_path, _analysis_view = input_paths
+        (
+            problem_contract,
+            evidence_capsule,
+            necessity_closure,
+            necessity_verdict,
+            analysis_path,
+            _analysis_view,
+        ) = input_paths
         verdict_path = output_paths[0]
         analysis = load_json(_artifact_path(root, analysis_path))
         verdict = validate_root_cause_verdict(
@@ -1165,6 +1310,8 @@ def _assert_outputs(
             reviewed_analysis_sha256=_sha256(_artifact_path(root, analysis_path)),
             problem_contract_sha256=_sha256(_artifact_path(root, problem_contract)),
             evidence_capsule_sha256=_sha256(_artifact_path(root, evidence_capsule)),
+            necessity_closure_sha256=_sha256(_artifact_path(root, necessity_closure)),
+            necessity_verdict_sha256=_sha256(_artifact_path(root, necessity_verdict)),
         )
         return {
             "validated_artifacts": _artifact_hashes(root, output_paths),
@@ -1189,14 +1336,16 @@ def _assert_outputs(
         "method_refinement": (
             "markdown",
             set(spec.get("accepted_verdicts") or [])
-            | set((spec.get("return_targets") or {}).keys()),
+            | set((spec.get("return_targets") or {}).keys())
+            | set((spec.get("terminal_verdicts") or {}).keys()),
             None,
             "final blind review",
         ),
         "method_novelty_final": (
             "markdown",
             set(spec.get("accepted_verdicts") or [])
-            | set((spec.get("return_targets") or {}).keys()),
+            | set((spec.get("return_targets") or {}).keys())
+            | set((spec.get("terminal_verdicts") or {}).keys()),
             None,
             "final method novelty verdict",
         ),

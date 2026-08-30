@@ -302,9 +302,10 @@ def main() -> int:
             required_verdict_fields = {
                 "schema_version", "analysis_id", "reviewed_analysis_sha256",
                 "problem_contract_sha256", "evidence_capsule_sha256", "reasons", "issues",
+                "necessity_closure_sha256", "necessity_verdict_sha256",
                 "observation_fidelity", "grouping_adequacy", "causal_depth",
                 "explanatory_coverage", "evidence_calibration", "intervention_relevance",
-                "falsifiability",
+                "falsifiability", "residual_failure_fidelity",
             }
             missing = sorted(required_verdict_fields - set(payload))
             if missing:
@@ -324,11 +325,26 @@ def main() -> int:
                     + ", ".join(missing)
                 )
         if role == "independent_problem_reviewer":
-            records = payload.get("verdict_records")
-            if not isinstance(records, list) or not records:
-                raise ValueError(
-                    f"{role} must return complete reviewer-owned verdict_records"
-                )
+            if "necessity_id" in payload:
+                required_verdict_fields = {
+                    "schema_version", "necessity_id", "reviewed_closure_sha256",
+                    "problem_contract_sha256", "evidence_capsule_sha256", "reasons", "issues",
+                    "failure_reality", "operating_envelope_fidelity",
+                    "simple_repair_coverage", "residual_failure_fidelity",
+                    "problem_identity_fidelity", "evidence_sufficiency",
+                }
+                missing = sorted(required_verdict_fields - set(payload))
+                if missing:
+                    raise ValueError(
+                        "independent_problem_reviewer must return the complete canonical Necessity verdict payload: "
+                        + ", ".join(missing)
+                    )
+            else:
+                records = payload.get("verdict_records")
+                if not isinstance(records, list) or not records:
+                    raise ValueError(
+                        f"{role} must return complete reviewer-owned verdict_records"
+                    )
         if role == "result_to_claim_reviewer":
             required_verdict_fields = {
                 "schema_version", "workflow_sha256", "handoff_sha256", "rationale",

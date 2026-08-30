@@ -137,6 +137,11 @@ def build_parser() -> argparse.ArgumentParser:
     accept_phase.add_argument("--verdict-id", required=True)
     accept_phase.add_argument("--reviewer", required=True)
 
+    terminate_core = sub.add_parser("terminate-scientific-core")
+    terminate_core.add_argument("run_id")
+    terminate_core.add_argument("--verdict-id", required=True)
+    terminate_core.add_argument("--reviewer", required=True)
+
     return_phase = sub.add_parser("return-phase")
     return_phase.add_argument("run_id")
     return_phase.add_argument("--verdict-id", required=True)
@@ -435,6 +440,11 @@ def main() -> int:
                 result = controller.submit_method_test_result(_json_file(args.json_file))
             elif args.command == "accept-phase":
                 result = controller.accept_current_phase(
+                    args.verdict_id,
+                    args.reviewer,
+                )
+            elif args.command == "terminate-scientific-core":
+                result = controller.terminate_scientific_core(
                     args.verdict_id,
                     args.reviewer,
                 )

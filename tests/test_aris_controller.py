@@ -635,16 +635,20 @@ def test_diagnosis_ready_requires_every_root_cause_rubric_to_pass() -> None:
         "reviewed_analysis_sha256": "a" * 64,
         "problem_contract_sha256": "b" * 64,
         "evidence_capsule_sha256": "c" * 64,
+        "necessity_closure_sha256": "d" * 64,
+        "necessity_verdict_sha256": "e" * 64,
         "decision": "DIAGNOSIS_READY", "reasons": ["adequate for method design"],
         "issues": [], "observation_fidelity": "PASS", "grouping_adequacy": "PASS",
         "causal_depth": "PASS", "explanatory_coverage": "PASS",
         "evidence_calibration": "PASS", "intervention_relevance": "PASS",
-        "falsifiability": "UNCERTAIN",
+        "falsifiability": "PASS", "residual_failure_fidelity": "UNCERTAIN",
     }
-    with pytest.raises(ValidationError, match="all seven"):
+    with pytest.raises(ValidationError, match="all root-cause"):
         validate_root_cause_verdict(
             verdict, run_id="run-1", analysis_id="RCA-1", reviewed_analysis_sha256="a" * 64,
             problem_contract_sha256="b" * 64, evidence_capsule_sha256="c" * 64,
+            necessity_closure_sha256="d" * 64,
+            necessity_verdict_sha256="e" * 64,
         )
 
 
@@ -1389,6 +1393,43 @@ def start_controller(
     return controller
 
 
+def necessity_fixture_artifacts(
+    *, run_id: str, problem_contract_sha256: str, evidence_capsule_sha256: str
+) -> tuple[str, str, dict[str, object]]:
+    """Return a current accepted residual-failure Necessity handoff for state fixtures."""
+
+    closure = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "necessity_id": "NEC-1",
+        "problem_binding": {
+            "problem_id": "P-1",
+            "problem_version": 1,
+            "problem_contract_sha256": problem_contract_sha256,
+            "evidence_capsule_sha256": evidence_capsule_sha256,
+        },
+        "residual_failure_envelope": [{"residual_failure_id": "RF-1"}],
+    }
+    closure_text = json.dumps(closure) + "\n"
+    closure_sha256 = hashlib.sha256(closure_text.encode("utf-8")).hexdigest()
+    verdict = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "necessity_id": "NEC-1",
+        "verdict_id": "NEC-V-1",
+        "decision": "RESIDUAL_SAME_PROBLEM",
+        "reviewed_closure_sha256": closure_sha256,
+    }
+    verdict_text = json.dumps(verdict) + "\n"
+    return closure_text, verdict_text, {
+        "necessity_id": "NEC-1",
+        "closure_sha256": closure_sha256,
+        "verdict_id": "NEC-V-1",
+        "verdict_sha256": hashlib.sha256(verdict_text.encode("utf-8")).hexdigest(),
+        "residual_failure_ids": ["RF-1"],
+    }
+
+
 def confirmed_validation_controller(root: Path) -> ARISController:
     """Construct a Controller-registered final handoff for validation tests."""
 
@@ -1422,15 +1463,27 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         f"## {section}\nPR-A v1; CHAIN-1; RMC-1; CAP-1; OBL-1; {section} content."
         for section in controller.workflow["artifact_contracts"]["final_proposal"]["required_sections"]
     ) + "\n"
+    contract_text = "# Contract\n"
+    capsule_text = "# Evidence\n"
+    necessity_closure, necessity_verdict, necessity_binding = necessity_fixture_artifacts(
+        run_id=controller.run_id,
+        problem_contract_sha256=hashlib.sha256(contract_text.encode("utf-8")).hexdigest(),
+        evidence_capsule_sha256=hashlib.sha256(capsule_text.encode("utf-8")).hexdigest(),
+    )
     artifacts = {
         "idea-stage/ACTIVE_FIELD_MAP.md": "# Accepted field map\n",
-        "idea-stage/RESEARCH_CONTRACT.md": "# Contract\n",
-        "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md": "# Evidence\n",
-        "idea-stage/ROOT_CAUSE_ANALYSIS.json": json.dumps({"analysis_id": "RCA-1"}) + "\n",
+        "idea-stage/RESEARCH_CONTRACT.md": contract_text,
+        "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md": capsule_text,
+        "idea-stage/NECESSITY_CLOSURE.json": necessity_closure,
+        "idea-stage/NECESSITY_VERDICT.json": necessity_verdict,
+        "idea-stage/ROOT_CAUSE_ANALYSIS.json": json.dumps({
+            "analysis_id": "RCA-1", "necessity_binding": necessity_binding,
+        }) + "\n",
         "idea-stage/ROOT_CAUSE_VERDICT.json": json.dumps({"decision": "DIAGNOSIS_READY"}) + "\n",
         "idea-stage/PRINCIPLE_EVALUATION.json": json.dumps({"cycle_id": "CYCLE-1"}) + "\n",
         "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": json.dumps({"decision": "PRINCIPLE_CONVERGED"}) + "\n",
         "idea-stage/SELECTED_PRINCIPLE.yaml": yaml.safe_dump(selected, sort_keys=False),
+        "refine-logs/FINAL_METHOD_PACKET.json": json.dumps({"schema_version": 1}) + "\n",
         "refine-logs/FINAL_PROPOSAL.md": proposal,
         "refine-logs/FINAL_BLIND_REVIEW.md": "# Accepted method review\n",
         "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "# Novelty\n",
@@ -1442,6 +1495,7 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         path.write_text(content, encoding="utf-8")
     phase_statuses = {
         "problem_human_acceptance": "human_accepted",
+        "problem_necessity": "accepted",
         "root_cause_analysis": "done",
         "root_cause_gate": "accepted",
         "method_design": "accepted",
@@ -1457,11 +1511,14 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "idea-stage/ACTIVE_FIELD_MAP.md": "landscape",
         "idea-stage/RESEARCH_CONTRACT.md": "problem_human_acceptance",
         "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md": "problem_human_acceptance",
+        "idea-stage/NECESSITY_CLOSURE.json": "problem_necessity",
+        "idea-stage/NECESSITY_VERDICT.json": "problem_necessity",
         "idea-stage/ROOT_CAUSE_ANALYSIS.json": "root_cause_analysis",
         "idea-stage/ROOT_CAUSE_VERDICT.json": "root_cause_gate",
         "idea-stage/PRINCIPLE_EVALUATION.json": "principle_evaluation",
         "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": "principle_evaluation",
         "idea-stage/SELECTED_PRINCIPLE.yaml": "principle_evaluation",
+        "refine-logs/FINAL_METHOD_PACKET.json": "method_refinement",
         "refine-logs/FINAL_PROPOSAL.md": "method_refinement",
         "refine-logs/FINAL_BLIND_REVIEW.md": "method_refinement",
         "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "final_method_novelty_gate",
@@ -1508,6 +1565,23 @@ def confirmed_validation_controller(root: Path) -> ARISController:
             for raw_path in (
                 "idea-stage/PRINCIPLE_EVALUATION.json",
                 "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json",
+            )
+        }
+        run_state._find_phase(state, "problem_necessity")["validated_artifacts"] = {
+            raw_path: accepted[raw_path]["sha256"]
+            for raw_path in (
+                "idea-stage/NECESSITY_CLOSURE.json",
+                "idea-stage/NECESSITY_VERDICT.json",
+            )
+        }
+        run_state._find_phase(state, "root_cause_analysis")["validated_artifacts"] = {
+            raw_path: accepted[raw_path]["sha256"]
+            for raw_path in (
+                "idea-stage/RESEARCH_CONTRACT.md",
+                "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/NECESSITY_CLOSURE.json",
+                "idea-stage/NECESSITY_VERDICT.json",
+                "idea-stage/ROOT_CAUSE_ANALYSIS.json",
             )
         }
         core["active_problem_version"] = {
@@ -1721,14 +1795,33 @@ def controller_at_method_design(root: Path) -> ARISController:
     """Create a Controller-owned accepted prefix and leave the real suffix pending."""
 
     controller = start_controller(root)
+    contract_text = "# Accepted problem P-1\n"
+    capsule_text = "# Accepted evidence capsule\n"
+    necessity_closure, necessity_verdict, necessity_binding = necessity_fixture_artifacts(
+        run_id=controller.run_id,
+        problem_contract_sha256=hashlib.sha256(contract_text.encode("utf-8")).hexdigest(),
+        evidence_capsule_sha256=hashlib.sha256(capsule_text.encode("utf-8")).hexdigest(),
+    )
+    necessity_tokens = "; ".join(
+        [
+            str(necessity_binding["necessity_id"]),
+            str(necessity_binding["closure_sha256"]),
+            str(necessity_binding["verdict_id"]),
+            str(necessity_binding["verdict_sha256"]),
+            *[str(item) for item in necessity_binding["residual_failure_ids"]],
+        ]
+    )
     artifacts = {
         "idea-stage/ACTIVE_FIELD_MAP.md": "# Accepted field map\n",
-        "idea-stage/RESEARCH_CONTRACT.md": "# Accepted problem P-1\n",
-        "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md": "# Accepted evidence capsule\n",
+        "idea-stage/RESEARCH_CONTRACT.md": contract_text,
+        "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md": capsule_text,
+        "idea-stage/NECESSITY_CLOSURE.json": necessity_closure,
+        "idea-stage/NECESSITY_VERDICT.json": necessity_verdict,
         "idea-stage/ROOT_CAUSE_ANALYSIS.json": json.dumps({
-            "analysis_id": "RCA-1", "primary_causal_chain_ids": ["CHAIN-1"]
+            "analysis_id": "RCA-1", "primary_causal_chain_ids": ["CHAIN-1"],
+            "necessity_binding": necessity_binding,
         }) + "\n",
-        "idea-stage/ROOT_CAUSE_ANALYSIS.md": "# RCA-1\nCHAIN-1\n",
+        "idea-stage/ROOT_CAUSE_ANALYSIS.md": f"# RCA-1\nCHAIN-1; {necessity_tokens}\n",
         "idea-stage/ROOT_CAUSE_VERDICT.json": json.dumps({"decision": "DIAGNOSIS_READY"}) + "\n",
     }
     for raw_path, content in artifacts.items():
@@ -1739,6 +1832,8 @@ def controller_at_method_design(root: Path) -> ARISController:
         "idea-stage/ACTIVE_FIELD_MAP.md": "landscape",
         "idea-stage/RESEARCH_CONTRACT.md": "problem_human_acceptance",
         "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md": "problem_human_acceptance",
+        "idea-stage/NECESSITY_CLOSURE.json": "problem_necessity",
+        "idea-stage/NECESSITY_VERDICT.json": "problem_necessity",
         "idea-stage/ROOT_CAUSE_ANALYSIS.json": "root_cause_analysis",
         "idea-stage/ROOT_CAUSE_ANALYSIS.md": "root_cause_analysis",
         "idea-stage/ROOT_CAUSE_VERDICT.json": "root_cause_gate",
@@ -1755,6 +1850,7 @@ def controller_at_method_design(root: Path) -> ARISController:
             "problem_quality_gate": "accepted",
             "problem_novelty_gate": "accepted",
             "problem_human_acceptance": "human_accepted",
+            "problem_necessity": "accepted",
             "root_cause_analysis": "done",
             "root_cause_gate": "accepted",
         }
@@ -1783,7 +1879,16 @@ def controller_at_method_design(root: Path) -> ARISController:
             for raw_path in (
                 "idea-stage/RESEARCH_CONTRACT.md",
                 "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/NECESSITY_CLOSURE.json",
+                "idea-stage/NECESSITY_VERDICT.json",
                 "idea-stage/ROOT_CAUSE_ANALYSIS.json",
+            )
+        }
+        run_state._find_phase(state, "problem_necessity")["validated_artifacts"] = {
+            raw_path: accepted[raw_path]["sha256"]
+            for raw_path in (
+                "idea-stage/NECESSITY_CLOSURE.json",
+                "idea-stage/NECESSITY_VERDICT.json",
             )
         }
         run_state._find_phase(state, "root_cause_gate")["validated_artifacts"] = {
@@ -2080,6 +2185,13 @@ def root_cause_payload(
         "problem_id": problem_id,
         "problem_contract_sha256": "a" * 64,
         "evidence_capsule_sha256": "b" * 64,
+        "necessity_binding": {
+            "necessity_id": "NEC-1",
+            "closure_sha256": "d" * 64,
+            "verdict_id": "NEC-V-1",
+            "verdict_sha256": "e" * 64,
+            "residual_failure_ids": ["RF-1"],
+        },
         "failure_observations": [{
             "observation_id": "O-1", "phenomenon": "failure", "conditions": "shift",
             "abnormal_variables": ["error"], "evidence_source_type": evidence_source_type,
@@ -2147,7 +2259,21 @@ def test_root_cause_analysis_closes_current_problem_and_formal_evidence_referenc
         evidence_capsule_sha256="b" * 64,
         active_problem_id="P-1",
         formal_evidence_sources=sources,
+        necessity_binding=analysis["necessity_binding"],
     )
+
+    stale = deepcopy(analysis)
+    stale["necessity_binding"]["closure_sha256"] = "f" * 64
+    with pytest.raises(ValidationError, match="necessity_binding is stale"):
+        validate_root_cause_analysis(
+            stale,
+            run_id="run-1",
+            problem_contract_sha256="a" * 64,
+            evidence_capsule_sha256="b" * 64,
+            active_problem_id="P-1",
+            formal_evidence_sources=sources,
+            necessity_binding=analysis["necessity_binding"],
+        )
 
     analysis["problem_id"] = "P-other"
     with pytest.raises(ValidationError, match="active accepted problem"):
@@ -2553,6 +2679,141 @@ def reach_problem_human_acceptance(controller: ARISController) -> None:
         os.chdir(old_cwd)
 
 
+def complete_problem_necessity(
+    controller: ARISController,
+    *,
+    decision: str = "RESIDUAL_SAME_PROBLEM",
+) -> tuple[str, str]:
+    """Complete the Controller-owned Necessity Producer -> Reviewer handoff."""
+
+    active = controller.status()["scientific_core"]["active_problem_version"]
+    with_residual = decision != "FULLY_COVERED"
+    disposition = {
+        "FULLY_COVERED": "NO_RESIDUAL_FAILURE",
+        "RESIDUAL_SAME_PROBLEM": "SAME_ACCEPTED_PROBLEM",
+        "RESIDUAL_REDEFINES_PROBLEM": "REDEFINES_PROBLEM",
+        "UNRESOLVED": "UNRESOLVED",
+    }[decision]
+    residual = [{
+        "residual_failure_id": "RF-1",
+        "source_failure_ids": ["F-1"],
+        "condition": "the accepted operating shift",
+        "observable_failure": "the accepted error remains above threshold",
+        "consequence": "the accepted decision remains unreliable",
+        "uncovered_by_repair_assessment_ids": ["SR-1"],
+        "evidence_refs": ["P1"],
+    }] if with_residual else []
+    closure = {
+        "schema_version": 1,
+        "run_id": controller.run_id,
+        "necessity_id": "NEC-1",
+        "problem_binding": {
+            "problem_id": active["problem_id"],
+            "problem_version": active["version"],
+            "problem_contract_sha256": active["contract_sha256"],
+            "evidence_capsule_sha256": active["evidence_capsule_sha256"],
+        },
+        "active_failures": [{
+            "failure_id": "F-1",
+            "condition": "the accepted operating shift",
+            "observable_failure": "the accepted error exceeds threshold",
+            "consequence": "the accepted decision is unreliable",
+            "evidence_refs": ["P1"],
+        }],
+        "operating_envelope": {"conditions": ["the accepted operating shift"]},
+        "simple_repair_assessments": [{
+            "assessment_id": "SR-1",
+            "repair": "conventional parameter tuning",
+            "applicable_failure_ids": ["F-1"],
+            "preserves_core_causal_or_computational_relation": True,
+            "evidence_refs": ["P1"],
+            "coverage_boundary": (
+                "the entire accepted Failure" if not with_residual else "the nominal subset only"
+            ),
+            "coverage_conclusion": "FULL_COVERAGE" if not with_residual else "PARTIAL_COVERAGE",
+            "residual_failure_ids": ["RF-1"] if with_residual else [],
+        }],
+        "residual_failure_envelope": residual,
+        "problem_identity_disposition": disposition,
+        "analysis_provenance": {
+            "author_role": "main_research_agent",
+            "created_at": "2026-08-30T00:00:00Z",
+            "analysis_modes": ["EXISTING_FORMAL_EVIDENCE", "FORMAL_ANALYSIS"],
+            "source_artifact_ids": ["P1"],
+        },
+    }
+    controller.start_current_phase()
+    closure_path = controller.root / "idea-stage" / "NECESSITY_CLOSURE.json"
+    closure_path.write_text(json.dumps(closure), encoding="utf-8")
+    request = controller.refresh_current_review_request()
+    assert request["allowed_review_verdicts"] == [
+        "RESIDUAL_SAME_PROBLEM",
+        "FULLY_COVERED",
+        "RESIDUAL_REDEFINES_PROBLEM",
+        "UNRESOLVED",
+    ]
+    reviewer = "claude-sonnet-4"
+    verdict_id = f"necessity-{decision.lower()}"
+    verdict = {
+        "schema_version": 1,
+        "run_id": controller.run_id,
+        "review_request_id": request["id"],
+        "reviewer": reviewer,
+        "verdict_id": verdict_id,
+        "necessity_id": "NEC-1",
+        "reviewed_closure_sha256": sha256_file(closure_path),
+        "problem_contract_sha256": active["contract_sha256"],
+        "evidence_capsule_sha256": active["evidence_capsule_sha256"],
+        "decision": decision,
+        "reasons": ["the reviewed Evidence supports this fixed disposition"],
+        "issues": ([{
+            "issue_id": "NEC-EVIDENCE-1",
+            "severity": "BLOCKING",
+            "message": "current formal Evidence cannot resolve coverage",
+        }] if decision == "UNRESOLVED" else []),
+        "failure_reality": "PASS",
+        "operating_envelope_fidelity": "PASS",
+        "simple_repair_coverage": "PASS",
+        "residual_failure_fidelity": "PASS",
+        "problem_identity_fidelity": "PASS",
+        "evidence_sufficiency": "UNCERTAIN" if decision == "UNRESOLVED" else "PASS",
+        "reviewed_artifact_hashes": request["artifact_bindings"],
+    }
+    attest(controller, "independent_problem_reviewer", verdict)
+    controller.complete_current_phase()
+    return verdict_id, reviewer
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected_phase", "accepted"),
+    [
+        ("RESIDUAL_SAME_PROBLEM", "root_cause_analysis", True),
+        ("FULLY_COVERED", "problem_generation", False),
+        ("RESIDUAL_REDEFINES_PROBLEM", "problem_generation", False),
+        ("UNRESOLVED", "problem_necessity", False),
+    ],
+)
+def test_problem_necessity_producer_reviewer_controller_fixed_transitions(
+    tmp_path: Path,
+    decision: str,
+    expected_phase: str,
+    accepted: bool,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    approve(controller, "problem_acceptance", selected_id="P-1")
+    verdict_id, reviewer = complete_problem_necessity(controller, decision=decision)
+    if accepted:
+        controller.accept_current_phase(verdict_id, reviewer)
+    else:
+        controller.return_current_phase(verdict_id, reviewer)
+    core = controller.status()["scientific_core"]
+    assert core["current_phase"] == expected_phase
+    if decision == "FULLY_COVERED":
+        assert core["status"] == "ACTIVE"
+        assert core["return_history"][-1]["no_new_method_needed"] is True
+
+
 def test_problem_acceptance_registers_one_independent_contract_and_capsule(
     tmp_path: Path,
 ) -> None:
@@ -2584,9 +2845,13 @@ def test_problem_acceptance_registers_one_independent_contract_and_capsule(
         item for item in controller.workflow["phases"]
         if item["phase"] == "method_design"
     )
-    assert root_cause["required_inputs"][:2] == [contract_path, capsule_path]
+    assert root_cause["required_inputs"] == [
+        contract_path, capsule_path,
+        "@artifact:necessity_closure", "@artifact:necessity_verdict",
+    ]
     assert method["required_inputs"] == [
         "idea-stage/ACTIVE_FIELD_MAP.md", contract_path, capsule_path,
+        "@artifact:necessity_closure", "@artifact:necessity_verdict",
         "@artifact:root_cause_analysis", "@artifact:root_cause_verdict",
     ]
 
@@ -2597,6 +2862,11 @@ def test_root_cause_registers_nonliterature_evidence_and_binds_it_to_review(
     controller = start_controller(tmp_path)
     reach_problem_human_acceptance(controller)
     approve(controller, "problem_acceptance", selected_id="P-1")
+    verdict_id, reviewer = complete_problem_necessity(controller)
+    controller.accept_current_phase(verdict_id, reviewer)
+    necessity_binding = run_state._accepted_necessity_binding(
+        str(controller.root), controller.status()
+    )
 
     pilot = tmp_path / "idea-stage" / "diagnostic-pilot.json"
     pilot.write_text('{"observation": "shift failure"}\n', encoding="utf-8")
@@ -2609,6 +2879,7 @@ def test_root_cause_registers_nonliterature_evidence_and_binds_it_to_review(
     analysis["evidence_capsule_sha256"] = sha256_file(
         tmp_path / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md"
     )
+    analysis["necessity_binding"] = necessity_binding
     analysis["analysis_provenance"]["source_artifact_ids"] = ["PILOT-1"]
     analysis["analysis_provenance"]["new_diagnostic_pilot_artifacts"] = [{
         "artifact_id": "PILOT-1",
@@ -2624,7 +2895,16 @@ def test_root_cause_registers_nonliterature_evidence_and_binds_it_to_review(
     (tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.md").write_text(
         "# Root cause\n"
         f"RCA-1; P-1; CHAIN-1; {analysis['problem_contract_sha256']}; "
-        f"{analysis['evidence_capsule_sha256']}",
+        f"{analysis['evidence_capsule_sha256']}; "
+        + "; ".join(
+            [
+                str(necessity_binding["necessity_id"]),
+                str(necessity_binding["closure_sha256"]),
+                str(necessity_binding["verdict_id"]),
+                str(necessity_binding["verdict_sha256"]),
+                *[str(item) for item in necessity_binding["residual_failure_ids"]],
+            ]
+        ),
         encoding="utf-8",
     )
     controller.complete_current_phase()
@@ -2672,6 +2952,11 @@ def test_root_cause_reuses_only_capsule_bound_existing_nonliterature_evidence(
     approve(controller, "problem_acceptance", selected_id="P-1")
     registered = controller.status()["scientific_core"]["accepted_artifacts"]
     assert registered["idea-stage/accepted-experiment.json"]["artifact_id"] == "EXP-1"
+    verdict_id, reviewer = complete_problem_necessity(controller)
+    controller.accept_current_phase(verdict_id, reviewer)
+    necessity_binding = run_state._accepted_necessity_binding(
+        str(controller.root), controller.status()
+    )
 
     analysis = root_cause_payload(
         evidence_source_type="existing_experiment", evidence_ref="EXP-1"
@@ -2680,6 +2965,7 @@ def test_root_cause_reuses_only_capsule_bound_existing_nonliterature_evidence(
         tmp_path / "idea-stage" / "RESEARCH_CONTRACT.md"
     )
     analysis["evidence_capsule_sha256"] = sha256_file(capsule)
+    analysis["necessity_binding"] = necessity_binding
     controller.start_current_phase()
     (tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json").write_text(
         json.dumps(analysis), encoding="utf-8"
@@ -2687,7 +2973,16 @@ def test_root_cause_reuses_only_capsule_bound_existing_nonliterature_evidence(
     (tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.md").write_text(
         "# Root cause\n"
         f"RCA-1; P-1; CHAIN-1; {analysis['problem_contract_sha256']}; "
-        f"{analysis['evidence_capsule_sha256']}",
+        f"{analysis['evidence_capsule_sha256']}; "
+        + "; ".join(
+            [
+                str(necessity_binding["necessity_id"]),
+                str(necessity_binding["closure_sha256"]),
+                str(necessity_binding["verdict_id"]),
+                str(necessity_binding["verdict_sha256"]),
+                *[str(item) for item in necessity_binding["residual_failure_ids"]],
+            ]
+        ),
         encoding="utf-8",
     )
     controller.complete_current_phase()
@@ -7376,11 +7671,20 @@ def _activate_re_adoption_method_phase(
         core["current_phase"] = phase_name
         core["validation_entry"] = None
         run_state._find_phase(state, phase_name)["status"] = "running"
+        run_state._find_phase(state, "problem_necessity")["validated_artifacts"] = {
+            raw_path: core["accepted_artifacts"][raw_path]["sha256"]
+            for raw_path in (
+                "idea-stage/NECESSITY_CLOSURE.json",
+                "idea-stage/NECESSITY_VERDICT.json",
+            )
+        }
         run_state._find_phase(state, "root_cause_analysis")["validated_artifacts"] = {
             raw_path: core["accepted_artifacts"][raw_path]["sha256"]
             for raw_path in (
                 "idea-stage/RESEARCH_CONTRACT.md",
                 "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/NECESSITY_CLOSURE.json",
+                "idea-stage/NECESSITY_VERDICT.json",
                 "idea-stage/ROOT_CAUSE_ANALYSIS.json",
             )
         }
@@ -7500,6 +7804,8 @@ def test_re_adoption_preserves_history_and_search_cycle_authorization_is_boundar
             for raw_path in (
                 "idea-stage/RESEARCH_CONTRACT.md",
                 "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/NECESSITY_CLOSURE.json",
+                "idea-stage/NECESSITY_VERDICT.json",
                 "idea-stage/ROOT_CAUSE_ANALYSIS.json",
             )
         }
@@ -7677,6 +7983,8 @@ def test_adaptation_gap_evidence_refreshes_the_current_final_review_binding(
             for raw_path in (
                 "idea-stage/RESEARCH_CONTRACT.md",
                 "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/NECESSITY_CLOSURE.json",
+                "idea-stage/NECESSITY_VERDICT.json",
                 "idea-stage/ROOT_CAUSE_ANALYSIS.json",
             )
         }
@@ -7728,8 +8036,8 @@ def test_adaptation_gap_evidence_refreshes_the_current_final_review_binding(
     )["status"] == "RE_ADOPTED"
 
     request = controller.refresh_current_review_request()
-    assert request["artifact_bindings"]["refine-logs/FINAL_PROPOSAL.md"] == sha256_file(
-        tmp_path / "refine-logs" / "FINAL_PROPOSAL.md"
+    assert request["artifact_bindings"]["refine-logs/FINAL_METHOD_PACKET.json"] == sha256_file(
+        tmp_path / "refine-logs" / "FINAL_METHOD_PACKET.json"
     )
     assert request["artifact_bindings"]["idea-stage/SELECTED_PRINCIPLE.yaml"] == sha256_file(
         selected_path
@@ -7774,6 +8082,8 @@ def test_method_to_rca_reopen_records_method_evidence_and_uses_existing_readopti
             for raw_path in (
                 "idea-stage/RESEARCH_CONTRACT.md",
                 "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
+                "idea-stage/NECESSITY_CLOSURE.json",
+                "idea-stage/NECESSITY_VERDICT.json",
                 "idea-stage/ROOT_CAUSE_ANALYSIS.json",
             )
         }

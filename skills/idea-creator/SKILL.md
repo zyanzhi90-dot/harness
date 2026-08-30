@@ -1,7 +1,7 @@
 ---
 name: idea-creator
-description: "Run one independent problem-discovery, root-cause diagnosis, Principle formation/evaluation, or selected-Candidate test-design module. Use mode: problem to certify an evidence-grounded problem; mode: diagnosis to execute 1a-2b and obtain an independent root-cause verdict; method work only after DIAGNOSIS_READY."
-argument-hint: "mode: problem|diagnosis|method|principle-test-design; direction or handoff path"
+description: "Run one independent problem-discovery, pre-RCA Necessity, root-cause diagnosis, Principle formation/evaluation, or selected-Candidate test-design module. Use mode: necessity after Human Problem acceptance; diagnosis only after accepted residual Necessity."
+argument-hint: "mode: problem|necessity|diagnosis|method|principle-test-design; direction or handoff path"
 allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
@@ -10,7 +10,7 @@ allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex,
 Run exactly one mode for: **$ARGUMENTS**.
 
 This skill is intentionally split at artifact boundaries. Fresh invocations in
-`mode: diagnosis`, `mode: method`, and `mode: principle-test-design` must not
+`mode: necessity`, `mode: diagnosis`, `mode: method`, and `mode: principle-test-design` must not
 inherit the previous module's reasoning history. Diagnosis reads the accepted
 problem handoff; method reads the validated diagnosis handoff; test design also
 requires the Controller's active Human-selected Candidate binding. The parent
@@ -21,6 +21,7 @@ orchestrator may call the modes sequentially, but it must not skip a boundary.
 Read only the references needed for the active mode:
 
 - [`problem-discovery-contract.md`](../shared-references/problem-discovery-contract.md)
+- [`problem-necessity-contract.md`](../shared-references/problem-necessity-contract.md)
 - [`root-cause-analysis-contract.md`](../shared-references/root-cause-analysis-contract.md)
 - [`method-design-contract.md`](../shared-references/method-design-contract.md)
 - [`source-admission-policy.md`](../shared-references/source-admission-policy.md)
@@ -48,7 +49,8 @@ Every output must distinguish `evidence`, `inference`, `hypothesis`, and
 `decision`. Never treat a model score as acceptance. Formal verdicts require a
 verdict ID, reviewer identity/family, evidence anchors, and one status allowed
 by the active contract: problem certification uses
-`CERTIFIED/HOLD/REJECT/BLOCKED`; diagnosis uses
+`CERTIFIED/HOLD/REJECT/BLOCKED`; Necessity uses
+`FULLY_COVERED/RESIDUAL_SAME_PROBLEM/RESIDUAL_REDEFINES_PROBLEM/UNRESOLVED`; diagnosis uses
 `DIAGNOSIS_READY/REVISE_DIAGNOSIS/REOPEN_PROBLEM`. Human acceptance remains separate from
 machine or model review.
 
@@ -77,7 +79,8 @@ different inputs, outputs, and stopping conditions:
 | Mode | Reads | Writes | Must stop at |
 |---|---|---|---|
 | `problem` | Field Evidence Map and source records | `PROBLEM_CANDIDATES.*`, `PROBLEM_QUALITY_VERDICTS.jsonl`, `PROBLEM_NOVELTY_VERDICTS.jsonl`, then the separate `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` after user selection and before the Controller records human acceptance | human problem selection |
-| `diagnosis` | accepted `RESEARCH_CONTRACT.md` and `PROBLEM_EVIDENCE_CAPSULE.md` | `ROOT_CAUSE_ANALYSIS.json`, faithful `.md` view, independent `ROOT_CAUSE_VERDICT.json` | `DIAGNOSIS_READY` or return path |
+| `necessity` | accepted `RESEARCH_CONTRACT.md`, `PROBLEM_EVIDENCE_CAPSULE.md`, and current formal Evidence | `NECESSITY_CLOSURE.json`; independent reviewer payload becomes `NECESSITY_VERDICT.json` through the Controller | accepted residual or fixed return |
+| `diagnosis` | accepted Problem plus accepted `RESIDUAL_SAME_PROBLEM` Necessity Closure/Verdict | `ROOT_CAUSE_ANALYSIS.json`, faithful `.md` view, independent `ROOT_CAUSE_VERDICT.json` | `DIAGNOSIS_READY` or return path |
 | `method` | accepted problem plus validated root-cause analysis/verdict; for evaluation, the Controller-formed Evidence Context | candidate-only `METHOD_DESIGN_PACKET.json`, deterministic `METHOD_DESIGN.md`, or `PRINCIPLE_EVALUATION.json` according to the current phase; formal reviewer verdict artifacts | Human Candidate selection or convergence return/acceptance |
 | `principle-test-design` | accepted Method Design packet/review plus active `selected_for_testing` binding | `PRINCIPLE_TEST_PLAN.json`, deterministic Markdown view, and formal independent review | Principle Test Human Gate or return path |
 
@@ -216,10 +219,39 @@ returning only to `problem_generation`.
 
 ---
 
+## Mode: `necessity` — Evidence-based pre-RCA hard gate
+
+Require the current Human-accepted Problem, exact Contract/Capsule hashes, and
+the current formal Evidence view. Follow
+[`problem-necessity-contract.md`](../shared-references/problem-necessity-contract.md).
+Write `NECESSITY_CLOSURE.json` with active Failures, Operating Envelope, only
+actually applicable Simple Repair assessments, explicit coverage boundaries,
+the Residual Failure Envelope, and the proposed Problem-identity disposition.
+
+Do not manufacture irrelevant repair categories. A Simple Repair must preserve
+the core causal/computational relation. Partial or absent coverage must identify
+the residual condition, observable failure, consequence, Evidence, and repair
+assessment links. Use only existing formal Evidence, formal analysis, or
+read-only analysis of existing data. When Evidence is insufficient, the
+existing incremental literature route must bind the current Problem/Contract/
+Capsule and specific Failure/Simple-Repair decision targets. If the gap remains,
+return `UNRESOLVED`.
+
+Finalize the live review request after the Closure is current. The fresh
+`independent_problem_reviewer` returns the complete canonical
+`NECESSITY_VERDICT.json` payload; Main must not write or restate it. The
+Controller alone materializes and consumes the verdict. There is no pre-RCA
+test plan, execution approval, experiment handoff, result submission, or
+necessity-specific Evidence registry/CLI lifecycle.
+
+---
+
 ## Mode: `diagnosis` — independent 1a-2b root-cause analysis
 
 Require a human-accepted `RESEARCH_CONTRACT.md` and its unchanged
-`PROBLEM_EVIDENCE_CAPSULE.md`. Record both SHA-256 values, then follow
+`PROBLEM_EVIDENCE_CAPSULE.md`, plus the current accepted Necessity Closure and
+Verdict with decision `RESIDUAL_SAME_PROBLEM`. Bind their IDs, hashes, and every
+Residual Failure ID in `ROOT_CAUSE_ANALYSIS.json`. Record both Problem SHA-256 values, then follow
 [`root-cause-analysis-contract.md`](../shared-references/root-cause-analysis-contract.md):
 
 If this is a Method- or validation-triggered reopen, inspect the latest matching
@@ -230,13 +262,16 @@ phase-scoped Evidence Card through `readopt-evidence`, rather than copying or
 relabeling it.
 
 1. 1a collects and describes phenomenon evidence that directly represents the
-   accepted problem/failure, from existing experiments, literature, datasets,
+   accepted residual failure, from existing experiments, literature, datasets,
    real-world scenarios, or a necessary diagnostic pilot; failed experiments
    are not a prerequisite;
 2. 1b groups phenomena while allowing multiple material mechanisms;
 3. 2a traces progressively deeper causes and competing explanations;
 4. 2b constructs evidence-calibrated, falsifiable causal chains with explicit
    intervention targets.
+
+The diagnosis must explain the accepted residual and must not resurrect the
+portion of the original Failure already covered by a Simple Repair.
 
 Write `ROOT_CAUSE_ANALYSIS.json` as the canonical handoff and a faithful
 `ROOT_CAUSE_ANALYSIS.md` view. Then a fresh independent reviewer writes
@@ -262,7 +297,9 @@ Require `idea-stage/RESEARCH_CONTRACT.md` with:
 - the Controller-recorded problem version and problem-contract hash;
 - evidence IDs and scope boundaries.
 
-Also require `ROOT_CAUSE_ANALYSIS.json` and `ROOT_CAUSE_VERDICT.json` with:
+Also require accepted `NECESSITY_CLOSURE.json` / `NECESSITY_VERDICT.json` with
+`RESIDUAL_SAME_PROBLEM`, then `ROOT_CAUSE_ANALYSIS.json` and
+`ROOT_CAUSE_VERDICT.json` with:
 
 - verdict `DIAGNOSIS_READY`;
 - matching run ID, analysis ID, problem-contract hash, evidence-capsule hash,

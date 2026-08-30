@@ -349,6 +349,7 @@ class ARISController:
                 "problem_revision_request": None,
                 "selected_for_testing": None,
                 "method_test_cycle": None,
+                "no_go_record": None,
                 "validation_entry": {
                     "status": "BLOCKED_UNTIL_METHOD_CONFIRMATION",
                     "entry_policy": "human_initiated_only",
@@ -1318,6 +1319,7 @@ class ARISController:
         if core.get("status") in {
             "METHOD_CONFIRMED_AWAITING_USER_VALIDATION",
             "VALIDATION_CONFIRMED",
+            "SCIENTIFIC_NO_GO",
         }:
             return str(core["status"])
         return state["research_lit"]["current_stage"]
@@ -1331,6 +1333,8 @@ class ARISController:
                 return ["validation_handoff", "submit_validation_result"]
             return ["validation_handoff"]
         if core.get("status") == "VALIDATION_CONFIRMED":
+            return []
+        if core.get("status") == "SCIENTIFIC_NO_GO":
             return []
         if core.get("status") == "ACTIVE":
             research = state["research_lit"]
@@ -1387,6 +1391,8 @@ class ARISController:
                     return ["accept_phase", *revision_action]
                 if decision in (spec.get("return_targets") or {}):
                     return ["return_phase", *revision_action]
+                if decision in (spec.get("terminal_verdicts") or {}):
+                    return ["terminate_scientific_core"]
                 return []
             return []
         stage = state["research_lit"]["current_stage"]
@@ -1428,6 +1434,7 @@ class ARISController:
         if core.get("status") in {
             "METHOD_CONFIRMED_AWAITING_USER_VALIDATION",
             "VALIDATION_CONFIRMED",
+            "SCIENTIFIC_NO_GO",
         }:
             entry = core.get("validation_entry") or {}
             if entry.get("status") == "JUDGMENT_REQUESTED":
@@ -1534,7 +1541,7 @@ class ARISController:
                 )
                 or (
                     phase_name in {
-                        "problem_generation", "root_cause_analysis",
+                        "problem_generation", "problem_necessity", "root_cause_analysis",
                         "method_design", "method_refinement",
                     }
                     and status == "running"
@@ -1617,6 +1624,17 @@ class ARISController:
                 "contract_sha256": active["contract_sha256"],
                 "evidence_capsule_sha256": active["evidence_capsule_sha256"],
             },
+        }
+
+    def _problem_necessity_query_context(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Bind Necessity recovery search to the accepted Problem handoff."""
+
+        active = self._assert_active_problem_version_current(state)
+        return {
+            "problem_id": active["problem_id"],
+            "problem_version": active["version"],
+            "problem_contract_sha256": active["contract_sha256"],
+            "evidence_capsule_sha256": active["evidence_capsule_sha256"],
         }
 
     def _method_refinement_query_context(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -2140,7 +2158,7 @@ class ARISController:
         """Build the minimal formal context that makes a phase Evidence use current."""
 
         supported = {
-            "problem_generation", "problem_novelty_gate", "root_cause_analysis",
+            "problem_generation", "problem_novelty_gate", "problem_necessity", "root_cause_analysis",
             "method_design", "method_refinement", "final_method_novelty_gate",
         }
         if phase_name not in supported:
@@ -2170,7 +2188,7 @@ class ARISController:
                 return_id = pending.get("return_event_id")
                 if isinstance(return_id, str) and return_id:
                     anchor["problem_return_event_id"] = return_id
-        elif phase_name in {"root_cause_analysis", "method_design", "method_refinement", "final_method_novelty_gate"}:
+        elif phase_name in {"problem_necessity", "root_cause_analysis", "method_design", "method_refinement", "final_method_novelty_gate"}:
             active = self._assert_active_problem_version_current(state)
             anchor["active_problem_binding"] = {
                 key: active[key]
@@ -3115,7 +3133,12 @@ class ARISController:
         if not isinstance(role, str) or not role or not isinstance(allowed, list) or not allowed:
             raise ControllerError("formal reviewer Gate lacks a declared reviewer role or verdict enum")
         self._require_formal_native_runtime(role)
-        allowed_review_verdicts = [*allowed, *list((spec.get("return_targets") or {}).keys())]
+        terminal_verdicts = list((spec.get("terminal_verdicts") or {}).keys())
+        allowed_review_verdicts = [
+            *allowed,
+            *list((spec.get("return_targets") or {}).keys()),
+            *terminal_verdicts,
+        ]
         request = {
             "id": uuid.uuid4().hex,
             "run_id": self.run_id,
@@ -3123,6 +3146,7 @@ class ARISController:
             "gate": spec["gate_id"],
             "required_reviewer_role": role,
             "accepted_verdicts": list(allowed),
+            "terminal_verdicts": terminal_verdicts,
             "allowed_review_verdicts": allowed_review_verdicts,
             "artifact_bindings": self._phase_input_bindings(state, phase["phase"]),
             "issued_by": "ARISController",
@@ -4067,6 +4091,48 @@ class ARISController:
             if temporary.exists():
                 temporary.unlink()
 
+    def _materialize_necessity_verdict(self, state: dict, phase: dict, spec: dict) -> None:
+        """Persist the independent Necessity verdict without giving Main authority over it."""
+
+        request = self._assert_core_review_request_current(state, phase, spec)
+        try:
+            attestation = reviews.load_review_attestation(
+                self.root,
+                self.run_id,
+                role=str(request["required_reviewer_role"]),
+                request_id=str(request["id"]),
+                artifact_bindings=dict(request["artifact_bindings"]),
+            )
+        except ValueError as exc:
+            raise ControllerError(str(exc)) from exc
+        payload = attestation.get("verdict_payload")
+        if not isinstance(payload, dict):
+            raise ControllerError("problem-necessity reviewer attestation lacks the canonical verdict payload")
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if hashlib.sha256(canonical.encode("utf-8")).hexdigest() != attestation.get("payload_sha256"):
+            raise ControllerError("problem-necessity reviewer verdict payload fails its attested hash")
+        expected = {
+            "run_id": self.run_id,
+            "review_request_id": request["id"],
+            "reviewer": attestation.get("reviewer"),
+            "verdict_id": attestation.get("verdict_id"),
+            "decision": attestation.get("decision"),
+            "reviewed_artifact_hashes": request["artifact_bindings"],
+        }
+        if any(payload.get(key) != value for key, value in expected.items()):
+            raise ControllerError("problem-necessity reviewer verdict does not match its live attestation")
+        target = self.root / str(self.workflow["artifact_manifest"]["necessity_verdict"])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            os.replace(temporary, target)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+
     def _assert_core_review_request_current(
         self,
         state: dict,
@@ -4083,8 +4149,14 @@ class ARISController:
             or request.get("gate") != spec.get("gate_id")
             or request.get("required_reviewer_role") != spec.get("reviewer_role")
             or request.get("accepted_verdicts") != spec.get("accepted_verdicts")
+            or request.get("terminal_verdicts")
+            != list((spec.get("terminal_verdicts") or {}).keys())
             or request.get("allowed_review_verdicts")
-            != [*list(spec.get("accepted_verdicts") or []), *list((spec.get("return_targets") or {}).keys())]
+            != [
+                *list(spec.get("accepted_verdicts") or []),
+                *list((spec.get("return_targets") or {}).keys()),
+                *list((spec.get("terminal_verdicts") or {}).keys()),
+            ]
             or request.get("issued_by") != "ARISController"
         ):
             raise ControllerError("formal Gate has no current Controller-issued review request")
@@ -4127,7 +4199,7 @@ class ARISController:
                 current_phase_evidence_ids=(
                     self._current_phase_evidence_ids(state, phase_name)
                     if phase_name in {
-                        "problem_generation", "root_cause_analysis",
+                        "problem_generation", "problem_necessity", "root_cause_analysis",
                         "method_design", "principle_evaluation",
                     }
                     else None
@@ -4147,6 +4219,8 @@ class ARISController:
                 "diagnostic_pilot_artifacts",
                 "cycle_id", "execution_set_id", "test_ids",
                 "selected_principle_id", "selected_principle_version",
+                "necessity_id", "necessity_closure_sha256",
+                "necessity_verdict_sha256", "residual_failure_ids",
             ):
                 if key in validation_result:
                     phase[key] = validation_result[key]
@@ -4161,6 +4235,7 @@ class ARISController:
                 upstream_snapshot=upstream,
             )
             if phase_name in {
+                "problem_necessity",
                 "method_design",
                 "principle_test_human_approval",
                 "principle_evaluation",
@@ -4545,6 +4620,8 @@ class ARISController:
                 )
                 if phase["phase"] == "root_cause_gate":
                     self._materialize_root_cause_verdict(state, phase, spec)
+                elif phase["phase"] == "problem_necessity":
+                    self._materialize_necessity_verdict(state, phase, spec)
             registered = self._register_phase_outputs(
                 state,
                 phase["phase"],
@@ -4579,6 +4656,8 @@ class ARISController:
                         "candidate_ids", "survivor_ids", "return_guidance",
                         "design_cycle_id", "cycle_id", "execution_set_id", "test_ids",
                         "selected_principle_id", "selected_principle_version",
+                        "necessity_id", "necessity_closure_sha256",
+                        "necessity_verdict_sha256", "residual_failure_ids",
                     ):
                         if key in validation_result:
                             phase[key] = validation_result[key]
@@ -4940,8 +5019,94 @@ class ARISController:
                         if "return_guidance" in result
                         else {}
                     ),
+                    **(
+                        {"no_new_method_needed": True}
+                        if decision == "FULLY_COVERED"
+                        and phase["phase"] == "problem_necessity"
+                        else {}
+                    ),
                 },
                 lesson=normalized_lesson,
+            )
+            return state
+
+    def terminate_scientific_core(self, verdict_id: str, reviewer: str) -> dict:
+        """Consume a declared terminal reviewer verdict through the existing core terminal."""
+
+        if not verdict_id or not reviewer:
+            raise ControllerError("scientific termination requires verdict_id and reviewer")
+        with self._store.mutate() as state:
+            phase = self._current_core_phase(state)
+            spec = self._phase_spec(state, str(phase["phase"]))
+            terminal_verdicts = spec.get("terminal_verdicts") or {}
+            if not spec.get("formal_gate") or not terminal_verdicts:
+                raise ControllerError("current phase has no declared terminal verdict path")
+            if phase.get("status") != "done":
+                raise ControllerError(
+                    f"phase {phase['phase']} must be done before termination; current={phase.get('status')}"
+                )
+            self._assert_phase_inputs_current(state, str(phase["phase"]))
+            try:
+                result = run_state._assert_outputs(
+                    str(self.root), state, spec, str(phase["phase"])
+                ) or {}
+            except ValueError as exc:
+                raise ControllerError(str(exc)) from exc
+            decision = result.get("gate_verdict")
+            terminal = terminal_verdicts.get(decision)
+            if not isinstance(terminal, dict):
+                raise ControllerError(
+                    f"verdict {decision!r} has no declared terminal target for phase {phase['phase']!r}"
+                )
+            if result.get("verdict_id") != verdict_id or result.get("reviewer") != reviewer:
+                raise ControllerError(
+                    "scientific termination provenance must match the validated verdict artifact"
+                )
+            request = self._assert_core_review_request_current(state, phase, spec)
+            if decision not in request.get("terminal_verdicts", []):
+                raise ControllerError("review verdict is not terminal for this formal Gate")
+            self._assert_candidate_verdict_attested(state, phase, request, result)
+            attestation = self._consume_review_attestation(
+                role=str(request["required_reviewer_role"]),
+                request_id=str(request["id"]),
+                reviewer=reviewer,
+                verdict_id=verdict_id,
+                decision=str(decision),
+                artifact_bindings=dict(request["artifact_bindings"]),
+            )
+            terminated_at = now()
+            core = state["scientific_core"]
+            record = {
+                "phase": phase["phase"],
+                "decision": decision,
+                "verdict_id": verdict_id,
+                "reviewer": reviewer,
+                "review_request_id": request["id"],
+                "reviewed_artifact_bindings": dict(request["artifact_bindings"]),
+                "verdict_payload_sha256": attestation.get("payload_sha256"),
+                "terminal_action": terminal["action"],
+                "terminal_status": terminal["status"],
+                "terminated_at": terminated_at,
+            }
+            phase["review_request"] = None
+            phase["terminal_decision"] = dict(record)
+            phase["updated"] = terminated_at
+            core["status"] = terminal["status"]
+            core["current_phase"] = None
+            core["approval_request"] = None
+            core["problem_revision_request"] = None
+            core["validation_entry"] = None
+            core["no_go_record"] = dict(record)
+            core["transition_log"].append(
+                {
+                    "timestamp": terminated_at,
+                    "from": phase["phase"],
+                    "to": terminal["status"],
+                    "reason": "attested_terminal_verdict",
+                    "decision": decision,
+                    "verdict_id": verdict_id,
+                    "reviewer": reviewer,
+                }
             )
             return state
 
@@ -5853,6 +6018,11 @@ class ARISController:
                     if incremental_phase == "problem_generation"
                     else None
                 )
+                necessity_context = (
+                    self._problem_necessity_query_context(state)
+                    if incremental_phase == "problem_necessity"
+                    else None
+                )
                 # Keep the historical review-gap check below for its explicit
                 # error/reporting path, then validate the same unified gaps at
                 # per-query granularity.
@@ -5861,6 +6031,7 @@ class ARISController:
                     method_design_context=method_context,
                     method_refinement_context=refinement_context,
                     problem_lead_context=problem_lead_context,
+                    problem_necessity_context=necessity_context,
                 )
             except ValidationError as exc:
                 self._record_validation(research, "query_plan", "FAIL", [str(exc)])

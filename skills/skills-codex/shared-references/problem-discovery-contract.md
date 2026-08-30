@@ -572,7 +572,9 @@ autonomous acceptance mode.
 
 The accepted artifact from this contract is the Certified Problem Contract.
 Pass it unchanged with its evidence capsule to
-`root-cause-analysis-contract.md`. Keep problem novelty separate from the later
+`problem-necessity-contract.md`. Only an independently accepted
+`RESIDUAL_SAME_PROBLEM` Necessity Closure/Verdict may then pass the residual
+Failure Envelope to `root-cause-analysis-contract.md`. Keep problem novelty separate from the later
 root-cause verdict, Provisional Scientific Delta, Final Scientific Delta Claim,
 final Method novelty, and any Established Scientific Delta recorded only after
 `VALIDATED`.

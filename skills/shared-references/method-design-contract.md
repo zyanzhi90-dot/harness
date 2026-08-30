@@ -51,6 +51,8 @@ For `method_design`, require:
 - accepted `idea-stage/ACTIVE_FIELD_MAP.md`;
 - active `idea-stage/RESEARCH_CONTRACT.md` and
   `idea-stage/PROBLEM_EVIDENCE_CAPSULE.md`;
+- accepted `idea-stage/NECESSITY_CLOSURE.json` and
+  `idea-stage/NECESSITY_VERDICT.json` with `RESIDUAL_SAME_PROBLEM`;
 - accepted `idea-stage/ROOT_CAUSE_ANALYSIS.json` and
   `idea-stage/ROOT_CAUSE_VERDICT.json` with `DIAGNOSIS_READY`, matching IDs and
   hashes, and non-empty primary causal-chain IDs;

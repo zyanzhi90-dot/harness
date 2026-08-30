@@ -75,6 +75,40 @@ def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _accept_necessity_fixture(root: str, run_id: str) -> dict:
+    stage = Path(root) / "idea-stage"
+    stage.mkdir(parents=True, exist_ok=True)
+    closure_path = stage / "NECESSITY_CLOSURE.json"
+    verdict_path = stage / "NECESSITY_VERDICT.json"
+    closure = {
+        "necessity_id": "NEC-1",
+        "residual_failure_envelope": [{"residual_failure_id": "RF-1"}],
+    }
+    closure_path.write_text(json.dumps(closure), encoding="utf-8")
+    verdict = {
+        "verdict_id": "NEC-V-1",
+        "necessity_id": "NEC-1",
+        "reviewed_closure_sha256": _file_sha256(closure_path),
+        "decision": "RESIDUAL_SAME_PROBLEM",
+    }
+    verdict_path.write_text(json.dumps(verdict), encoding="utf-8")
+    state = rs._load(root, run_id)
+    phase = rs._find_phase(state, "problem_necessity")
+    phase["status"] = "accepted"
+    phase["validated_artifacts"] = {
+        "idea-stage/NECESSITY_CLOSURE.json": _file_sha256(closure_path),
+        "idea-stage/NECESSITY_VERDICT.json": _file_sha256(verdict_path),
+    }
+    rs._save(root, run_id, state)
+    return {
+        "necessity_id": "NEC-1",
+        "closure_sha256": _file_sha256(closure_path),
+        "verdict_id": "NEC-V-1",
+        "verdict_sha256": _file_sha256(verdict_path),
+        "residual_failure_ids": ["RF-1"],
+    }
+
+
 def _write_root_cause_artifacts(
     root: str,
     run_id: str,
@@ -88,6 +122,7 @@ def _write_root_cause_artifacts(
     analysis_path = stage / "ROOT_CAUSE_ANALYSIS.json"
     view_path = stage / "ROOT_CAUSE_ANALYSIS.md"
     verdict_path = stage / "ROOT_CAUSE_VERDICT.json"
+    necessity_binding = _accept_necessity_fixture(root, run_id)
     analysis = {
         "schema_version": 1,
         "run_id": run_id,
@@ -95,6 +130,7 @@ def _write_root_cause_artifacts(
         "problem_id": "P1",
         "problem_contract_sha256": _file_sha256(contract),
         "evidence_capsule_sha256": _file_sha256(capsule),
+        "necessity_binding": necessity_binding,
         "failure_observations": [{
             "observation_id": "O1",
             "phenomenon": "output degrades under shift",
@@ -151,7 +187,8 @@ def _write_root_cause_artifacts(
     view_path.write_text(
         "# Root Cause\n\n"
         f"RCA-1; P1; CHAIN-1; {analysis['problem_contract_sha256']}; "
-        f"{analysis['evidence_capsule_sha256']}",
+        f"{analysis['evidence_capsule_sha256']}; NEC-1; NEC-V-1; RF-1; "
+        f"{necessity_binding['closure_sha256']}; {necessity_binding['verdict_sha256']}",
         encoding="utf-8",
     )
     verdict = {
@@ -163,6 +200,8 @@ def _write_root_cause_artifacts(
         "reviewed_analysis_sha256": _file_sha256(analysis_path),
         "problem_contract_sha256": _file_sha256(contract),
         "evidence_capsule_sha256": _file_sha256(capsule),
+        "necessity_closure_sha256": necessity_binding["closure_sha256"],
+        "necessity_verdict_sha256": necessity_binding["verdict_sha256"],
         "decision": decision,
         "reasons": ["fixture review"],
         "issues": [] if decision == "DIAGNOSIS_READY" else [{
@@ -175,12 +214,14 @@ def _write_root_cause_artifacts(
         "evidence_calibration": "PASS",
         "intervention_relevance": "PASS",
         "falsifiability": "PASS",
+        "residual_failure_fidelity": "PASS",
     }
     verdict_path.write_text(json.dumps(verdict), encoding="utf-8")
     return verdict["verdict_id"], reviewer
 
 
 def _advance_through_root_cause(root: str, run_id: str, *, decision: str = "DIAGNOSIS_READY") -> None:
+    _accept_necessity_fixture(root, run_id)
     rs.set_status(root, run_id, "root_cause_analysis", "running")
     verdict_id, reviewer = _write_root_cause_artifacts(root, run_id, decision=decision)
     rs.set_status(root, run_id, "root_cause_analysis", "done")
@@ -592,6 +633,7 @@ def test_root_cause_gate_rejects_non_ready_verdict_and_detects_tampering():
         (stage / "RESEARCH_CONTRACT.md").write_text("accepted", encoding="utf-8")
         (stage / "PROBLEM_EVIDENCE_CAPSULE.md").write_text("evidence", encoding="utf-8")
 
+        _accept_necessity_fixture(d, "diagnosis-guard")
         rs.set_status(d, "diagnosis-guard", "root_cause_analysis", "running")
         verdict_id, reviewer = _write_root_cause_artifacts(d, "diagnosis-guard", decision="HOLD")
         rs.set_status(d, "diagnosis-guard", "root_cause_analysis", "done")
@@ -649,7 +691,7 @@ def test_refinement_is_hard_blocked_until_principle_convergence_is_accepted_and_
         # Selected Principle artifact without inventing a second lifecycle.
         for phase in ("landscape", "scope_human_approval", "problem_generation",
                       "problem_quality_gate", "problem_novelty_gate", "problem_human_acceptance",
-                      "root_cause_analysis", "root_cause_gate", "method_design",
+                      "problem_necessity", "root_cause_analysis", "root_cause_gate", "method_design",
                       "principle_test_human_approval"):
             current = rs._find_phase(state, phase)
             current["status"] = (
@@ -667,13 +709,29 @@ def test_refinement_is_hard_blocked_until_principle_convergence_is_accepted_and_
             "accepted field map", encoding="utf-8"
         )
         Path(d, "idea-stage", "PROBLEM_EVIDENCE_CAPSULE.md").write_text("evidence", encoding="utf-8")
+        Path(d, "idea-stage", "NECESSITY_CLOSURE.json").write_text("{}", encoding="utf-8")
+        Path(d, "idea-stage", "NECESSITY_VERDICT.json").write_text("{}", encoding="utf-8")
         Path(d, "idea-stage", "ROOT_CAUSE_ANALYSIS.json").write_text("{}", encoding="utf-8")
         Path(d, "idea-stage", "ROOT_CAUSE_VERDICT.json").write_text("{}", encoding="utf-8")
         Path(d, "idea-stage", "PRINCIPLE_EVALUATION.json").write_text("{}", encoding="utf-8")
         Path(d, "idea-stage", "PRINCIPLE_EVALUATION_VERDICT.json").write_text("{}", encoding="utf-8")
         state = rs._load(d, "principle-gate")
+        rs._find_phase(state, "problem_necessity")["validated_artifacts"] = {
+            "idea-stage/NECESSITY_CLOSURE.json": _file_sha256(
+                Path(d, "idea-stage", "NECESSITY_CLOSURE.json")
+            ),
+            "idea-stage/NECESSITY_VERDICT.json": _file_sha256(
+                Path(d, "idea-stage", "NECESSITY_VERDICT.json")
+            ),
+        }
         rs._find_phase(state, "root_cause_analysis")["validated_artifacts"] = {
             "idea-stage/RESEARCH_CONTRACT.md": _file_sha256(contract),
+            "idea-stage/NECESSITY_CLOSURE.json": _file_sha256(
+                Path(d, "idea-stage", "NECESSITY_CLOSURE.json")
+            ),
+            "idea-stage/NECESSITY_VERDICT.json": _file_sha256(
+                Path(d, "idea-stage", "NECESSITY_VERDICT.json")
+            ),
             "idea-stage/ROOT_CAUSE_ANALYSIS.json": _file_sha256(
                 Path(d, "idea-stage", "ROOT_CAUSE_ANALYSIS.json")
             ),

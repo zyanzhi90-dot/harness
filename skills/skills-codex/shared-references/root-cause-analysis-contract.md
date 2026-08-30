@@ -1,7 +1,9 @@
 # Root-Cause Analysis Contract
 
 Use this contract after one problem has been human-accepted under
-[`problem-discovery-contract.md`](problem-discovery-contract.md) and before any
+[`problem-discovery-contract.md`](problem-discovery-contract.md) and its
+Residual Failure Envelope has been accepted under
+[`problem-necessity-contract.md`](problem-necessity-contract.md), and before any
 Candidate Principle is formed under
 [`method-design-contract.md`](method-design-contract.md). It is the single
 source of truth for the diagnosis handoff.
@@ -25,7 +27,11 @@ method proposal.
 ## Input Gate
 
 Require exactly one human-accepted Certified Problem Contract plus its compact
-evidence capsule. Record their current SHA-256 values in the analysis. If the
+evidence capsule and one current accepted `RESIDUAL_SAME_PROBLEM` Necessity
+Closure/Verdict. Record their current IDs and SHA-256 values in the analysis.
+The diagnosis explains only the accepted Residual Failure Envelope. It must not
+reframe a portion of the original Failure already covered by a Simple Repair as
+a root cause requiring a new Method. If the
 question, scope, falsifier, or evidence snapshot has changed, stop and return to
 problem acceptance rather than diagnosing a moving target.
 
@@ -164,6 +170,12 @@ analysis_id:
 problem_id:
 problem_contract_sha256:
 evidence_capsule_sha256:
+necessity_binding:
+  necessity_id:
+  closure_sha256:
+  verdict_id:
+  verdict_sha256:
+  residual_failure_ids:
 failure_observations:
 phenomenon_clusters:
 causal_depth_traces:
@@ -195,7 +207,8 @@ JSON artifact.
 ## Independent Root-Cause Gate
 
 Review in a fresh context containing the accepted problem, evidence capsule,
-analysis artifacts, and named evidence cards only. The reviewer must judge:
+accepted Necessity Closure/Verdict, analysis artifacts, and named evidence
+cards only. The reviewer must judge:
 
 1. phenomenon-evidence fidelity — 1a directly characterizes the accepted
    problem/failure, identifies its evidence source, and contains observations
@@ -208,6 +221,9 @@ analysis artifacts, and named evidence cards only. The reviewer must judge:
 6. intervention relevance — the mechanism can be changed without naming a
    preferred solution;
 7. falsifiability — each primary chain has a discriminating falsifier.
+8. residual-failure fidelity — the diagnosis explains the complete accepted
+   residual and does not explain away or resurrect Failure already covered by
+   a Simple Repair.
 
 Allowed decisions:
 
@@ -225,7 +241,7 @@ DIAGNOSIS_READY | REVISE_DIAGNOSIS | REOPEN_PROBLEM
   adequate for diagnosis and must return to `problem_generation`, then repeat
   problem quality review, novelty review, and human acceptance.
 
-The workflow declares the unique executable mapping:
+All eight scientific rubrics must be `PASS`. The workflow declares the unique executable mapping:
 
 ```text
 DIAGNOSIS_READY   -> method_design
@@ -257,6 +273,8 @@ analysis_id:
 reviewed_analysis_sha256:
 problem_contract_sha256:
 evidence_capsule_sha256:
+necessity_closure_sha256:
+necessity_verdict_sha256:
 decision: DIAGNOSIS_READY | REVISE_DIAGNOSIS | REOPEN_PROBLEM
 reasons:
 issues:
@@ -270,11 +288,12 @@ explanatory_coverage: PASS | FAIL | UNCERTAIN
 evidence_calibration: PASS | FAIL | UNCERTAIN
 intervention_relevance: PASS | FAIL | UNCERTAIN
 falsifiability: PASS | FAIL | UNCERTAIN
+residual_failure_fidelity: PASS | FAIL | UNCERTAIN
 ```
 
 `DIAGNOSIS_READY` cannot carry a `BLOCKING` issue and requires `PASS` on every
-one of the seven rubrics. Schema validity and hash/ID
-bindings are Type-A checks; the seven scientific judgments remain the fresh
+one of the eight rubrics. Schema validity and hash/ID
+bindings are Type-A checks; the eight scientific judgments remain the fresh
 reviewer's Type-B responsibility.
 
 ## Method-design handoff

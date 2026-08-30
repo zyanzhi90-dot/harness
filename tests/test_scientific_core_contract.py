@@ -438,13 +438,19 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
         workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
         refinement = next(item for item in workflow["phases"] if item["phase"] == "method_refinement")
         assert refinement["required_inputs"][-1] == "@artifact:selected_principle"
-        assert refinement["reviewed_artifacts"] == ["@artifact:final_proposal"]
+        assert refinement["reviewed_artifacts"] == ["@artifact:final_method_packet"]
         assert refinement["accepted_verdicts"] == ["METHOD_READY"]
         assert refinement["return_targets"] == {
             "REVISE": "method_refinement",
             "RETHINK": "method_design",
             "HOLD": "method_refinement",
             "RCA_CONFLICT": "root_cause_analysis",
+        }
+        assert refinement["terminal_verdicts"] == {
+            "NO_GO": {
+                "action": "terminate_scientific_core",
+                "status": "SCIENTIFIC_NO_GO",
+            }
         }
 
 def test_core_codex_adapters_reference_canonical_shared_contracts_and_templates() -> None:
@@ -483,6 +489,23 @@ def test_root_cause_contract_is_mirrored_and_precedes_principle_design() -> None
     assert "only after the independent Root-Cause Gate" in method
     assert "Required Mechanism Changes" in method
     assert "causal_chain_ids" in method
+
+
+def test_problem_necessity_contract_is_mirrored_and_precedes_rca() -> None:
+    main = read(MAIN / "shared-references" / "problem-necessity-contract.md")
+    assert main == read(CODEX / "shared-references" / "problem-necessity-contract.md")
+    assert "There is no necessity-specific test" in main
+    workflow = json.loads(read(MAIN / "shared-references" / "idea-workflow.yaml"))
+    phases = workflow["scientific_core"]["phases"]
+    assert phases.index("problem_human_acceptance") < phases.index("problem_necessity")
+    assert phases.index("problem_necessity") < phases.index("root_cause_analysis")
+    necessity = next(item for item in workflow["phases"] if item["phase"] == "problem_necessity")
+    assert necessity["accepted_verdicts"] == ["RESIDUAL_SAME_PROBLEM"]
+    assert necessity["return_targets"] == {
+        "FULLY_COVERED": "problem_generation",
+        "RESIDUAL_REDEFINES_PROBLEM": "problem_generation",
+        "UNRESOLVED": "problem_necessity",
+    }
 
 def test_formal_reviewer_gates_declare_roles_and_fixed_verdict_enums() -> None:
     for root in (MAIN, CODEX):
@@ -545,7 +568,8 @@ def test_research_pipeline_cannot_bypass_the_canonical_scientific_lifecycle() ->
     for root in (MAIN, CODEX):
         workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
         phases = workflow["scientific_core"]["phases"]
-        assert phases[6:12] == [
+        start = phases.index("method_design")
+        assert phases[start:start + 6] == [
             "method_design", "principle_human_selection", "principle_test_design",
             "principle_test_human_approval", "principle_evaluation", "method_refinement",
         ]

@@ -88,6 +88,12 @@ _ROOT_CAUSE_DECISIONS = {
     "REVISE_DIAGNOSIS",
     "REOPEN_PROBLEM",
 }
+_NECESSITY_DECISIONS = {
+    "FULLY_COVERED",
+    "RESIDUAL_SAME_PROBLEM",
+    "RESIDUAL_REDEFINES_PROBLEM",
+    "UNRESOLVED",
+}
 _PHENOMENON_EVIDENCE_SOURCE_TYPES = {
     "existing_experiment",
     "literature",
@@ -1950,6 +1956,275 @@ def validate_final_proposal_for_principle(
     return text
 
 
+def validate_necessity_closure(
+    payload: Any,
+    *,
+    contract: dict[str, Any],
+    run_id: str,
+    problem_version: dict[str, Any],
+    current_evidence_ids: set[str],
+) -> dict[str, Any]:
+    """Validate the pre-RCA Necessity artifact mechanically.
+
+    Scientific judgments about whether a repair is genuinely simple, applicable,
+    or sufficient remain the independent problem reviewer's responsibility.
+    """
+
+    closure = _require_mapping(payload, "Necessity Closure")
+    _require_fields(closure, tuple(contract["required_fields"]), "Necessity Closure")
+    if closure["schema_version"] != contract.get("schema_version", 1):
+        raise ValidationError("Necessity Closure schema_version is invalid")
+    if closure["run_id"] != run_id:
+        raise ValidationError("Necessity Closure run_id does not match the active run")
+    _required_text(closure["necessity_id"], "Necessity Closure.necessity_id")
+
+    binding = _require_mapping(closure["problem_binding"], "Necessity Closure.problem_binding")
+    _require_fields(
+        binding,
+        tuple(contract["problem_binding_fields"]),
+        "Necessity Closure.problem_binding",
+    )
+    expected_binding = {
+        "problem_id": problem_version["problem_id"],
+        "problem_version": problem_version["version"],
+        "problem_contract_sha256": problem_version["contract_sha256"],
+        "evidence_capsule_sha256": problem_version["evidence_capsule_sha256"],
+    }
+    if binding != expected_binding:
+        raise ValidationError("Necessity Closure problem_binding does not match the active accepted Problem")
+
+    def evidence_refs(value: Any, label: str) -> list[str]:
+        refs = _unique_string_values(value, label)
+        unknown = set(refs) - current_evidence_ids
+        if unknown:
+            raise ValidationError(f"{label} contains Evidence outside the current formal context: {sorted(unknown)}")
+        return refs
+
+    failures = _require_list(closure, "active_failures", "Necessity Closure", non_empty=True)
+    failure_ids = _unique_ids(failures, "failure_id", "Necessity Closure.active_failures")
+    for index, raw in enumerate(failures, 1):
+        failure = _require_mapping(raw, f"Necessity active failure {index}")
+        _require_fields(
+            failure,
+            tuple(contract["active_failure_fields"]),
+            f"Necessity active failure {index}",
+        )
+        for field in ("condition", "observable_failure", "consequence"):
+            _required_text(failure[field], f"Necessity active failure {index}.{field}")
+        evidence_refs(failure["evidence_refs"], f"Necessity active failure {index}.evidence_refs")
+
+    if not isinstance(closure["operating_envelope"], (str, list, dict)) or closure[
+        "operating_envelope"
+    ] in ("", [], {}):
+        raise ValidationError("Necessity Closure.operating_envelope must be non-empty")
+
+    residuals = _require_list(
+        closure, "residual_failure_envelope", "Necessity Closure", non_empty=False
+    )
+    residual_ids = _unique_ids(
+        residuals, "residual_failure_id", "Necessity Closure.residual_failure_envelope"
+    )
+    residual_by_id: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(residuals, 1):
+        residual = _require_mapping(raw, f"Necessity residual failure {index}")
+        _require_fields(
+            residual,
+            tuple(contract["residual_failure_fields"]),
+            f"Necessity residual failure {index}",
+        )
+        source_failures = set(
+            _unique_string_values(
+                residual["source_failure_ids"],
+                f"Necessity residual failure {index}.source_failure_ids",
+            )
+        )
+        if not source_failures <= failure_ids:
+            raise ValidationError(f"Necessity residual failure {index} references an unknown active failure")
+        for field in ("condition", "observable_failure", "consequence"):
+            _required_text(residual[field], f"Necessity residual failure {index}.{field}")
+        evidence_refs(
+            residual["evidence_refs"], f"Necessity residual failure {index}.evidence_refs"
+        )
+        residual_by_id[str(residual["residual_failure_id"])] = residual
+
+    repairs = _require_list(
+        closure, "simple_repair_assessments", "Necessity Closure", non_empty=True
+    )
+    repair_ids = _unique_ids(
+        repairs, "assessment_id", "Necessity Closure.simple_repair_assessments"
+    )
+    conclusions = set(contract["coverage_conclusion_enum"])
+    covered_failure_ids: set[str] = set()
+    residual_requiring_assessments: set[str] = set()
+    for index, raw in enumerate(repairs, 1):
+        repair = _require_mapping(raw, f"Simple Repair assessment {index}")
+        _require_fields(
+            repair,
+            tuple(contract["simple_repair_assessment_fields"]),
+            f"Simple Repair assessment {index}",
+        )
+        _required_text(repair["repair"], f"Simple Repair assessment {index}.repair")
+        applicable = set(
+            _unique_string_values(
+                repair["applicable_failure_ids"],
+                f"Simple Repair assessment {index}.applicable_failure_ids",
+            )
+        )
+        if not applicable <= failure_ids:
+            raise ValidationError(f"Simple Repair assessment {index} references an unknown active failure")
+        if repair["preserves_core_causal_or_computational_relation"] is not True:
+            raise ValidationError(
+                f"Simple Repair assessment {index} is not a Simple Repair because it changes the core relation"
+            )
+        evidence_refs(
+            repair["evidence_refs"], f"Simple Repair assessment {index}.evidence_refs"
+        )
+        if not isinstance(repair["coverage_boundary"], (str, list, dict)) or repair[
+            "coverage_boundary"
+        ] in ("", [], {}):
+            raise ValidationError(f"Simple Repair assessment {index}.coverage_boundary must be non-empty")
+        conclusion = repair["coverage_conclusion"]
+        if conclusion not in conclusions:
+            raise ValidationError(f"Simple Repair assessment {index}.coverage_conclusion is invalid")
+        referenced_residuals = set(
+            _unique_string_values(
+                repair["residual_failure_ids"],
+                f"Simple Repair assessment {index}.residual_failure_ids",
+                non_empty=False,
+            )
+        )
+        if not referenced_residuals <= residual_ids:
+            raise ValidationError(f"Simple Repair assessment {index} references an unknown residual failure")
+        if conclusion == "FULL_COVERAGE":
+            if referenced_residuals:
+                raise ValidationError("FULL_COVERAGE cannot retain residual failure references")
+            covered_failure_ids.update(applicable)
+        elif conclusion in {"PARTIAL_COVERAGE", "NO_COVERAGE"}:
+            if not referenced_residuals:
+                raise ValidationError(
+                    f"{conclusion} requires an explicit Residual Failure Envelope reference"
+                )
+            residual_requiring_assessments.add(str(repair["assessment_id"]))
+
+    for residual_id, residual in residual_by_id.items():
+        assessment_refs = set(
+            _unique_string_values(
+                residual["uncovered_by_repair_assessment_ids"],
+                f"Necessity residual failure {residual_id}.uncovered_by_repair_assessment_ids",
+            )
+        )
+        if not assessment_refs <= repair_ids:
+            raise ValidationError(f"Necessity residual failure {residual_id} references an unknown repair assessment")
+    if residual_requiring_assessments and not residuals:
+        raise ValidationError("partial or uncovered repair coverage requires a Residual Failure Envelope")
+
+    disposition = closure["problem_identity_disposition"]
+    if disposition not in set(contract["problem_identity_disposition_enum"]):
+        raise ValidationError("Necessity Closure.problem_identity_disposition is invalid")
+    if disposition in {"SAME_ACCEPTED_PROBLEM", "REDEFINES_PROBLEM"} and not residuals:
+        raise ValidationError(f"{disposition} requires an explicit Residual Failure Envelope")
+    if disposition == "NO_RESIDUAL_FAILURE":
+        if residuals or covered_failure_ids != failure_ids:
+            raise ValidationError(
+                "NO_RESIDUAL_FAILURE requires every active failure to be fully covered and no residual envelope"
+            )
+
+    provenance = _require_mapping(closure["analysis_provenance"], "Necessity Closure.analysis_provenance")
+    _require_fields(
+        provenance,
+        ("author_role", "created_at", "analysis_modes", "source_artifact_ids"),
+        "Necessity Closure.analysis_provenance",
+    )
+    modes = set(
+        _unique_string_values(
+            provenance["analysis_modes"], "Necessity Closure.analysis_provenance.analysis_modes"
+        )
+    )
+    if not modes <= {"EXISTING_FORMAL_EVIDENCE", "FORMAL_ANALYSIS", "READ_ONLY_EXISTING_DATA_ANALYSIS"}:
+        raise ValidationError("Necessity Closure declares an analysis mode outside the pre-RCA Evidence boundary")
+    evidence_refs(
+        provenance["source_artifact_ids"],
+        "Necessity Closure.analysis_provenance.source_artifact_ids",
+    )
+    return closure
+
+
+def validate_necessity_verdict(
+    payload: Any,
+    *,
+    contract: dict[str, Any],
+    run_id: str,
+    request_id: str,
+    artifact_bindings: dict[str, str],
+    closure: dict[str, Any],
+    reviewed_closure_sha256: str,
+    problem_contract_sha256: str,
+    evidence_capsule_sha256: str,
+) -> dict[str, Any]:
+    """Validate reviewer identity/bindings and the fixed Necessity decision contract."""
+
+    verdict = _require_mapping(payload, "Necessity Verdict")
+    _require_fields(verdict, tuple(contract["required_fields"]), "Necessity Verdict")
+    if verdict["schema_version"] != contract.get("schema_version", 1):
+        raise ValidationError("Necessity Verdict schema_version is invalid")
+    _validate_review_binding(
+        verdict,
+        label="Necessity Verdict",
+        request_id=request_id,
+        reviewer=None,
+        verdict_id=None,
+        decision=None,
+        artifact_bindings=artifact_bindings,
+    )
+    if verdict["run_id"] != run_id or verdict["necessity_id"] != closure["necessity_id"]:
+        raise ValidationError("Necessity Verdict does not identify the active run and closure")
+    expected_hashes = {
+        "reviewed_closure_sha256": reviewed_closure_sha256,
+        "problem_contract_sha256": problem_contract_sha256,
+        "evidence_capsule_sha256": evidence_capsule_sha256,
+    }
+    for field, expected in expected_hashes.items():
+        _require_sha256(verdict[field], f"Necessity Verdict.{field}")
+        if verdict[field] != expected:
+            raise ValidationError(f"Necessity Verdict.{field} does not match the live artifact")
+    decision = verdict["decision"]
+    if decision not in _NECESSITY_DECISIONS or decision not in set(contract["decision_enum"]):
+        raise ValidationError("Necessity Verdict decision is invalid")
+    expected_disposition = {
+        "FULLY_COVERED": "NO_RESIDUAL_FAILURE",
+        "RESIDUAL_SAME_PROBLEM": "SAME_ACCEPTED_PROBLEM",
+        "RESIDUAL_REDEFINES_PROBLEM": "REDEFINES_PROBLEM",
+        "UNRESOLVED": "UNRESOLVED",
+    }[decision]
+    if closure["problem_identity_disposition"] != expected_disposition:
+        raise ValidationError("Necessity Verdict conflicts with the reviewed problem-identity disposition")
+    _require_string_list(verdict["reasons"], "Necessity Verdict.reasons", non_empty=True)
+    issues = _require_list(verdict, "issues", "Necessity Verdict", non_empty=False)
+    blocking = False
+    for index, raw in enumerate(issues, 1):
+        issue = _require_mapping(raw, f"Necessity Verdict issue {index}")
+        _require_fields(issue, ("issue_id", "severity", "message"), f"Necessity Verdict issue {index}")
+        if issue["severity"] not in {"BLOCKING", "NON_BLOCKING"}:
+            raise ValidationError(f"Necessity Verdict issue {index}.severity is invalid")
+        blocking = blocking or issue["severity"] == "BLOCKING"
+    rubrics = (
+        "failure_reality",
+        "operating_envelope_fidelity",
+        "simple_repair_coverage",
+        "residual_failure_fidelity",
+        "problem_identity_fidelity",
+        "evidence_sufficiency",
+    )
+    for field in rubrics:
+        if verdict[field] not in {"PASS", "FAIL", "UNCERTAIN"}:
+            raise ValidationError(f"Necessity Verdict.{field} must be PASS, FAIL, or UNCERTAIN")
+    if decision != "UNRESOLVED" and (blocking or any(verdict[field] != "PASS" for field in rubrics)):
+        raise ValidationError(f"{decision} requires all Necessity rubrics PASS and no BLOCKING issue")
+    if decision == "UNRESOLVED" and verdict["evidence_sufficiency"] == "PASS":
+        raise ValidationError("UNRESOLVED requires insufficient or uncertain Evidence")
+    return verdict
+
+
 def validate_root_cause_analysis(
     payload: Any,
     *,
@@ -1958,6 +2233,7 @@ def validate_root_cause_analysis(
     evidence_capsule_sha256: str,
     active_problem_id: str | None = None,
     formal_evidence_sources: dict[str, str] | None = None,
+    necessity_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate the executable 1a-2b diagnosis handoff.
 
@@ -1975,6 +2251,7 @@ def validate_root_cause_analysis(
             "problem_id",
             "problem_contract_sha256",
             "evidence_capsule_sha256",
+            "necessity_binding",
             "failure_observations",
             "phenomenon_clusters",
             "causal_depth_traces",
@@ -1997,6 +2274,12 @@ def validate_root_cause_analysis(
     _require_sha256(analysis["evidence_capsule_sha256"], "evidence_capsule_sha256")
     if active_problem_id is not None and analysis["problem_id"] != active_problem_id:
         raise ValidationError("root-cause analysis problem_id does not match the active accepted problem")
+    if necessity_binding is not None:
+        actual_necessity = _require_mapping(
+            analysis["necessity_binding"], "root-cause analysis.necessity_binding"
+        )
+        if actual_necessity != necessity_binding:
+            raise ValidationError("root-cause analysis necessity_binding is stale or mismatched")
     if formal_evidence_sources is not None:
         if not formal_evidence_sources:
             raise ValidationError("root-cause analysis has no formal evidence bound to the active problem")
@@ -2149,6 +2432,8 @@ def validate_root_cause_verdict(
     reviewed_analysis_sha256: str,
     problem_contract_sha256: str,
     evidence_capsule_sha256: str,
+    necessity_closure_sha256: str,
+    necessity_verdict_sha256: str,
 ) -> dict[str, Any]:
     """Validate an independent Root-Cause Gate verdict and its artifact bindings."""
     verdict = _require_mapping(payload, "root-cause verdict")
@@ -2157,9 +2442,10 @@ def validate_root_cause_verdict(
         (
             "schema_version", "run_id", "verdict_id", "reviewer", "analysis_id",
             "reviewed_analysis_sha256", "problem_contract_sha256", "evidence_capsule_sha256",
+            "necessity_closure_sha256", "necessity_verdict_sha256",
             "decision", "reasons", "issues", "observation_fidelity", "grouping_adequacy",
             "causal_depth", "explanatory_coverage", "evidence_calibration",
-            "intervention_relevance", "falsifiability",
+            "intervention_relevance", "falsifiability", "residual_failure_fidelity",
         ),
         "root-cause verdict",
     )
@@ -2171,6 +2457,8 @@ def validate_root_cause_verdict(
         "reviewed_analysis_sha256": reviewed_analysis_sha256,
         "problem_contract_sha256": problem_contract_sha256,
         "evidence_capsule_sha256": evidence_capsule_sha256,
+        "necessity_closure_sha256": necessity_closure_sha256,
+        "necessity_verdict_sha256": necessity_verdict_sha256,
     }
     for field, expected in bindings.items():
         _require_sha256(verdict[field], field)
@@ -2192,6 +2480,7 @@ def validate_root_cause_verdict(
     for field in (
         "observation_fidelity", "grouping_adequacy", "causal_depth", "explanatory_coverage",
         "evidence_calibration", "intervention_relevance", "falsifiability",
+        "residual_failure_fidelity",
     ):
         if verdict[field] not in {"PASS", "FAIL", "UNCERTAIN"}:
             raise ValidationError(f"root-cause verdict {field} must be PASS, FAIL, or UNCERTAIN")
@@ -2200,10 +2489,11 @@ def validate_root_cause_verdict(
         for field in (
             "observation_fidelity", "grouping_adequacy", "causal_depth", "explanatory_coverage",
             "evidence_calibration", "intervention_relevance", "falsifiability",
+            "residual_failure_fidelity",
         )
     ):
         raise ValidationError(
-            "DIAGNOSIS_READY requires PASS on all seven root-cause scientific rubrics"
+            "DIAGNOSIS_READY requires PASS on all root-cause scientific rubrics"
         )
     return verdict
 
@@ -2221,6 +2511,11 @@ def validate_root_cause_view(text: Any, analysis: dict[str, Any]) -> str:
         analysis["problem_id"],
         analysis["problem_contract_sha256"],
         analysis["evidence_capsule_sha256"],
+        analysis["necessity_binding"]["necessity_id"],
+        analysis["necessity_binding"]["closure_sha256"],
+        analysis["necessity_binding"]["verdict_id"],
+        analysis["necessity_binding"]["verdict_sha256"],
+        *analysis["necessity_binding"]["residual_failure_ids"],
         *analysis["primary_causal_chain_ids"],
     ]
     missing = [token for token in required_tokens if token not in text]
@@ -2237,6 +2532,7 @@ def validate_query_plan(
     method_design_context: dict[str, Any] | None = None,
     method_refinement_context: dict[str, Any] | None = None,
     problem_lead_context: dict[str, Any] | None = None,
+    problem_necessity_context: dict[str, Any] | None = None,
     required_coverage_gaps: set[str] | None = None,
 ) -> dict[str, Any]:
     plan = _require_mapping(payload, "query plan")
@@ -2307,6 +2603,62 @@ def validate_query_plan(
     search_dimensions_by_mechanism: dict[str, set[str]] = {}
     method_search_covered_ids: dict[str, set[str]] = {}
     declared_adaptation_gap_ids: set[str] | None = None
+    necessity_decision_target_ids: set[str] | None = None
+    covered_necessity_target_ids: set[str] = set()
+    if problem_necessity_context is not None:
+        context = _require_mapping(
+            plan.get("problem_necessity_context"),
+            "query plan problem_necessity_context",
+        )
+        _require_fields(
+            context,
+            (
+                "search_mode",
+                "problem_id",
+                "problem_version",
+                "problem_contract_sha256",
+                "evidence_capsule_sha256",
+                "decision_targets",
+            ),
+            "query plan problem_necessity_context",
+        )
+        if context["search_mode"] != "NECESSITY_EVIDENCE_RECOVERY":
+            raise ValidationError(
+                "query plan problem_necessity_context.search_mode must be NECESSITY_EVIDENCE_RECOVERY"
+            )
+        for field in (
+            "problem_id",
+            "problem_version",
+            "problem_contract_sha256",
+            "evidence_capsule_sha256",
+        ):
+            if str(context[field]) != str(problem_necessity_context[field]):
+                raise ValidationError(
+                    f"query plan problem_necessity_context.{field} is stale"
+                )
+        targets = _require_list(
+            context,
+            "decision_targets",
+            "query plan problem_necessity_context",
+            non_empty=True,
+        )
+        necessity_decision_target_ids = _unique_ids(
+            targets,
+            "decision_target_id",
+            "query plan problem_necessity_context.decision_targets",
+        )
+        for index, raw in enumerate(targets, 1):
+            target = _require_mapping(raw, f"Necessity decision target {index}")
+            _require_fields(
+                target,
+                ("decision_target_id", "failure_id", "simple_repair_decision_target"),
+                f"Necessity decision target {index}",
+            )
+            _required_text(target["failure_id"], f"Necessity decision target {index}.failure_id")
+            _required_text(
+                target["simple_repair_decision_target"],
+                f"Necessity decision target {index}.simple_repair_decision_target",
+            )
     if method_design_context is not None:
         context = _require_mapping(
             plan.get("method_design_context"), "query plan method_design_context"
@@ -2478,6 +2830,23 @@ def validate_query_plan(
                     f"problem-lead query plan item {index}.decision_dimension must be one "
                     "of Reality, Importance, Unresolvedness, Precision, Falsifiability, or Answerability"
                 )
+        if necessity_decision_target_ids is not None:
+            _require_fields(
+                item,
+                ("decision_target_ids",),
+                f"Necessity query plan item {index}",
+            )
+            target_ids = set(
+                _unique_string_values(
+                    item["decision_target_ids"],
+                    f"Necessity query plan item {index}.decision_target_ids",
+                )
+            )
+            if not target_ids <= necessity_decision_target_ids:
+                raise ValidationError(
+                    f"Necessity query plan item {index} references an unknown Failure/Simple-Repair decision target"
+                )
+            covered_necessity_target_ids.update(target_ids)
         if required_gaps:
             _require_fields(item, ("coverage_gaps",), f"query plan item {index}")
             item_gaps = _require_string_list(
@@ -2636,6 +3005,13 @@ def validate_query_plan(
                 "each required coverage gap must be bound to at least one executable query: "
                 f"{missing_query_bindings}"
             )
+    if (
+        necessity_decision_target_ids is not None
+        and covered_necessity_target_ids != necessity_decision_target_ids
+    ):
+        raise ValidationError(
+            "Necessity Evidence recovery must bind every declared Failure/Simple-Repair decision target"
+        )
     return plan
 
 
