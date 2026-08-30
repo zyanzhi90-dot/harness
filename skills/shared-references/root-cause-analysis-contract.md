@@ -231,7 +231,7 @@ Allowed decisions:
 DIAGNOSIS_READY | REVISE_DIAGNOSIS | REOPEN_PROBLEM
 ```
 
-- `DIAGNOSIS_READY`: all seven scientific rubrics are `PASS` and there is no
+- `DIAGNOSIS_READY`: all eight scientific rubrics are `PASS` and there is no
   `BLOCKING` issue, so the diagnosis is sufficient to derive method
   requirements. It does not claim that a chain is finally proven.
 - `REVISE_DIAGNOSIS`: the accepted problem remains valid, but phenomenon
