@@ -1046,6 +1046,7 @@ def validate_method_design_packet(
     required_history_refs: set[str] | None = None,
     required_return_ref: str | None = None,
     required_combine_sources: set[tuple[str, str]] | None = None,
+    query_plan_provenance: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate the machine-resolvable Candidate Principle packet without judging quality."""
 
@@ -1095,6 +1096,50 @@ def validate_method_design_packet(
     if bound_chains != primary_causal_chain_ids:
         raise ValidationError("method design packet must bind every accepted primary causal chain")
 
+    dispositions = _require_list(
+        packet, "primary_chain_dispositions", "method design packet", non_empty=True
+    )
+    disposition_chain_ids = _unique_ids(
+        dispositions,
+        "causal_chain_id",
+        "method design packet.primary_chain_dispositions",
+    )
+    if disposition_chain_ids != primary_causal_chain_ids:
+        raise ValidationError("every accepted primary causal chain must have exactly one disposition")
+    disposition_by_chain: dict[str, dict[str, Any]] = {}
+    disposition_enum = set(contract["primary_chain_disposition_enum"])
+    for index, raw in enumerate(dispositions, 1):
+        item = _require_mapping(raw, f"primary chain disposition {index}")
+        _require_fields(
+            item,
+            tuple(contract["primary_chain_disposition_fields"]),
+            f"primary chain disposition {index}",
+        )
+        if item["disposition"] not in disposition_enum:
+            raise ValidationError(f"primary chain disposition {index}.disposition is invalid")
+        mechanism_refs = _unique_string_values(
+            item["mechanism_change_ids"],
+            f"primary chain disposition {index}.mechanism_change_ids",
+            non_empty=item["disposition"] == "RMC",
+        )
+        evidence_refs = _unique_string_values(
+            item["evidence_refs"],
+            f"primary chain disposition {index}.evidence_refs",
+            non_empty=item["disposition"] != "RMC",
+        )
+        if item["disposition"] == "RMC" and evidence_refs:
+            # RMC support is judged through the bound RCA and rationale; this
+            # field is reserved for claim-boundary dispositions.
+            raise ValidationError("RMC primary-chain dispositions must not masquerade as claim-boundary evidence")
+        if item["disposition"] != "RMC" and mechanism_refs:
+            raise ValidationError("claim-boundary dispositions must not also consume the chain as an RMC")
+        _required_text(item["rationale"], f"primary chain disposition {index}.rationale")
+        if current_evidence_ids is not None and not set(evidence_refs) <= current_evidence_ids:
+            raise ValidationError(
+                f"primary chain disposition {index} cites Evidence outside the current formal context"
+            )
+        disposition_by_chain[item["causal_chain_id"]] = item
+
     mechanism_changes = _require_list(
         packet, "required_mechanism_changes", "method design packet", non_empty=True
     )
@@ -1115,13 +1160,30 @@ def validate_method_design_packet(
         for field in (
             "failed_relation_state_or_information_structure",
             "required_mechanism_change",
+            "change_direction",
+            "causal_position",
+            "activation_condition",
             "root_cause_resolution_rationale",
         ):
             _required_text(item[field], f"required mechanism change {index}.{field}")
         _unique_string_values(item["capability_ids"], f"required mechanism change {index}.capability_ids")
         _unique_string_values(item["obligation_ids"], f"required mechanism change {index}.obligation_ids")
-        _require_list(item, "acceptance_conditions", f"required mechanism change {index}", non_empty=True)
         mechanism_by_id[item["mechanism_change_id"]] = item
+
+    for chain_id, disposition in disposition_by_chain.items():
+        if disposition["disposition"] == "RMC":
+            refs = set(disposition["mechanism_change_ids"])
+            if not refs <= mechanism_ids or any(
+                chain_id not in mechanism_by_id[mechanism_id]["causal_chain_ids"]
+                for mechanism_id in refs
+            ):
+                raise ValidationError(
+                    f"primary chain disposition {chain_id} has an unresolved or inconsistent RMC binding"
+                )
+        elif any(chain_id in item["causal_chain_ids"] for item in mechanism_changes):
+            raise ValidationError(
+                f"claim-boundary primary chain {chain_id} must not also be consumed by an RMC"
+            )
 
     capabilities = _require_list(packet, "required_capabilities", "method design packet", non_empty=True)
     capability_ids = _unique_ids(capabilities, "capability_id", "method design packet.required_capabilities")
@@ -1184,36 +1246,466 @@ def validate_method_design_packet(
 
     search = _require_mapping(packet["principle_search_record"], "method design packet.principle_search_record")
     _require_fields(search, tuple(contract["principle_search_record_fields"]), "method design packet.principle_search_record")
-    for field in ("first_principles", "representation_transformations", "same_field_mechanisms"):
-        _require_list(search, field, "method design packet.principle_search_record", non_empty=True)
-    cross_domain = _require_list(search, "cross_domain_structural_isomorphisms", "method design packet.principle_search_record")
-    for index, raw in enumerate(cross_domain, 1):
-        candidate = _require_mapping(raw, f"cross-domain structural isomorphism {index}")
-        _require_fields(candidate, tuple(contract["cross_domain_candidate_fields"]), f"cross-domain structural isomorphism {index}")
+    signatures = _require_list(
+        search, "target_mechanism_signatures", "method design packet.principle_search_record", non_empty=True
+    )
+    signature_ids = _unique_ids(
+        signatures, "target_mechanism_signature_id", "target mechanism signatures"
+    )
+    signature_by_id: dict[str, dict[str, Any]] = {}
+    signature_rmc_ids: set[str] = set()
+    for index, raw in enumerate(signatures, 1):
+        item = _require_mapping(raw, f"target mechanism signature {index}")
+        _require_fields(
+            item, tuple(contract["target_mechanism_signature_fields"]),
+            f"target mechanism signature {index}",
+        )
+        if item["rmc_id"] not in mechanism_ids:
+            raise ValidationError(f"target mechanism signature {index} references an unknown RMC")
+        if item["rmc_id"] in signature_rmc_ids:
+            raise ValidationError("each RMC must have exactly one current Target Mechanism Signature")
+        signature_rmc_ids.add(item["rmc_id"])
+        for field in contract["target_mechanism_signature_fields"]:
+            _required_text(item[field], f"target mechanism signature {index}.{field}")
+        rmc = mechanism_by_id[item["rmc_id"]]
+        for field in ("change_direction", "causal_position", "activation_condition"):
+            if item[field] != rmc[field]:
+                raise ValidationError(
+                    f"target mechanism signature {index}.{field} is inconsistent with its RMC"
+                )
+        signature_by_id[item["target_mechanism_signature_id"]] = item
+    if signature_rmc_ids != mechanism_ids:
+        raise ValidationError("every RMC must have a Target Mechanism Signature before transfer search")
+
+    first_principles = _require_list(
+        search, "first_principles", "method design packet.principle_search_record", non_empty=True
+    )
+    first_origin_ids = _unique_ids(first_principles, "origin_record_id", "first-principles derivations")
+    first_rmc_ids: set[str] = set()
+    for index, raw in enumerate(first_principles, 1):
+        item = _require_mapping(raw, f"first-principles derivation {index}")
+        _require_fields(
+            item, tuple(contract["first_principles_derivation_fields"]),
+            f"first-principles derivation {index}",
+        )
+        if item["rmc_id"] not in mechanism_ids:
+            raise ValidationError(f"first-principles derivation {index} references an unknown RMC")
+        first_rmc_ids.add(item["rmc_id"])
+        for field in ("premises", "derivation_steps", "formal_or_evidence_basis", "assumptions", "boundaries"):
+            if not isinstance(item[field], (str, list, dict)) or item[field] in ("", [], {}):
+                raise ValidationError(f"first-principles derivation {index}.{field} must be non-empty")
+        for field in ("derived_intervention", "rmc_resolution_rationale"):
+            _required_text(item[field], f"first-principles derivation {index}.{field}")
+    if first_rmc_ids != mechanism_ids:
+        raise ValidationError("FIRST_PRINCIPLES requires a reviewable derivation record for every RMC")
+
+    transformations = _require_list(
+        search, "representation_transformations", "method design packet.principle_search_record", non_empty=True
+    )
+    representation_origin_ids = _unique_ids(
+        transformations, "origin_record_id", "representation transformations"
+    )
+    representation_rmc_ids: set[str] = set()
+    for index, raw in enumerate(transformations, 1):
+        item = _require_mapping(raw, f"representation transformation {index}")
+        _require_fields(
+            item, tuple(contract["representation_transformation_fields"]),
+            f"representation transformation {index}",
+        )
+        if item["rmc_id"] not in mechanism_ids:
+            raise ValidationError(f"representation transformation {index} references an unknown RMC")
+        representation_rmc_ids.add(item["rmc_id"])
         for field in (
-            "source_problem", "source_root_cause", "source_intervention",
-            "changed_relation_state_or_information_structure", "solution_principle",
-            "causal_direction",
+            "old_representation", "new_representation", "failure_mechanism_resolution",
+            "information_preserved", "formal_or_evidence_basis", "assumptions", "boundaries",
         ):
-            _required_text(candidate[field], f"cross-domain structural isomorphism {index}.{field}")
-        source_refs = set(
+            if not isinstance(item[field], (str, list, dict)) or item[field] in ("", [], {}):
+                raise ValidationError(f"representation transformation {index}.{field} must be non-empty")
+        if not isinstance(item["information_lost"], (str, list, dict)):
+            raise ValidationError(f"representation transformation {index}.information_lost is invalid")
+    if representation_rmc_ids != mechanism_ids:
+        raise ValidationError(
+            "REPRESENTATION_TRANSFORMATION requires a reviewable derivation record for every RMC"
+        )
+
+    hypotheses = _require_list(
+        search, "domain_hypotheses", "method design packet.principle_search_record", non_empty=True
+    )
+    hypothesis_ids = _unique_ids(hypotheses, "domain_hypothesis_id", "domain hypotheses")
+    hypothesis_by_id: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(hypotheses, 1):
+        item = _require_mapping(raw, f"domain hypothesis {index}")
+        _require_fields(item, tuple(contract["domain_hypothesis_fields"]), f"domain hypothesis {index}")
+        if item["rmc_id"] not in mechanism_ids:
+            raise ValidationError(f"domain hypothesis {index} references an unknown RMC")
+        signature = signature_by_id.get(item["target_mechanism_signature_ref"])
+        if not signature or signature["rmc_id"] != item["rmc_id"]:
+            raise ValidationError(f"domain hypothesis {index} has a stale Target Mechanism Signature binding")
+        channel = item["source_channel"]
+        if channel not in set(contract["domain_hypothesis_source_enum"]):
+            raise ValidationError(f"domain hypothesis {index}.source_channel is invalid")
+        for field in (
+            "domain_or_research_community_or_paradigm", "structural_rationale",
+            "expected_problem_structure", "expected_intervention_family",
+            "introduced_query_plan_sha256",
+        ):
+            _required_text(item[field], f"domain hypothesis {index}.{field}")
+        if query_plan_provenance is not None:
+            plan_record = query_plan_provenance.get(item["introduced_query_plan_sha256"])
+            if not isinstance(plan_record, dict) or item["domain_hypothesis_id"] not in set(
+                plan_record.get("domain_hypothesis_ids") or []
+            ):
+                raise ValidationError(
+                    f"domain hypothesis {index} was not registered in its claimed immutable Query Plan"
+                )
+        provenance = _unique_string_values(
+            item["provenance_refs"], f"domain hypothesis {index}.provenance_refs",
+            non_empty=channel == "ACADEMIC_BRIDGE",
+        )
+        if channel == "PRACTITIONER_SIGNAL" and not provenance:
+            raise ValidationError("PRACTITIONER_SIGNAL hypotheses require traceable discovery provenance")
+        if item["disposition"] not in set(contract["domain_hypothesis_disposition_enum"]):
+            raise ValidationError(f"domain hypothesis {index}.disposition is invalid")
+        if item["disposition"] != "CLOSED":
+            raise ValidationError("Method Design cannot close while a domain hypothesis remains EXPLORE")
+        _required_text(item["closure_rationale"], f"domain hypothesis {index}.closure_rationale")
+        _unique_string_values(
+            item["closure_provenance_refs"],
+            f"domain hypothesis {index}.closure_provenance_refs",
+        )
+        hypothesis_by_id[item["domain_hypothesis_id"]] = item
+
+    discovery_executions = _require_list(
+        search,
+        "discovery_executions",
+        "method design packet.principle_search_record",
+        non_empty=True,
+    )
+    _unique_ids(discovery_executions, "discovery_execution_id", "domain discovery executions")
+    discovery_channels_by_rmc = {rmc_id: set() for rmc_id in mechanism_ids}
+    discovery_outcomes = set(contract["discovery_execution_outcome_enum"])
+    for index, raw in enumerate(discovery_executions, 1):
+        item = _require_mapping(raw, f"domain discovery execution {index}")
+        _require_fields(
+            item,
+            tuple(
+                field
+                for field in contract["discovery_execution_fields"]
+                if field != "query_plan_sha256"
+            ),
+            f"domain discovery execution {index}",
+        )
+        if "query_plan_sha256" not in item:
+            raise ValidationError(
+                f"domain discovery execution {index} is missing query_plan_sha256"
+            )
+        rmc_id = item["rmc_id"]
+        signature = signature_by_id.get(item["target_mechanism_signature_ref"])
+        if rmc_id not in mechanism_ids or signature is None or signature["rmc_id"] != rmc_id:
+            raise ValidationError(
+                f"domain discovery execution {index} has a stale RMC/signature binding"
+            )
+        channel = item["source_channel"]
+        if channel not in {"MODEL_PRIOR", "ACADEMIC_BRIDGE"}:
+            raise ValidationError(
+                f"domain discovery execution {index}.source_channel must be MODEL_PRIOR or ACADEMIC_BRIDGE"
+            )
+        discovery_channels_by_rmc[rmc_id].add(channel)
+        outcome = item["outcome"]
+        if outcome not in discovery_outcomes:
+            raise ValidationError(f"domain discovery execution {index}.outcome is invalid")
+        registered_ids = set(
             _unique_string_values(
-                candidate["source_mechanism_evidence_refs"],
-                f"cross-domain structural isomorphism {index}.source_mechanism_evidence_refs",
+                item["registered_domain_hypothesis_ids"],
+                f"domain discovery execution {index}.registered_domain_hypothesis_ids",
+                non_empty=outcome == "HYPOTHESES_REGISTERED",
             )
         )
-        if current_evidence_ids is not None and not source_refs <= current_evidence_ids:
+        if outcome == "NO_ADDITIONAL_DOMAIN_HYPOTHESIS" and registered_ids:
             raise ValidationError(
-                f"cross-domain structural isomorphism {index} cites Evidence outside the current formal context"
+                "NO_ADDITIONAL_DOMAIN_HYPOTHESIS must not fabricate a Domain Hypothesis"
             )
-        for field in (
-            "target_source_structural_mapping", "activation_transfer_conditions",
-            "disanalogies", "transfer_boundaries",
-        ):
-            if not isinstance(candidate[field], (str, list, dict)) or candidate[field] in ("", [], {}):
+        for hypothesis_id in registered_ids:
+            hypothesis = hypothesis_by_id.get(hypothesis_id)
+            if (
+                hypothesis is None
+                or hypothesis["rmc_id"] != rmc_id
+                or hypothesis["target_mechanism_signature_ref"]
+                != item["target_mechanism_signature_ref"]
+                or hypothesis["source_channel"] != channel
+            ):
                 raise ValidationError(
-                    f"cross-domain structural isomorphism {index}.{field} must be non-empty"
+                    f"domain discovery execution {index} has an invalid registered hypothesis binding"
                 )
+        _required_text(
+            item["closure_rationale"],
+            f"domain discovery execution {index}.closure_rationale",
+        )
+        plan_item_ids = _unique_string_values(
+            item["plan_item_ids"],
+            f"domain discovery execution {index}.plan_item_ids",
+            non_empty=channel == "ACADEMIC_BRIDGE",
+        )
+        evidence_refs = set(
+            _unique_string_values(
+                item["evidence_refs"],
+                f"domain discovery execution {index}.evidence_refs",
+                non_empty=channel == "ACADEMIC_BRIDGE",
+            )
+        )
+        if current_evidence_ids is not None and not evidence_refs <= current_evidence_ids:
+            raise ValidationError(
+                f"domain discovery execution {index} cites Evidence outside the current formal context"
+            )
+        if channel == "MODEL_PRIOR":
+            if outcome != "HYPOTHESES_REGISTERED" or not registered_ids:
+                raise ValidationError("MODEL_PRIOR must register at least one Search Hypothesis")
+            if item["query_plan_sha256"] not in (None, "") or plan_item_ids or evidence_refs:
+                raise ValidationError(
+                    "MODEL_PRIOR is hypothesis-only and must not masquerade as scholarly provenance"
+                )
+        else:
+            plan_sha256 = _required_text(
+                item["query_plan_sha256"],
+                f"domain discovery execution {index}.query_plan_sha256",
+            )
+            if query_plan_provenance is not None:
+                plan_record = query_plan_provenance.get(plan_sha256)
+                steps = (
+                    plan_record.get("search_step_by_plan_item")
+                    if isinstance(plan_record, dict)
+                    else None
+                )
+                if not isinstance(steps, dict) or any(
+                    steps.get(plan_item_id) != "DOMAIN_DISCOVERY"
+                    for plan_item_id in plan_item_ids
+                ):
+                    raise ValidationError(
+                        f"domain discovery execution {index} lacks accepted DOMAIN_DISCOVERY Query Plan provenance"
+                    )
+                evidence_by_item = plan_record.get("evidence_ids_by_plan_item") or {}
+                provenance_evidence = {
+                    evidence_id
+                    for plan_item_id in plan_item_ids
+                    for evidence_id in evidence_by_item.get(plan_item_id, [])
+                }
+                if not evidence_refs <= provenance_evidence:
+                    raise ValidationError(
+                        f"domain discovery execution {index} lacks scholarly read provenance"
+                    )
+    for rmc_id, channels in discovery_channels_by_rmc.items():
+        if not {"MODEL_PRIOR", "ACADEMIC_BRIDGE"} <= channels:
+            raise ValidationError(
+                f"RMC {rmc_id} requires both MODEL_PRIOR and ACADEMIC_BRIDGE Domain Discovery execution"
+            )
+
+    terminology_maps = _require_list(
+        search, "terminology_maps", "method design packet.principle_search_record"
+    )
+    terminology_map_ids = _unique_ids(terminology_maps, "terminology_map_id", "terminology maps")
+    terminology_by_id: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(terminology_maps, 1):
+        item = _require_mapping(raw, f"terminology map {index}")
+        _require_fields(item, tuple(contract["terminology_map_fields"]), f"terminology map {index}")
+        if item["domain_hypothesis_id"] not in hypothesis_ids:
+            raise ValidationError(f"terminology map {index} references an unknown Domain Hypothesis")
+        for field in (
+            "canonical_problem_terms", "canonical_variable_state_relation_terms",
+            "canonical_intervention_terms", "canonical_method_families",
+            "search_read_provenance",
+        ):
+            _unique_string_values(item[field], f"terminology map {index}.{field}")
+        evidence_refs = set(_unique_string_values(item["evidence_refs"], f"terminology map {index}.evidence_refs"))
+        if current_evidence_ids is not None and not evidence_refs <= current_evidence_ids:
+            raise ValidationError(f"terminology map {index} cites Evidence outside the current formal context")
+        _required_text(item["query_plan_sha256"], f"terminology map {index}.query_plan_sha256")
+        if query_plan_provenance is not None:
+            plan_record = query_plan_provenance.get(item["query_plan_sha256"])
+            if not isinstance(plan_record, dict) or "TERMINOLOGY_GROUNDING" not in set(
+                (plan_record.get("search_step_by_plan_item") or {}).values()
+            ):
+                raise ValidationError(
+                    f"terminology map {index} lacks its claimed evidence-grounding Query Plan provenance"
+                )
+        terminology_by_id[item["terminology_map_id"]] = item
+
+    same_field = _require_list(
+        search, "same_field_mechanisms", "method design packet.principle_search_record"
+    )
+    cross_domain = _require_list(
+        search, "cross_domain_structural_isomorphisms", "method design packet.principle_search_record"
+    )
+    source_records = [("same-field", item) for item in same_field] + [
+        ("cross-domain", item) for item in cross_domain
+    ]
+    source_ids: set[str] = set()
+    alignment_by_id: dict[str, dict[str, Any]] = {}
+    source_by_id: dict[str, dict[str, Any]] = {}
+    source_kind_by_id: dict[str, str] = {}
+    for index, (kind, raw) in enumerate(source_records, 1):
+        source = _require_mapping(raw, f"{kind} Source Mechanism {index}")
+        _require_fields(source, tuple(contract["source_mechanism_fields"]), f"{kind} Source Mechanism {index}")
+        source_id = _required_text(source["source_mechanism_id"], f"{kind} Source Mechanism {index}.source_mechanism_id")
+        if source_id in source_ids:
+            raise ValidationError("source_mechanism_id must be unique across same-field and cross-domain Sources")
+        source_ids.add(source_id)
+        source_by_id[source_id] = source
+        source_kind_by_id[source_id] = kind
+        served_rmc_ids = set(_unique_string_values(source["served_rmc_ids"], f"{kind} Source Mechanism {index}.served_rmc_ids"))
+        served_capability_ids = set(_unique_string_values(source["served_capability_ids"], f"{kind} Source Mechanism {index}.served_capability_ids"))
+        served_obligation_ids = set(_unique_string_values(source["served_obligation_ids"], f"{kind} Source Mechanism {index}.served_obligation_ids"))
+        if not served_rmc_ids <= mechanism_ids or not served_capability_ids <= capability_ids or not served_obligation_ids <= obligation_ids:
+            raise ValidationError(f"{kind} Source Mechanism {index} has an unresolved served binding")
+        for field in (
+            "source_problem", "source_intervention", "changed_variable_relation_or_structure",
+            "causal_or_computational_effect", "outcome", "mechanism_origin_or_stop_rationale",
+        ):
+            _required_text(source[field], f"{kind} Source Mechanism {index}.{field}")
+        if "source_root_cause" in source and source["source_root_cause"] is not None:
+            _required_text(source["source_root_cause"], f"{kind} Source Mechanism {index}.source_root_cause")
+        for field in ("assumptions", "activation_conditions", "boundaries"):
+            if not isinstance(source[field], (str, list, dict)) or source[field] in ("", [], {}):
+                raise ValidationError(f"{kind} Source Mechanism {index}.{field} must be non-empty")
+        evidence_refs = set(_unique_string_values(source["evidence_refs"], f"{kind} Source Mechanism {index}.evidence_refs"))
+        if current_evidence_ids is not None and not evidence_refs <= current_evidence_ids:
+            raise ValidationError(f"{kind} Source Mechanism {index} cites Evidence outside the current formal context")
+        for field in ("discovery_provenance", "search_provenance"):
+            provenance = _require_mapping(source[field], f"{kind} Source Mechanism {index}.{field}")
+            _require_fields(provenance, ("query_plan_sha256", "plan_item_id"), f"{kind} Source Mechanism {index}.{field}")
+            _required_text(provenance["query_plan_sha256"], f"{kind} Source Mechanism {index}.{field}.query_plan_sha256")
+            _required_text(provenance["plan_item_id"], f"{kind} Source Mechanism {index}.{field}.plan_item_id")
+            if query_plan_provenance is not None:
+                plan_record = query_plan_provenance.get(provenance["query_plan_sha256"])
+                step_by_item = plan_record.get("search_step_by_plan_item") if isinstance(plan_record, dict) else None
+                if not isinstance(step_by_item, dict) or provenance["plan_item_id"] not in step_by_item:
+                    raise ValidationError(
+                        f"{kind} Source Mechanism {index}.{field} does not resolve to an accepted Query Plan item"
+                    )
+        if kind == "cross-domain":
+            discovery = source["discovery_provenance"]
+            _require_fields(
+                discovery,
+                ("target_mechanism_signature_ref", "domain_hypothesis_id", "terminology_map_id"),
+                f"cross-domain Source Mechanism {index}.discovery_provenance",
+            )
+            hypothesis = hypothesis_by_id.get(discovery["domain_hypothesis_id"])
+            terminology = terminology_by_id.get(discovery["terminology_map_id"])
+            if (
+                discovery["target_mechanism_signature_ref"] not in signature_ids
+                or hypothesis is None
+                or terminology is None
+                or terminology["domain_hypothesis_id"] != hypothesis["domain_hypothesis_id"]
+                or hypothesis["target_mechanism_signature_ref"] != discovery["target_mechanism_signature_ref"]
+            ):
+                raise ValidationError(f"cross-domain Source Mechanism {index} has a stale discovery/terminology binding")
+            if query_plan_provenance is not None:
+                discovery_plan = query_plan_provenance[source["discovery_provenance"]["query_plan_sha256"]]
+                search_plan = query_plan_provenance[source["search_provenance"]["query_plan_sha256"]]
+                terminology_plan = query_plan_provenance[terminology["query_plan_sha256"]]
+                if discovery_plan["search_step_by_plan_item"][source["discovery_provenance"]["plan_item_id"]] != "DOMAIN_DISCOVERY":
+                    raise ValidationError("cross-domain Source discovery provenance is post-hoc or not DOMAIN_DISCOVERY")
+                if search_plan["search_step_by_plan_item"][source["search_provenance"]["plan_item_id"]] != "SOURCE_SEARCH":
+                    raise ValidationError("cross-domain Source search provenance is not SOURCE_SEARCH")
+                if discovery["terminology_map_id"] not in set(search_plan.get("terminology_map_ids") or []):
+                    raise ValidationError("cross-domain Source search did not bind its evidence-grounded Terminology Map")
+                if not (
+                    discovery_plan["order"]
+                    < terminology_plan["order"]
+                    < search_plan["order"]
+                ):
+                    raise ValidationError(
+                        "cross-domain Source requires pre-Source discovery and terminology Query Plan contexts"
+                    )
+        genealogy = _require_mapping(source["genealogy"], f"{kind} Source Mechanism {index}.genealogy")
+        _require_fields(genealogy, ("nodes", "relations"), f"{kind} Source Mechanism {index}.genealogy")
+        nodes = _require_list(genealogy, "nodes", f"{kind} Source Mechanism {index}.genealogy", non_empty=True)
+        node_ids = _unique_ids(nodes, "node_id", f"{kind} Source Mechanism {index}.genealogy.nodes")
+        for number, raw_node in enumerate(nodes, 1):
+            node = _require_mapping(raw_node, f"{kind} Source Mechanism {index} genealogy node {number}")
+            _require_fields(node, tuple(contract["genealogy_node_fields"]), f"{kind} Source Mechanism {index} genealogy node {number}")
+            _required_text(node["paper_id"], f"{kind} Source Mechanism {index} genealogy node {number}.paper_id")
+            _required_text(node["mechanism_role"], f"{kind} Source Mechanism {index} genealogy node {number}.mechanism_role")
+            _unique_string_values(node["evidence_refs"], f"{kind} Source Mechanism {index} genealogy node {number}.evidence_refs")
+        relations = _require_list(genealogy, "relations", f"{kind} Source Mechanism {index}.genealogy")
+        for number, raw_relation in enumerate(relations, 1):
+            relation = _require_mapping(raw_relation, f"{kind} Source Mechanism {index} genealogy relation {number}")
+            _require_fields(relation, tuple(contract["genealogy_relation_fields"]), f"{kind} Source Mechanism {index} genealogy relation {number}")
+            if relation["from_node_id"] not in node_ids or relation["to_node_id"] not in node_ids:
+                raise ValidationError(f"{kind} Source Mechanism {index} genealogy relation {number} has an unresolved node")
+            _required_text(relation["relation"], f"{kind} Source Mechanism {index} genealogy relation {number}.relation")
+        alignment = _require_mapping(source["intervention_level_alignment"], f"{kind} Source Mechanism {index}.intervention_level_alignment")
+        nullable_alignment_fields = {"solution_principle_abstraction", "failure_disposition"}
+        _require_fields(
+            alignment,
+            tuple(
+                field
+                for field in contract["intervention_alignment_fields"]
+                if field not in nullable_alignment_fields
+            ),
+            f"{kind} Source Mechanism {index}.intervention_level_alignment",
+        )
+        if any(field not in alignment for field in nullable_alignment_fields):
+            raise ValidationError(
+                f"{kind} Source Mechanism {index}.intervention_level_alignment is missing nullable decision fields"
+            )
+        alignment_id = _required_text(alignment["alignment_id"], f"{kind} Source Mechanism {index}.alignment_id")
+        if alignment_id in alignment_by_id or alignment["source_mechanism_id"] != source_id or alignment["rmc_id"] not in served_rmc_ids:
+            raise ValidationError(f"{kind} Source Mechanism {index} has an invalid alignment binding")
+        if alignment["decision"] not in set(contract["intervention_alignment_decision_enum"]):
+            raise ValidationError(f"{kind} Source Mechanism {index} alignment decision is invalid")
+        for field in (
+            "variable_or_relation_role_mapping", "change_direction_alignment",
+            "intervention_position_alignment", "activation_condition_alignment",
+            "source_actual_effect", "assumption_boundary_mismatches",
+        ):
+            if not isinstance(alignment[field], (str, list, dict)) or alignment[field] in ("", [], {}):
+                raise ValidationError(f"{kind} Source Mechanism {index} alignment.{field} must be non-empty")
+        alignment_refs = set(_unique_string_values(alignment["evidence_refs"], f"{kind} Source Mechanism {index} alignment.evidence_refs"))
+        if not alignment_refs <= evidence_refs:
+            raise ValidationError(f"{kind} Source Mechanism {index} alignment cites Evidence outside its Source record")
+        if alignment["decision"] == "PASS":
+            _required_text(alignment["solution_principle_abstraction"], f"{kind} Source Mechanism {index} alignment.solution_principle_abstraction")
+            if alignment["failure_disposition"] not in (None, ""):
+                raise ValidationError("PASS alignment must not carry a failure disposition")
+        else:
+            _required_text(alignment["failure_disposition"], f"{kind} Source Mechanism {index} alignment.failure_disposition")
+            if alignment["solution_principle_abstraction"] not in (None, ""):
+                raise ValidationError("FAIL alignment must not abstract a Solution Principle")
+        alignment_by_id[alignment_id] = alignment
+
+    closures = _require_list(
+        search, "search_space_closures", "method design packet.principle_search_record", non_empty=True
+    )
+    closure_rmc_ids = _unique_ids(closures, "rmc_id", "search-space closures")
+    if closure_rmc_ids != mechanism_ids:
+        raise ValidationError("each RMC must have exactly one same-field/cross-domain search closure")
+    allowed_outcomes = set(contract["source_search_outcome_enum"])
+    for index, raw in enumerate(closures, 1):
+        item = _require_mapping(raw, f"search-space closure {index}")
+        _require_fields(item, tuple(contract["search_space_closure_fields"]), f"search-space closure {index}")
+        for field in ("same_field_search_provenance", "cross_domain_search_provenance"):
+            _unique_string_values(item[field], f"search-space closure {index}.{field}")
+        for field in ("same_field_outcome", "cross_domain_outcome"):
+            if item[field] not in allowed_outcomes:
+                raise ValidationError(f"search-space closure {index}.{field} is invalid")
+        if item["model_prior_executed"] is not True or item["academic_bridge_executed"] is not True:
+            raise ValidationError(f"search-space closure {index} must execute MODEL_PRIOR and ACADEMIC_BRIDGE")
+        unresolved = _unique_string_values(
+            item["unresolved_high_value_branches"],
+            f"search-space closure {index}.unresolved_high_value_branches",
+            non_empty=False,
+        )
+        if unresolved:
+            raise ValidationError("fixed search budget cannot close an unresolved high-value branch")
+        _required_text(item["literature_budget_disposition"], f"search-space closure {index}.literature_budget_disposition")
+        _required_text(item["closure_rationale"], f"search-space closure {index}.closure_rationale")
+        rmc_id = item["rmc_id"]
+        retained_same = any(rmc_id in source["served_rmc_ids"] for source in same_field)
+        retained_cross = any(rmc_id in source["served_rmc_ids"] for source in cross_domain)
+        if (item["same_field_outcome"] == "CREDIBLE_SOURCE_RETAINED") != retained_same:
+            raise ValidationError(f"search-space closure {index} same-field outcome does not match retained Sources")
+        if (item["cross_domain_outcome"] == "CREDIBLE_SOURCE_RETAINED") != retained_cross:
+            raise ValidationError(f"search-space closure {index} cross-domain outcome does not match retained Sources")
     _required_text(search["closure_rationale"], "method design packet.principle_search_record.closure_rationale")
 
     principles = _require_list(packet, "candidate_principles", "method design packet", non_empty=True)
@@ -1227,8 +1719,11 @@ def validate_method_design_packet(
     statuses = set(contract["candidate_status_enum"])
     for index, raw in enumerate(principles, 1):
         item = _require_mapping(raw, f"candidate principle {index}")
+        nullable_candidate_fields = {"parent_version", "alignment_ref_id"}
         candidate_fields = tuple(
-            field for field in contract["candidate_principle_fields"] if field != "parent_version"
+            field
+            for field in contract["candidate_principle_fields"]
+            if field not in nullable_candidate_fields
         )
         _require_fields(item, candidate_fields, f"candidate principle {index}")
         candidate_forbidden = set(contract.get("candidate_forbidden_fields") or []) & set(item)
@@ -1237,8 +1732,10 @@ def validate_method_design_packet(
                 f"candidate principle {index} must not contain test design fields: "
                 + ", ".join(sorted(candidate_forbidden))
             )
-        if "parent_version" not in item:
-            raise ValidationError(f"candidate principle {index} is missing parent_version")
+        if any(field not in item for field in nullable_candidate_fields):
+            raise ValidationError(
+                f"candidate principle {index} is missing parent_version or alignment_ref_id"
+            )
         principle_id = _required_text(item["principle_id"], f"candidate principle {index}.principle_id")
         version = _required_text(str(item["principle_version"]), f"candidate principle {index}.principle_version")
         key = (principle_id, version)
@@ -1288,11 +1785,14 @@ def validate_method_design_packet(
                 )
             derived_sources_by_candidate[key] = derived_sources
         for field in (
-            "principle", "origin", "intervention", "changed_structure",
+            "principle", "origin_type", "origin_ref_id", "intervention", "changed_structure",
             "root_cause_resolution_rationale", "provisional_scientific_delta",
             "substantive_difference", "status_rationale",
         ):
             _required_text(item[field], f"candidate principle {index}.{field}")
+        origin_type = item["origin_type"]
+        if origin_type not in set(contract["candidate_origin_type_enum"]):
+            raise ValidationError(f"candidate principle {index}.origin_type is invalid")
         for field, allowed_ids in (
             ("mechanism_change_ids", mechanism_ids),
             ("capability_ids", capability_ids),
@@ -1302,6 +1802,47 @@ def validate_method_design_packet(
             refs = set(_unique_string_values(item[field], f"candidate principle {index}.{field}"))
             if not refs <= allowed_ids:
                 raise ValidationError(f"candidate principle {index}.{field} contains an unresolved ID")
+        candidate_rmc_ids = set(item["mechanism_change_ids"])
+        origin_ref_id = item["origin_ref_id"]
+        if origin_type == "FIRST_PRINCIPLES":
+            origin = next(
+                (record for record in first_principles if record["origin_record_id"] == origin_ref_id),
+                None,
+            )
+            if origin is None or origin["rmc_id"] not in candidate_rmc_ids:
+                raise ValidationError(f"candidate principle {index} has a stale first-principles origin binding")
+            if item["alignment_ref_id"] is not None:
+                raise ValidationError(f"candidate principle {index} derivation origin must not fabricate Source alignment")
+        elif origin_type == "REPRESENTATION_TRANSFORMATION":
+            origin = next(
+                (record for record in transformations if record["origin_record_id"] == origin_ref_id),
+                None,
+            )
+            if origin is None or origin["rmc_id"] not in candidate_rmc_ids:
+                raise ValidationError(f"candidate principle {index} has a stale representation origin binding")
+            if item["alignment_ref_id"] is not None:
+                raise ValidationError(f"candidate principle {index} derivation origin must not fabricate Source alignment")
+        else:
+            source = source_by_id.get(origin_ref_id)
+            expected_kind = "same-field" if origin_type == "SAME_FIELD_SOURCE" else "cross-domain"
+            if source is None or source_kind_by_id.get(origin_ref_id) != expected_kind:
+                raise ValidationError(f"candidate principle {index} has a stale Source Mechanism origin binding")
+            alignment = alignment_by_id.get(str(item["alignment_ref_id"] or ""))
+            if (
+                alignment is None
+                or alignment["source_mechanism_id"] != origin_ref_id
+                or alignment["decision"] != "PASS"
+                or alignment["rmc_id"] not in candidate_rmc_ids
+            ):
+                raise ValidationError(
+                    f"candidate principle {index} requires an accepted intervention-level alignment"
+                )
+            if not candidate_rmc_ids <= set(source["served_rmc_ids"]):
+                raise ValidationError(f"candidate principle {index} exceeds its Source Mechanism RMC binding")
+            if item["principle"] != alignment["solution_principle_abstraction"]:
+                raise ValidationError(
+                    f"candidate principle {index} must use the accepted algorithm-independent Solution Principle abstraction"
+                )
         for field in ("activation_conditions", "failure_conditions", "target_domain_operationalization"):
             if not isinstance(item[field], (str, list, dict)) or item[field] in ("", [], {}):
                 raise ValidationError(f"candidate principle {index}.{field} must be non-empty")
@@ -1351,6 +1892,51 @@ def validate_method_design_packet(
         evidence_refs = _unique_string_values(item["evidence_refs"], f"candidate principle {index}.evidence_refs", non_empty=False)
         if current_evidence_ids is not None and not set(evidence_refs) <= current_evidence_ids:
             raise ValidationError(f"candidate principle {index} cites Evidence outside the current formal context")
+        novelty = _require_mapping(
+            item["target_intervention_novelty"],
+            f"candidate principle {index}.target_intervention_novelty",
+        )
+        _require_fields(
+            novelty,
+            tuple(contract["target_intervention_novelty_fields"]),
+            f"candidate principle {index}.target_intervention_novelty",
+        )
+        _required_text(
+            novelty["novelty_closure_id"],
+            f"candidate principle {index}.target_intervention_novelty.novelty_closure_id",
+        )
+        novelty_refs = set(
+            _unique_string_values(
+                novelty["nearest_target_prior_evidence_refs"],
+                f"candidate principle {index}.target_intervention_novelty.nearest_target_prior_evidence_refs",
+            )
+        )
+        _unique_string_values(
+            novelty["evidence_search_provenance"],
+            f"candidate principle {index}.target_intervention_novelty.evidence_search_provenance",
+        )
+        for field in ("uncovered_residual_delta", "mechanism_delta", "scientific_delta"):
+            _required_text(
+                novelty[field],
+                f"candidate principle {index}.target_intervention_novelty.{field}",
+            )
+        if novelty["causal_equivalent_intervention_check"] not in set(
+            contract["target_intervention_novelty_check_enum"]
+        ):
+            raise ValidationError(f"candidate principle {index} has an invalid causal-equivalence check")
+        if novelty["disposition"] not in set(
+            contract["target_intervention_novelty_disposition_enum"]
+        ):
+            raise ValidationError(f"candidate principle {index} has an invalid target-novelty disposition")
+        if current_evidence_ids is not None and not novelty_refs <= current_evidence_ids:
+            raise ValidationError(f"candidate principle {index} target novelty cites Evidence outside the current formal context")
+        if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"} and (
+            novelty["causal_equivalent_intervention_check"] == "COVERED"
+            or novelty["disposition"] == "REJECTED_AS_COVERED"
+        ):
+            raise ValidationError(
+                f"candidate principle {index} cannot remain active when the Target already has a causal-equivalent intervention"
+            )
         if item["status"] not in statuses:
             raise ValidationError(f"candidate principle {index}.status is invalid")
 
@@ -1362,6 +1948,21 @@ def validate_method_design_packet(
     active_keys = {key for key, item in principle_by_key.items() if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}}
     if not active_keys:
         raise ValidationError("method design packet must retain at least one active Candidate Principle")
+    active_candidates = [principle_by_key[key] for key in active_keys]
+    for field, required_ids in (
+        ("mechanism_change_ids", mechanism_ids),
+        ("capability_ids", capability_ids),
+        ("obligation_ids", obligation_ids),
+    ):
+        consumed = {
+            reference
+            for candidate in active_candidates
+            for reference in candidate[field]
+        }
+        if consumed != required_ids:
+            raise ValidationError(
+                f"active Candidate Principles must consume every current {field}: {sorted(required_ids - consumed)}"
+            )
 
     if required_combine_sources is not None:
         if len(required_combine_sources) < 2:
@@ -2600,8 +3201,12 @@ def validate_query_plan(
     method_search_mode: str | None = None
     method_context_ids: dict[str, set[str]] = {}
     method_context_links: dict[str, dict[str, set[str]]] = {}
-    search_dimensions_by_mechanism: dict[str, set[str]] = {}
-    method_search_covered_ids: dict[str, set[str]] = {}
+    target_signature_by_id: dict[str, dict[str, Any]] = {}
+    domain_hypothesis_by_id: dict[str, dict[str, Any]] = {}
+    terminology_map_by_id: dict[str, dict[str, Any]] = {}
+    method_decision_targets: set[str] = set()
+    principle_query_dimensions_by_rmc: dict[str, set[str]] = {}
+    cross_domain_steps_by_rmc: dict[str, set[str]] = {}
     declared_adaptation_gap_ids: set[str] | None = None
     necessity_decision_target_ids: set[str] | None = None
     covered_necessity_target_ids: set[str] = set()
@@ -2671,6 +3276,7 @@ def validate_query_plan(
                 "problem_id", "problem_version", "problem_contract_sha256",
                 "evidence_capsule_sha256", "causal_chain_ids",
                 "required_mechanism_changes", "required_capabilities", "design_obligations",
+                "principle_search_context",
             ),
             "query plan method_design_context",
         )
@@ -2711,12 +3317,27 @@ def validate_query_plan(
         obligation_links: dict[str, set[str]] = {}
         for index, raw in enumerate(mechanism_records, 1):
             item = _require_mapping(raw, f"query plan Required Mechanism Change {index}")
-            _require_fields(item, ("mechanism_change_id", "causal_chain_ids", "capability_ids", "obligation_ids"), f"query plan Required Mechanism Change {index}")
+            _require_fields(
+                item,
+                (
+                    "mechanism_change_id", "causal_chain_ids",
+                    "failed_relation_state_or_information_structure", "required_mechanism_change",
+                    "change_direction", "causal_position", "activation_condition",
+                    "root_cause_resolution_rationale", "capability_ids", "obligation_ids",
+                ),
+                f"query plan Required Mechanism Change {index}",
+            )
             linked_chains = set(_unique_string_values(item["causal_chain_ids"], f"query plan Required Mechanism Change {index}.causal_chain_ids"))
             linked_capabilities = set(_unique_string_values(item["capability_ids"], f"query plan Required Mechanism Change {index}.capability_ids"))
             linked_obligations = set(_unique_string_values(item["obligation_ids"], f"query plan Required Mechanism Change {index}.obligation_ids"))
             if not linked_chains <= chains or not linked_capabilities <= capability_ids or not linked_obligations <= obligation_ids:
                 raise ValidationError("query plan Required Mechanism Change has an unresolved binding")
+            for field in (
+                "failed_relation_state_or_information_structure", "required_mechanism_change",
+                "change_direction", "causal_position", "activation_condition",
+                "root_cause_resolution_rationale",
+            ):
+                _required_text(item[field], f"query plan Required Mechanism Change {index}.{field}")
             mechanism_links[item["mechanism_change_id"]] = linked_chains
             mechanism_capability_links[item["mechanism_change_id"]] = linked_capabilities
             mechanism_obligation_links[item["mechanism_change_id"]] = linked_obligations
@@ -2766,8 +3387,130 @@ def validate_query_plan(
             "capability_mechanism_ids": capability_links,
             "obligation_mechanism_ids": obligation_links,
         }
-        search_dimensions_by_mechanism = {mechanism_id: set() for mechanism_id in mechanism_ids}
-        method_search_covered_ids = {field: set() for field in method_context_ids}
+        principle_query_dimensions_by_rmc = {
+            mechanism_id: set() for mechanism_id in mechanism_ids
+        }
+        cross_domain_steps_by_rmc = {
+            mechanism_id: set() for mechanism_id in mechanism_ids
+        }
+        principle_context = _require_mapping(
+            context["principle_search_context"],
+            "query plan method_design_context.principle_search_context",
+        )
+        _require_fields(
+            principle_context,
+            ("target_mechanism_signatures", "domain_hypotheses", "terminology_maps", "decision_targets"),
+            "query plan method_design_context.principle_search_context",
+        )
+        signatures = _require_list(
+            principle_context,
+            "target_mechanism_signatures",
+            "query plan method_design_context.principle_search_context",
+            non_empty=True,
+        )
+        signature_ids = _unique_ids(signatures, "target_mechanism_signature_id", "query plan Target Mechanism Signatures")
+        signature_rmc_ids: set[str] = set()
+        for index, raw in enumerate(signatures, 1):
+            item = _require_mapping(raw, f"query plan Target Mechanism Signature {index}")
+            _require_fields(
+                item,
+                (
+                    "target_mechanism_signature_id", "rmc_id", "domain_neutral_failure_structure",
+                    "causal_or_computational_variable_or_relation", "current_relation_or_state",
+                    "required_intervention", "change_direction", "causal_position", "activation_condition",
+                ),
+                f"query plan Target Mechanism Signature {index}",
+            )
+            rmc_id = item["rmc_id"]
+            if rmc_id not in mechanism_ids or rmc_id in signature_rmc_ids:
+                raise ValidationError("query plan must bind exactly one Target Mechanism Signature per RMC")
+            signature_rmc_ids.add(rmc_id)
+            for field in (
+                "domain_neutral_failure_structure", "causal_or_computational_variable_or_relation",
+                "current_relation_or_state", "required_intervention", "change_direction",
+                "causal_position", "activation_condition",
+            ):
+                _required_text(item[field], f"query plan Target Mechanism Signature {index}.{field}")
+            rmc = next(record for record in mechanism_records if record["mechanism_change_id"] == rmc_id)
+            for field in ("change_direction", "causal_position", "activation_condition"):
+                if item[field] != rmc[field]:
+                    raise ValidationError(
+                        f"query plan Target Mechanism Signature {index}.{field} is inconsistent with its RMC"
+                    )
+            target_signature_by_id[item["target_mechanism_signature_id"]] = item
+        if signature_rmc_ids != mechanism_ids:
+            raise ValidationError("query plan must derive a Target Mechanism Signature for every RMC")
+
+        hypotheses = _require_list(
+            principle_context,
+            "domain_hypotheses",
+            "query plan method_design_context.principle_search_context",
+        )
+        hypothesis_ids = _unique_ids(hypotheses, "domain_hypothesis_id", "query plan Domain Hypotheses") if hypotheses else set()
+        for index, raw in enumerate(hypotheses, 1):
+            item = _require_mapping(raw, f"query plan Domain Hypothesis {index}")
+            _require_fields(
+                item,
+                (
+                    "domain_hypothesis_id", "rmc_id", "target_mechanism_signature_ref",
+                    "source_channel", "domain_or_research_community_or_paradigm",
+                    "structural_rationale", "expected_problem_structure", "expected_intervention_family",
+                    "provenance_refs", "disposition",
+                ),
+                f"query plan Domain Hypothesis {index}",
+            )
+            signature = target_signature_by_id.get(item["target_mechanism_signature_ref"])
+            if signature is None or signature["rmc_id"] != item["rmc_id"]:
+                raise ValidationError(f"query plan Domain Hypothesis {index} has a stale RMC/signature binding")
+            if item["source_channel"] not in {"MODEL_PRIOR", "ACADEMIC_BRIDGE", "PRACTITIONER_SIGNAL"}:
+                raise ValidationError(f"query plan Domain Hypothesis {index}.source_channel is invalid")
+            for field in (
+                "domain_or_research_community_or_paradigm", "structural_rationale",
+                "expected_problem_structure", "expected_intervention_family",
+            ):
+                _required_text(item[field], f"query plan Domain Hypothesis {index}.{field}")
+            _unique_string_values(
+                item["provenance_refs"], f"query plan Domain Hypothesis {index}.provenance_refs",
+                non_empty=item["source_channel"] != "MODEL_PRIOR",
+            )
+            if item["disposition"] not in {"EXPLORE", "CLOSED"}:
+                raise ValidationError(f"query plan Domain Hypothesis {index}.disposition is invalid")
+            domain_hypothesis_by_id[item["domain_hypothesis_id"]] = item
+
+        terminology_maps = _require_list(
+            principle_context,
+            "terminology_maps",
+            "query plan method_design_context.principle_search_context",
+        )
+        terminology_ids = _unique_ids(terminology_maps, "terminology_map_id", "query plan Terminology Maps") if terminology_maps else set()
+        for index, raw in enumerate(terminology_maps, 1):
+            item = _require_mapping(raw, f"query plan Terminology Map {index}")
+            _require_fields(
+                item,
+                (
+                    "terminology_map_id", "domain_hypothesis_id", "canonical_problem_terms",
+                    "canonical_variable_state_relation_terms", "canonical_intervention_terms",
+                    "canonical_method_families", "evidence_refs", "search_read_provenance",
+                    "query_plan_sha256",
+                ),
+                f"query plan Terminology Map {index}",
+            )
+            if item["domain_hypothesis_id"] not in hypothesis_ids:
+                raise ValidationError(f"query plan Terminology Map {index} references an unknown Domain Hypothesis")
+            for field in (
+                "canonical_problem_terms", "canonical_variable_state_relation_terms",
+                "canonical_intervention_terms", "canonical_method_families", "evidence_refs",
+                "search_read_provenance",
+            ):
+                _unique_string_values(item[field], f"query plan Terminology Map {index}.{field}")
+            _required_text(item["query_plan_sha256"], f"query plan Terminology Map {index}.query_plan_sha256")
+            terminology_map_by_id[item["terminology_map_id"]] = item
+        method_decision_targets = set(
+            _unique_string_values(
+                principle_context["decision_targets"],
+                "query plan method_design_context.principle_search_context.decision_targets",
+            )
+        )
     if method_refinement_context is not None:
         context = _require_mapping(
             plan.get("method_refinement_context"), "query plan method_refinement_context"
@@ -2869,24 +3612,25 @@ def validate_query_plan(
                 item,
                 (
                     "search_dimension", "mechanism_change_ids", "capability_ids",
-                    "obligation_ids", "causal_chain_ids",
+                    "obligation_ids", "causal_chain_ids", "search_step",
+                    "target_mechanism_signature_refs", "domain_hypothesis_ids",
+                    "terminology_map_ids", "decision_target",
                 ),
                 f"query plan Principle-search item {index}",
             )
             if item["search_dimension"] not in {
-                "FIRST_PRINCIPLES", "REPRESENTATION_TRANSFORMATION",
                 "SAME_FIELD_MECHANISM", "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM",
             }:
-                raise ValidationError(f"query plan Principle-search item {index}.search_dimension is invalid")
+                raise ValidationError(
+                    f"query plan Principle-search item {index} must be a literature search; "
+                    "FIRST_PRINCIPLES and REPRESENTATION_TRANSFORMATION belong in derivation records"
+                )
             item_ids: dict[str, set[str]] = {}
             for field, known_ids in method_context_ids.items():
                 target_ids = set(_unique_string_values(item[field], f"query plan Principle-search item {index}.{field}"))
                 if not target_ids <= known_ids:
                     raise ValidationError(f"query plan Principle-search item {index}.{field} contains an unresolved ID")
                 item_ids[field] = target_ids
-                method_search_covered_ids[field].update(target_ids)
-            for mechanism_id in item_ids["mechanism_change_ids"]:
-                search_dimensions_by_mechanism[mechanism_id].add(item["search_dimension"])
             linked_chains = set().union(
                 *(method_context_links["mechanism_chain_ids"][mechanism_id] for mechanism_id in item_ids["mechanism_change_ids"])
             )
@@ -2901,6 +3645,81 @@ def validate_query_plan(
                     for target_id in item_ids[field]
                 ):
                     raise ValidationError(f"query plan Principle-search item {index}.{field} is not linked to its RMC targets")
+            signature_refs = set(
+                _unique_string_values(
+                    item["target_mechanism_signature_refs"],
+                    f"query plan Principle-search item {index}.target_mechanism_signature_refs",
+                )
+            )
+            if not signature_refs <= set(target_signature_by_id) or {
+                target_signature_by_id[signature_id]["rmc_id"] for signature_id in signature_refs
+            } != item_ids["mechanism_change_ids"]:
+                raise ValidationError(
+                    f"query plan Principle-search item {index} must bind the current Target Mechanism Signature for every target RMC"
+                )
+            domain_ids = set(
+                _unique_string_values(
+                    item["domain_hypothesis_ids"],
+                    f"query plan Principle-search item {index}.domain_hypothesis_ids",
+                    non_empty=False,
+                )
+            )
+            terminology_ids = set(
+                _unique_string_values(
+                    item["terminology_map_ids"],
+                    f"query plan Principle-search item {index}.terminology_map_ids",
+                    non_empty=False,
+                )
+            )
+            decision_target = _required_text(
+                item["decision_target"],
+                f"query plan Principle-search item {index}.decision_target",
+            )
+            if decision_target not in method_decision_targets:
+                raise ValidationError(
+                    f"query plan Principle-search item {index}.decision_target is not declared in the current Principle Search context"
+                )
+            if item["search_dimension"] == "SAME_FIELD_MECHANISM":
+                if item["search_step"] != "SOURCE_SEARCH" or domain_ids or terminology_ids:
+                    raise ValidationError(
+                        f"query plan same-field item {index} uses SOURCE_SEARCH without a fabricated cross-domain discovery story"
+                    )
+            else:
+                if item["search_step"] not in {
+                    "DOMAIN_DISCOVERY", "TERMINOLOGY_GROUNDING", "SOURCE_SEARCH"
+                }:
+                    raise ValidationError(f"query plan cross-domain item {index}.search_step is invalid")
+                if item["search_step"] == "DOMAIN_DISCOVERY":
+                    if domain_ids or terminology_ids:
+                        raise ValidationError(
+                            "DOMAIN_DISCOVERY must bind the current RMC/signature and must not require a pre-existing Domain Hypothesis"
+                        )
+                elif item["search_step"] == "TERMINOLOGY_GROUNDING":
+                    if not domain_ids or terminology_ids:
+                        raise ValidationError(
+                            "TERMINOLOGY_GROUNDING requires a registered Domain Hypothesis and precedes a Terminology Map"
+                        )
+                else:
+                    if not domain_ids or not terminology_ids:
+                        raise ValidationError(
+                            "SOURCE_SEARCH requires a Domain Hypothesis, evidence-grounded Terminology Map, and explicit decision target"
+                        )
+                if not domain_ids <= set(domain_hypothesis_by_id):
+                    raise ValidationError(f"query plan Principle-search item {index} references an unknown Domain Hypothesis")
+                if not terminology_ids <= set(terminology_map_by_id):
+                    raise ValidationError(f"query plan Principle-search item {index} references an unknown Terminology Map")
+                for domain_id in domain_ids:
+                    hypothesis = domain_hypothesis_by_id[domain_id]
+                    if hypothesis["rmc_id"] not in item_ids["mechanism_change_ids"]:
+                        raise ValidationError(f"query plan Principle-search item {index} has a Domain Hypothesis outside its RMC targets")
+                for terminology_id in terminology_ids:
+                    terminology = terminology_map_by_id[terminology_id]
+                    if terminology["domain_hypothesis_id"] not in domain_ids:
+                        raise ValidationError(f"query plan Principle-search item {index} has a Terminology Map outside its Domain Hypotheses")
+            for mechanism_id in item_ids["mechanism_change_ids"]:
+                principle_query_dimensions_by_rmc[mechanism_id].add(item["search_dimension"])
+                if item["search_dimension"] == "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM":
+                    cross_domain_steps_by_rmc[mechanism_id].add(item["search_step"])
         if declared_adaptation_gap_ids is not None:
             _require_fields(
                 item, ("decision_target", "residual_adaptation_gap_ids"),
@@ -2969,30 +3788,6 @@ def validate_query_plan(
         raise ValidationError("query plan schema_version 1 queries must be unique")
     if schema_version == 2 and len(set(plan_item_ids)) != len(plan_item_ids):
         raise ValidationError("query plan plan_item_id values must be unique")
-    if method_search_mode == "PRINCIPLE_SEARCH":
-        required_dimensions = {
-            "FIRST_PRINCIPLES", "REPRESENTATION_TRANSFORMATION",
-            "SAME_FIELD_MECHANISM", "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM",
-        }
-        incomplete = sorted(
-            mechanism_id
-            for mechanism_id, dimensions in search_dimensions_by_mechanism.items()
-            if dimensions != required_dimensions
-        )
-        if incomplete:
-            raise ValidationError(
-                "PRINCIPLE_SEARCH must cover all four search dimensions for every Required Mechanism Change: "
-                f"{incomplete}"
-            )
-        uncovered = {
-            field: sorted(known_ids - method_search_covered_ids[field])
-            for field, known_ids in method_context_ids.items()
-            if known_ids - method_search_covered_ids[field]
-        }
-        if uncovered:
-            raise ValidationError(
-                f"PRINCIPLE_SEARCH does not consume the complete RMC/Capability/Obligation/causal binding: {uncovered}"
-            )
     if required_gaps:
         query_bound_gaps = {
             gap
@@ -3012,6 +3807,16 @@ def validate_query_plan(
         raise ValidationError(
             "Necessity Evidence recovery must bind every declared Failure/Simple-Repair decision target"
         )
+    if method_search_mode == "PRINCIPLE_SEARCH":
+        for rmc_id, dimensions in principle_query_dimensions_by_rmc.items():
+            if "SAME_FIELD_MECHANISM" not in dimensions:
+                raise ValidationError(
+                    f"RMC {rmc_id} requires formal SAME_FIELD_MECHANISM search provenance"
+                )
+            if "DOMAIN_DISCOVERY" not in cross_domain_steps_by_rmc[rmc_id]:
+                raise ValidationError(
+                    f"RMC {rmc_id} requires an actual ACADEMIC_BRIDGE DOMAIN_DISCOVERY query"
+                )
     return plan
 
 

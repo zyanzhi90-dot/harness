@@ -317,12 +317,27 @@ Follow `method-design-contract.md` in order:
 1. consume the accepted RCA causal chains, all Controller-associated
    cross-cycle Principle/Test history, and the latest return guidance, Human
    feedback, or validation feedback;
-2. derive machine-resolvable Required Mechanism Changes, Required Capabilities,
-   and Design Obligations before naming any concrete technique;
-3. execute Principle Search across first principles, representation
-   transformation, same-field mechanisms, and cross-domain structural
-   isomorphisms for every RMC;
-4. form algorithm-independent Candidate Principles with lineage, bindings,
+2. derive machine-resolvable Required Mechanism Changes from every accepted
+   residual primary causal chain, record an Evidence-backed disposition for any
+   chain outside the Final Claim, and close Required Capability/Design Obligation
+   bindings before naming a concrete technique;
+3. execute Principle Search across all four spaces for every RMC. Record
+   first-principles and representation work as reviewable cognition derivations,
+   not literature queries. Before cross-domain search, derive the Target
+   Mechanism Signature; execute MODEL_PRIOR plus formal ACADEMIC_BRIDGE Domain
+   Discovery. ACADEMIC_BRIDGE may close with
+   `NO_ADDITIONAL_DOMAIN_HYPOTHESIS` only when its actual scholarly search/read
+   provenance is bound; register every hypothesis it does discover. Ground an
+   EXPLORE domain's canonical terminology only when it enters formal Source
+   Search, then search real local Problem-Intervention pairs. Continue new
+   high-value clues rather than declaring closure from a fixed budget;
+4. retain same-field/cross-domain Sources only with stable IDs, genealogy,
+   formal `Intervention -> Mechanism Change -> Outcome` Evidence and assumptions/
+   boundaries. Compare Source Intervention to Target RMC at intervention level;
+   a FAIL cannot form an active Candidate, while a PASS abstracts the
+   algorithm-independent Solution Principle rather than copying implementation;
+5. form algorithm-independent Candidate Principles with one exact Source or
+   derivation origin, Early Target Intervention Novelty closure, lineage, bindings,
    activation/failure conditions, fatal assumptions, target-domain
    operationalization, Provisional Scientific Delta, and discriminating
    predictions, principal risks, and substantive differences.
@@ -334,9 +349,13 @@ the Controller from Full Validation.
 
 If new literature is necessary, use only `PRINCIPLE_SEARCH` through the
 existing incremental gateway. Its Query Plan binds the full RMC/Capability/
-Obligation/causal-chain context and covers all four search dimensions for every
-RMC. Cross-domain search may validly conclude that no credible isomorphism was
-found; do not force a transferred Candidate.
+Obligation/causal-chain context and the current `principle_search_context`.
+Only same-field and cross-domain work becomes an executable query. Cross-domain
+items use `DOMAIN_DISCOVERY`, `TERMINOLOGY_GROUNDING`, or `SOURCE_SEARCH` in
+that prerequisite order; Domain Discovery must not require a Domain Hypothesis.
+MODEL_PRIOR and practitioner clues are hypotheses, never scientific Evidence.
+Cross-domain search may validly conclude that no credible isomorphism was found;
+do not force a transferred Candidate.
 
 Write `METHOD_DESIGN_PACKET.json` and its exact deterministic
 `METHOD_DESIGN.md` view. The packet contains no concrete tests, execution set,

@@ -277,6 +277,7 @@ def build_parser() -> argparse.ArgumentParser:
             "decisive_closest_prior_or_concurrent",
             "negative_or_contradictory_result",
             "diagnostic_or_replication_evidence",
+            "rmc_bound_source_mechanism_or_genealogy",
         ),
     )
     admit.add_argument("--exception-reason")

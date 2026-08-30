@@ -61,7 +61,29 @@ def _write_landscape_artifacts(root: str, workflow: str, status: str = "SUFFICIE
     payloads = {
         "active_field_map": f"coverage_status: {status}\ncoverage_record:\n  query_id: q1\n  research_effort_budget: default\n  stopping_reason: tested\n",
         "evidence_registry": json.dumps(evidence) + "\n",
-        "literature_corpus": '{"source_id":"S1","admission_status":"ADMIT_DECISION_GRADE"}\n',
+        "literature_corpus": json.dumps({
+            "source_id": "S1",
+            "context_decisions": [{
+                "decision_id": "admission-landscape-s1",
+                "context": {
+                    "paper_id": "S1",
+                    "phase": "landscape",
+                    "query_plan_sha256": "a" * 64,
+                    "phase_binding_anchor": {"query_plan_sha256": "a" * 64},
+                    "decision_targets": [],
+                },
+                "admission_status": "ADMIT_DECISION_GRADE",
+                "screening_in_scope": True,
+                "screening_status": "IN_SCOPE",
+                "duplicate": False,
+                "screening_basis": "FULL_TEXT",
+                "screening_reason": "fixture source supports the landscape map",
+                "reading_priority": "TARGETED_GAP_FOLLOWUP",
+                "fulltext_selected": True,
+                "fulltext_selection_reason": None,
+                "admission_exception": None,
+            }],
+        }) + "\n",
         "source_admission_policy": "field: test\nactive_read_gate: high_citation_or_elite_venue\nuser_supplied: exempt\n",
         "search_log": json.dumps(ledger) + "\n",
     }
@@ -544,7 +566,22 @@ def test_landscape_handoff_rejects_non_lineage_content():
         rs.set_status(d, "bad-landscape", "landscape", "running")
         _write_landscape_artifacts(d, workflow)
         corpus = Path(d) / _workflow_artifact(workflow, "literature_corpus")
-        corpus.write_text('{"source_id":"ORPHAN","admission_status":"ADMIT_DECISION_GRADE"}\n', encoding="utf-8")
+        corpus.write_text(json.dumps({
+            "source_id": "ORPHAN",
+            "context_decisions": [{
+                "decision_id": "admission-landscape-orphan",
+                "context": {
+                    "paper_id": "ORPHAN",
+                    "phase": "landscape",
+                    "query_plan_sha256": "a" * 64,
+                    "phase_binding_anchor": {"query_plan_sha256": "a" * 64},
+                    "decision_targets": [],
+                },
+                "admission_status": "ADMIT_DECISION_GRADE",
+                "screening_status": "IN_SCOPE",
+                "screening_reason": "fixture orphan",
+            }],
+        }) + "\n", encoding="utf-8")
         with pytest.raises(ValueError, match="without an evidence card"):
             rs.set_status(d, "bad-landscape", "landscape", "done")
 

@@ -93,6 +93,7 @@ DECISION_GRADE_EXCEPTION_KINDS = {
     "decisive_closest_prior_or_concurrent",
     "negative_or_contradictory_result",
     "diagnostic_or_replication_evidence",
+    "rmc_bound_source_mechanism_or_genealogy",
 }
 
 
@@ -119,7 +120,7 @@ def _merge_discovery_metadata(
     )
     has_formal_identity_or_decision = (
         existing.get("identity_status") == "verified"
-        or existing.get("admission_status") != "DISCOVERY_METADATA_ONLY"
+        or bool(existing.get("context_decisions"))
     )
     if not has_formal_identity_or_decision:
         merged = dict(discovered)
@@ -319,6 +320,7 @@ class ARISController:
                 # admission records on each candidate.
                 "active_reading_session": None,
                 "initial_screened_corpus_ids": None,
+                "initial_screening_context": None,
                 "initial_field_map_binding": None,
                 "formal_primary_selection": None,
                 "field_map_history": [],
@@ -572,6 +574,7 @@ class ARISController:
             for field in (
                 "initial_field_map_binding",
                 "initial_screened_corpus_ids",
+                "initial_screening_context",
                 "formal_primary_selection",
                 "active_reading_session",
             )
@@ -636,7 +639,41 @@ class ARISController:
             return None
 
         paper_ids = [paper_id for _event_id, paper_id in replayable]
-        replay_session = {"paper_ids": paper_ids}
+        first_event = read_events[replayable[0][0]]
+        first_context = first_event.get("decision_context")
+        if not isinstance(first_context, dict):
+            return None
+        decision_context = {
+            field: deepcopy(first_context.get(field))
+            for field in ("phase", "query_plan_sha256", "phase_binding_anchor")
+        }
+        if any(value is None for value in decision_context.values()):
+            return None
+        paper_decision_ids: dict[str, str] = {}
+        for read_event_id, paper_id in replayable:
+            event = read_events[read_event_id]
+            event_context = event.get("decision_context")
+            if not isinstance(event_context, dict) or any(
+                event_context.get(field) != decision_context[field]
+                for field in decision_context
+            ):
+                return None
+            decision_id = event.get("admission_decision_id")
+            if not isinstance(decision_id, str) or not decision_id:
+                return None
+            decision = self._paper_context_decision(
+                papers.get(paper_id) or {},
+                decision_id=decision_id,
+                context=decision_context,
+            )
+            if not isinstance(decision, dict):
+                return None
+            paper_decision_ids[paper_id] = str(decision["decision_id"])
+        replay_session = {
+            "paper_ids": paper_ids,
+            "decision_context": decision_context,
+            "paper_decision_ids": paper_decision_ids,
+        }
         readable_context = {**research, "active_reading_session": replay_session}
         if any(
             not self._paper_readable_in_active_session(readable_context, paper_id)
@@ -1682,14 +1719,95 @@ class ARISController:
     def _paper_readable_in_active_session(
         self, research: dict[str, Any], paper_id: str
     ) -> bool:
-        """Require both the pass-local selection and a current readable admission."""
+        """Require the selection's exact context-bound readable decision."""
 
         paper = research.get("papers", {}).get(paper_id)
         if not isinstance(paper, dict) or not self._paper_is_active_for_reading(research, paper_id):
             return False
-        if paper.get("screening_status") != "IN_SCOPE" or paper.get("duplicate"):
+        session = self._incremental_literature_active(research) or self._active_reading_session(research)
+        if not isinstance(session, dict):
             return False
-        return paper.get("admission_status") in READABLE_ADMISSION_STATUSES
+        decision_ids = session.get("paper_decision_ids") or {}
+        decision_id = decision_ids.get(paper_id) if isinstance(decision_ids, dict) else None
+        decision = self._paper_context_decision(
+            paper,
+            decision_id=str(decision_id) if isinstance(decision_id, str) else None,
+            context=session.get("decision_context"),
+        )
+        return bool(
+            decision
+            and decision.get("screening_status") == "IN_SCOPE"
+            and not decision.get("duplicate")
+            and decision.get("admission_status") in READABLE_ADMISSION_STATUSES
+        )
+
+    @staticmethod
+    def _paper_context_decision(
+        paper: dict[str, Any],
+        *,
+        decision_id: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        decisions = paper.get("context_decisions") or []
+        if not isinstance(decisions, list):
+            raise ControllerError("paper context decisions are invalid")
+        paper_id = str(paper.get("source_id") or paper.get("paper_id") or "")
+        for raw in reversed(decisions):
+            if not isinstance(raw, dict):
+                raise ControllerError("paper context decision is invalid")
+            raw_context = raw.get("context")
+            if not isinstance(raw_context, dict) or raw_context.get("paper_id") != paper_id:
+                continue
+            if decision_id is not None and raw.get("decision_id") != decision_id:
+                continue
+            if context is not None:
+                context_fields = ["phase", "query_plan_sha256", "phase_binding_anchor"]
+                if "decision_targets" in context:
+                    context_fields.append("decision_targets")
+                if not all(
+                    raw_context.get(field) == context.get(field)
+                    for field in context_fields
+                ):
+                    continue
+            if decision_id is not None or context is not None:
+                return raw
+        return None
+
+    def _active_screening_context(self, research: dict[str, Any]) -> dict[str, Any]:
+        """Return the immutable scientific context for the current retrieval pass."""
+
+        session = self._incremental_literature_active(research)
+        if session is not None:
+            context = session.get("decision_context")
+            if not isinstance(context, dict):
+                raise ControllerError("incremental literature session has no current screening context")
+            return deepcopy(context)
+        record = (research.get("accepted_artifacts") or {}).get("query_plan")
+        if not isinstance(record, dict):
+            raise ControllerError("landscape screening requires a current accepted Query Plan")
+        path = self.root / str(record.get("path") or "")
+        digest = str(record.get("sha256") or "")
+        if not path.is_file() or not digest or sha256_file(path) != digest:
+            raise ControllerError("landscape screening Query Plan is stale")
+        anchor: dict[str, Any] = {"query_plan_sha256": digest}
+        field_map = (research.get("accepted_artifacts") or {}).get("active_field_map")
+        if isinstance(field_map, dict) and isinstance(field_map.get("sha256"), str):
+            anchor["active_field_map_sha256"] = field_map["sha256"]
+        return {
+            "phase": "landscape",
+            "query_plan_sha256": digest,
+            "phase_binding_anchor": anchor,
+        }
+
+    def _current_paper_decision(
+        self, research: dict[str, Any], paper_id: str
+    ) -> dict[str, Any] | None:
+        paper = research.get("papers", {}).get(paper_id)
+        if not isinstance(paper, dict):
+            return None
+        return self._paper_context_decision(
+            paper, context=self._active_screening_context(research)
+        )
 
     def _archive_active_field_map(self, research: dict[str, Any]) -> None:
         """Preserve any referenced immutable Field Map bytes before replacement."""
@@ -6053,6 +6171,7 @@ class ARISController:
                     method_design_context=method_context,
                     method_refinement_context=refinement_context,
                     problem_lead_context=problem_lead_context,
+                    problem_necessity_context=necessity_context,
                     required_coverage_gaps=required_gaps,
                 )
             except ValidationError as exc:
@@ -6095,26 +6214,24 @@ class ARISController:
                 "author_role": "main_research_agent",
             }
             if incremental_phase is not None:
-                try:
-                    binding_anchor = self._phase_evidence_anchor(state, incremental_phase)
-                except ControllerError:
-                    # Controller-started phases have already passed their input
-                    # checks.  Keep compatibility with old in-memory harness
-                    # fixtures that construct a gateway session directly; they
-                    # predate phase-current bindings and remain legacy records.
-                    binding_anchor = None
+                binding_anchor = self._phase_evidence_anchor(state, incremental_phase)
+                query_plan_sha256 = sha256_file(canonical)
                 research["incremental_literature_active"] = {
                     "phase": incremental_phase,
                     "query_plan_path": str(canonical.relative_to(self.root)),
-                    "query_plan_sha256": sha256_file(canonical),
+                    "query_plan_sha256": query_plan_sha256,
                     # The query plan is provenance, not a derivation epoch.
                     # Freeze only the phase's formal upstream context here,
                     # before the gateway starts accepting Evidence Cards.
                     "evidence_artifacts": {},
                     "started_at": now(),
+                    "phase_binding_anchor": binding_anchor,
+                    "decision_context": {
+                        "phase": incremental_phase,
+                        "query_plan_sha256": query_plan_sha256,
+                        "phase_binding_anchor": binding_anchor,
+                    },
                 }
-                if binding_anchor is not None:
-                    research["incremental_literature_active"]["phase_binding_anchor"] = binding_anchor
             if not fallback_insufficient:
                 research["search_cycle_count"] += 1
             research["planned_queries"] = []
@@ -6286,7 +6403,6 @@ class ARISController:
                 row["found_by_query_ids"] = sorted(
                     set(list(row.get("found_by_query_ids") or []) + [query_id])
                 )
-                row["admission_status"] = "DISCOVERY_METADATA_ONLY"
                 if isinstance(search_result, SearchOutcome):
                     row.setdefault("search_route", tool_used)
                     row.setdefault("google_scholar_coverage", google_scholar_coverage)
@@ -6456,7 +6572,7 @@ class ARISController:
                     paper_id=row["source_id"],
                     tool=tool_used,
                     result_status="recorded",
-                    admission_decision=row.get("admission_status", "DISCOVERY_METADATA_ONLY"),
+                    admission_decision="DISCOVERY_METADATA_ONLY",
                     event_id=uuid.uuid4().hex,
                 ),
             )
@@ -6540,7 +6656,6 @@ class ARISController:
                     row["found_by_query_ids"] = sorted(
                         set(list(row.get("found_by_query_ids") or []) + [query_id])
                     )
-                    row["admission_status"] = "DISCOVERY_METADATA_ONLY"
                     row["search_route"] = source
                     row["google_scholar_coverage"] = source == "human_google_scholar"
                     metadata_rows.append(row)
@@ -6607,7 +6722,7 @@ class ARISController:
                     paper_id=row["source_id"],
                     tool=source,
                     result_status="recorded",
-                    admission_decision=row.get("admission_status", "DISCOVERY_METADATA_ONLY"),
+                    admission_decision="DISCOVERY_METADATA_ONLY",
                     event_id=uuid.uuid4().hex,
                 ),
             )
@@ -6913,34 +7028,41 @@ class ARISController:
         row["source_id"] = paper_id
         row["source_origin"] = "user_supplied"
         row["found_by_query_ids"] = []
-        row["admission_status"] = "USER_SUPPLIED_READ"
-        row["screening_in_scope"] = True
-        row["screening_status"] = "IN_SCOPE"
-        row["screening_basis"] = "FULL_TEXT"
-        row["screening_reason"] = str(
+        screening_reason = str(
             metadata.get("screening_reason")
             or "user supplied this source for formal full-text reading"
         ).strip()
-        row["reading_priority"] = str(
+        reading_priority = str(
             metadata.get("reading_priority") or "TARGETED_GAP_FOLLOWUP"
         )
-        if row["reading_priority"] not in READING_PRIORITY_TIERS:
+        if reading_priority not in READING_PRIORITY_TIERS:
             raise ControllerError("user source reading_priority is invalid")
-        row["fulltext_selected"] = True
-        row["fulltext_selection_reason"] = "user-supplied full text"
-        row["screened_at"] = now()
         row["source_sha256"] = sha256_file(source)
         with self._store.mutate() as state:
             research = self._require_stage(state, "METADATA_RETRIEVAL")
             if paper_id in research["papers"]:
                 raise ControllerError("paper_id is already registered")
-            research["papers"][paper_id] = row
             session = self._incremental_literature_active(research)
+            decision_context = self._active_screening_context(research)
+            targets = sorted(
+                {
+                    str(target).strip()
+                    for target in metadata.get("decision_targets") or []
+                    if str(target).strip()
+                }
+            )
             if session is not None:
                 if session.get("phase") == "method_design":
                     plan = self._active_query_plan(research)
                     context = plan.get("method_design_context")
                     if isinstance(context, dict) and context.get("search_mode") == "PRINCIPLE_SEARCH":
+                        allowed_targets = set(
+                            ((context.get("principle_search_context") or {}).get("decision_targets") or [])
+                        )
+                        if not targets or not set(targets) <= allowed_targets:
+                            raise ControllerError(
+                                "Principle-search user source requires explicit current decision-target bindings"
+                            )
                         plan_sha256 = str(session.get("query_plan_sha256") or "")
                         current_query_ids = {
                             query_id
@@ -6955,6 +7077,26 @@ class ARISController:
                             )
                         row["found_by_query_ids"] = sorted(supplied_query_ids)
                 session.setdefault("paper_ids", []).append(paper_id)
+            row["context_decisions"] = [{
+                "decision_id": f"admission-{uuid.uuid4().hex}",
+                "context": {
+                    **decision_context,
+                    "paper_id": paper_id,
+                    "decision_targets": targets,
+                },
+                "admission_status": "USER_SUPPLIED_READ",
+                "screening_in_scope": True,
+                "screening_status": "IN_SCOPE",
+                "duplicate": False,
+                "screening_basis": "FULL_TEXT",
+                "screening_reason": screening_reason,
+                "reading_priority": reading_priority,
+                "fulltext_selected": True,
+                "fulltext_selection_reason": "user-supplied full text",
+                "admission_exception": None,
+                "decided_at": now(),
+            }]
+            research["papers"][paper_id] = row
         append_jsonl(self._paths()["literature_corpus"], row)
         append_jsonl(
             self._paths()["search_log"],
@@ -7097,19 +7239,27 @@ class ARISController:
                 paper = research["papers"][paper_id]
             except KeyError as exc:
                 raise ControllerError(f"unknown paper_id {paper_id!r}") from exc
-            if paper.get("screening_status") != "IN_SCOPE" or paper.get("duplicate"):
+            session = self._incremental_literature_active(research) or self._active_reading_session(research)
+            if not isinstance(session, dict):
+                raise ControllerError("user-source promotion requires the active reading context")
+            decision = self._paper_context_decision(
+                paper,
+                decision_id=(session.get("paper_decision_ids") or {}).get(paper_id),
+                context=session.get("decision_context"),
+            )
+            if not isinstance(decision, dict) or decision.get("screening_status") != "IN_SCOPE" or decision.get("duplicate"):
                 raise ControllerError("user-source promotion requires a current in-scope discovery paper")
             if f"evidence:{paper_id}" in research["accepted_artifacts"]:
                 raise ControllerError("cannot promote a paper with an accepted Evidence Card")
-            if paper.get("admission_status") in READABLE_ADMISSION_STATUSES:
+            if decision.get("admission_status") in READABLE_ADMISSION_STATUSES:
                 raise ControllerError("paper is already on a readable admission track")
-            if paper.get("admission_status") not in {
-                "DISCOVERY_METADATA_ONLY",
+            if decision.get("admission_status") not in {
                 "ADMIT_DISCOVERY_ONLY",
                 "HOLD_IDENTITY",
             }:
                 raise ControllerError("only a discovery-only paper can be promoted by user supply")
             snapshot = dict(paper)
+            decision_id = decision["decision_id"]
 
         identity_result: dict[str, Any] | None = None
         if snapshot.get("identity_status") != "verified":
@@ -7143,11 +7293,8 @@ class ARISController:
         with self._store.mutate() as state:
             research = state["research_lit"]
             paper = research["papers"].get(paper_id)
-            if not isinstance(paper, dict) or paper.get("admission_status") not in {
-                "DISCOVERY_METADATA_ONLY",
-                "ADMIT_DISCOVERY_ONLY",
-                "HOLD_IDENTITY",
-            }:
+            decision = self._paper_context_decision(paper or {}, decision_id=decision_id)
+            if not isinstance(paper, dict) or not isinstance(decision, dict) or decision.get("admission_status") not in {"ADMIT_DISCOVERY_ONLY", "HOLD_IDENTITY"}:
                 raise ControllerError("paper changed during user-source promotion")
             if f"evidence:{paper_id}" in research["accepted_artifacts"]:
                 raise ControllerError("cannot promote a paper with an accepted Evidence Card")
@@ -7156,13 +7303,24 @@ class ARISController:
                     {key: value for key, value in identity_result.items() if key in identity_fields}
                 )
                 paper["identity_verification_status"] = "complete"
-            paper["admission_status"] = "USER_SUPPLIED_READ"
             paper["user_fulltext"] = registration
             paper["user_supply_transition"] = {
                 "reason": scientific_reason,
                 "recorded_at": now(),
                 "prior_source_origin": paper.get("source_origin"),
             }
+            promoted_decision = {
+                **decision,
+                "decision_id": f"admission-{uuid.uuid4().hex}",
+                "admission_status": "USER_SUPPLIED_READ",
+                "fulltext_selected": True,
+                "fulltext_selection_reason": "user-supplied full text",
+                "decided_at": now(),
+            }
+            paper.setdefault("context_decisions", []).append(promoted_decision)
+            active = self._incremental_literature_active(research) or self._active_reading_session(research)
+            if isinstance(active, dict):
+                active.setdefault("paper_decision_ids", {})[paper_id] = promoted_decision["decision_id"]
             paper.pop("fulltext_failure", None)
             corpus_row = dict(paper)
             ledger_stage = research["current_stage"]
@@ -7542,6 +7700,7 @@ class ARISController:
         with self._store.mutate() as state:
             research = self._require_stage(state, "METADATA_RETRIEVAL")
             self._assert_artifact_current(research, "source_admission_policy")
+            screening_context = self._active_screening_context(research)
             try:
                 paper = research["papers"][paper_id]
             except KeyError as exc:
@@ -7577,6 +7736,47 @@ class ARISController:
 
             citation_eligible = self._citation_eligible(policy, paper)
             source_eligible = self._venue_eligible(policy, paper.get("venue")) or citation_eligible
+            targets = sorted(
+                {
+                    str(target).strip()
+                    for target in decision_targets or []
+                    if str(target).strip()
+                }
+            )
+            if screening_context["phase"] == "method_design":
+                plan = self._active_query_plan(research)
+                principle_context = (
+                    (plan.get("method_design_context") or {}).get("principle_search_context")
+                    if isinstance(plan, dict)
+                    else None
+                )
+                allowed_targets = set(
+                    principle_context.get("decision_targets") or []
+                    if isinstance(principle_context, dict)
+                    else []
+                )
+                if not targets or not set(targets) <= allowed_targets:
+                    raise ControllerError(
+                        "Method Design screening requires current Query Plan decision-target bindings"
+                    )
+            if decision_grade_exception == "rmc_bound_source_mechanism_or_genealogy":
+                source_search_targets = {
+                    str(item.get("decision_target") or "")
+                    for item in plan.get("queries", [])
+                    if isinstance(item, dict) and item.get("search_step") == "SOURCE_SEARCH"
+                } if screening_context["phase"] == "method_design" else set()
+                if (
+                    screening_context["phase"] != "method_design"
+                    or reading_priority != "TARGETED_GAP_FOLLOWUP"
+                    or paper.get("identity_status") != "verified"
+                    or not targets
+                    or not set(targets) <= source_search_targets
+                ):
+                    raise ControllerError(
+                        "RMC-bound Source/genealogy exception requires verified identity, "
+                        "TARGETED_GAP_FOLLOWUP priority, and a current Method Design "
+                        "SOURCE_SEARCH decision target"
+                    )
 
             if paper.get("source_origin") == "user_supplied":
                 decision = "USER_SUPPLIED_READ"
@@ -7612,42 +7812,58 @@ class ARISController:
                     )
                 if source_eligible and fulltext_selected:
                     decision = "ADMIT_FOR_READING"
-                    paper.pop("admission_exception", None)
+                    decision_exception = None
                 elif exception is not None and fulltext_selected:
                     decision = "ADMIT_FOR_READING"
-                    paper["admission_exception"] = {
+                    decision_exception = {
                         **exception,
                         "recorded_at": now(),
                     }
                 else:
                     decision = "ADMIT_DISCOVERY_ONLY"
-                    paper.pop("admission_exception", None)
-            paper["admission_status"] = decision
-            paper["screening_in_scope"] = screening_in_scope
+                    decision_exception = None
+            if paper.get("source_origin") == "user_supplied" or duplicate or not screening_in_scope or f"evidence:{paper_id}" in research.get("accepted_artifacts", {}) or paper.get("identity_status") != "verified":
+                decision_exception = None
             if explicit_screening:
-                paper["screening_status"] = (
+                screening_status = (
                     "DUPLICATE"
                     if duplicate
                     else "IN_SCOPE"
                     if screening_in_scope
                     else "OUT_OF_SCOPE"
                 )
-                paper["screening_basis"] = screening_basis
-                paper["screening_reason"] = str(screening_reason).strip()
-                paper["reading_priority"] = reading_priority
-                paper["fulltext_selected"] = bool(
+                selected_fulltext = bool(
                     fulltext_selected and screening_in_scope and not duplicate
                 )
-                paper["fulltext_selection_reason"] = (
+                selection_reason = (
                     str(fulltext_selection_reason).strip()
                     if fulltext_selection_reason
                     else None
                 )
-                paper["screened_at"] = now()
             else:
-                # Preserve programmatic backward compatibility, but do not let
-                # an unrecorded legacy decision close retrieval or coverage.
-                paper["screening_status"] = "UNRESOLVED"
+                screening_status = "UNRESOLVED"
+                selected_fulltext = False
+                selection_reason = None
+            context_decision = {
+                "decision_id": f"admission-{uuid.uuid4().hex}",
+                "context": {
+                    **screening_context,
+                    "paper_id": paper_id,
+                    "decision_targets": targets,
+                },
+                "admission_status": decision,
+                "screening_in_scope": bool(screening_in_scope),
+                "screening_status": screening_status,
+                "duplicate": bool(duplicate),
+                "screening_basis": screening_basis,
+                "screening_reason": str(screening_reason or "").strip() or None,
+                "reading_priority": reading_priority,
+                "fulltext_selected": selected_fulltext,
+                "fulltext_selection_reason": selection_reason,
+                "admission_exception": decision_exception,
+                "decided_at": now(),
+            }
+            paper.setdefault("context_decisions", []).append(context_decision)
         corpus_row = dict(paper)
         append_jsonl(self._paths()["literature_corpus"], corpus_row)
         append_jsonl(
@@ -7662,11 +7878,13 @@ class ARISController:
                 admission_decision=decision,
                 event_id=uuid.uuid4().hex,
                 details={
-                    "admission_exception": paper.get("admission_exception"),
-                    "screening_status": paper.get("screening_status"),
-                    "screening_basis": paper.get("screening_basis"),
-                    "reading_priority": paper.get("reading_priority"),
-                    "fulltext_selected": paper.get("fulltext_selected"),
+                    "decision_id": context_decision["decision_id"],
+                    "decision_context": context_decision["context"],
+                    "admission_exception": context_decision.get("admission_exception"),
+                    "screening_status": context_decision.get("screening_status"),
+                    "screening_basis": context_decision.get("screening_basis"),
+                    "reading_priority": context_decision.get("reading_priority"),
+                    "fulltext_selected": context_decision.get("fulltext_selected"),
                 },
             ),
         )
@@ -7695,12 +7913,26 @@ class ARISController:
                 paper = research["papers"][paper_id]
             except KeyError as exc:
                 raise ControllerError(f"unknown paper_id {paper_id!r}") from exc
-            if paper.get("admission_status") not in READABLE_ADMISSION_STATUSES:
+            session = self._incremental_literature_active(research) or self._active_reading_session(research)
+            decision = self._paper_context_decision(
+                paper,
+                decision_id=(session.get("paper_decision_ids") or {}).get(paper_id) if isinstance(session, dict) else None,
+                context=session.get("decision_context") if isinstance(session, dict) else None,
+            )
+            if not isinstance(decision, dict) or decision.get("admission_status") not in READABLE_ADMISSION_STATUSES:
                 raise ControllerError("only an admitted paper can be withdrawn")
             if f"evidence:{paper_id}" in research["accepted_artifacts"]:
                 raise ControllerError("cannot withdraw a paper with an accepted Evidence Card")
 
-            paper["admission_status"] = "EXCLUDE_USER_WITHDRAWN"
+            withdrawn_decision = {
+                **decision,
+                "decision_id": f"admission-{uuid.uuid4().hex}",
+                "admission_status": "EXCLUDE_USER_WITHDRAWN",
+                "decided_at": now(),
+            }
+            paper.setdefault("context_decisions", []).append(withdrawn_decision)
+            if isinstance(session, dict):
+                session.setdefault("paper_decision_ids", {})[paper_id] = withdrawn_decision["decision_id"]
             paper["admission_withdrawal"] = {
                 "reason": scientific_reason,
                 "recorded_at": now(),
@@ -7765,11 +7997,18 @@ class ARISController:
                 paper = research["papers"][paper_id]
             except KeyError as exc:
                 raise ControllerError(f"unknown paper_id {paper_id!r}") from exc
-            if paper.get("admission_status") not in READABLE_ADMISSION_STATUSES:
+            session = self._incremental_literature_active(research) or self._active_reading_session(research)
+            decision = self._paper_context_decision(
+                paper,
+                decision_id=(session.get("paper_decision_ids") or {}).get(paper_id) if isinstance(session, dict) else None,
+                context=session.get("decision_context") if isinstance(session, dict) else None,
+            )
+            if not isinstance(decision, dict) or decision.get("admission_status") not in READABLE_ADMISSION_STATUSES:
                 raise ControllerError("only an admitted paper can be reverified")
             if f"evidence:{paper_id}" in research["accepted_artifacts"]:
                 raise ControllerError("cannot correct a paper with an accepted Evidence Card")
             snapshot = dict(paper)
+            decision_id = decision["decision_id"]
         result = identity_verifier(snapshot)
         if not isinstance(result, dict) or result.get("identity_status") != "verified":
             raise ControllerError("admission identity correction did not produce a verified identity")
@@ -7789,7 +8028,8 @@ class ARISController:
         with self._store.mutate() as state:
             research = state["research_lit"]
             paper = research["papers"].get(paper_id)
-            if not isinstance(paper, dict) or paper.get("admission_status") not in READABLE_ADMISSION_STATUSES:
+            decision = self._paper_context_decision(paper or {}, decision_id=decision_id)
+            if not isinstance(paper, dict) or not isinstance(decision, dict) or decision.get("admission_status") not in READABLE_ADMISSION_STATUSES:
                 raise ControllerError("admitted paper changed during identity correction")
             if f"evidence:{paper_id}" in research["accepted_artifacts"]:
                 raise ControllerError("cannot correct a paper with an accepted Evidence Card")
@@ -7813,7 +8053,7 @@ class ARISController:
                 paper_id=paper_id,
                 tool=identity_tool,
                 result_status="verified",
-                admission_decision=str(corpus_row["admission_status"]),
+                admission_decision=str(decision["admission_status"]),
                 event_id=uuid.uuid4().hex,
                 details={
                     "reason": correction_reason,
@@ -8018,16 +8258,8 @@ class ARISController:
         inconsistent = {
             paper_id
             for paper_id in evidence_ids
-            if (
-                not _has_formal_source_identity(
-                    research.get("papers", {}).get(paper_id, {})
-                )
-                or (
-                    research.get("papers", {}).get(paper_id, {}).get("admission_status")
-                    != "ADMIT_DECISION_GRADE"
-                    and research.get("papers", {}).get(paper_id, {}).get("screening_status")
-                    not in {"OUT_OF_SCOPE", "DUPLICATE"}
-                )
+            if not _has_formal_source_identity(
+                research.get("papers", {}).get(paper_id, {})
             )
         }
         if not inconsistent:
@@ -8045,7 +8277,6 @@ class ARISController:
                 if (
                     paper_id in inconsistent
                     and _has_formal_source_identity(row)
-                    and row.get("admission_status") == "ADMIT_DECISION_GRADE"
                 ):
                     snapshots[str(paper_id)] = row
 
@@ -8097,6 +8328,12 @@ class ARISController:
                 if session is not None
                 else list(research["papers"].values())
             )
+            candidate_decisions = [
+                (paper, self._current_paper_decision(
+                    research, str(paper.get("source_id") or paper.get("paper_id") or "")
+                ))
+                for paper in candidate_papers
+            ]
             unfinished_queries = [
                 item.get("plan_item_id") or item.get("query")
                 for item in research.get("planned_queries") or []
@@ -8123,8 +8360,9 @@ class ARISController:
                 )
             unresolved = [
                 str(paper.get("source_id") or "<unknown>")
-                for paper in candidate_papers
-                if paper.get("screening_status") not in SCREENING_FINAL_STATUSES
+                for paper, decision in candidate_decisions
+                if not isinstance(decision, dict)
+                or decision.get("screening_status") not in SCREENING_FINAL_STATUSES
             ]
             if unresolved:
                 raise ControllerError(
@@ -8134,9 +8372,10 @@ class ARISController:
                 )
             abstract_gaps = [
                 str(paper.get("source_id") or "<unknown>")
-                for paper in candidate_papers
-                if paper.get("screening_status") == "IN_SCOPE"
-                and paper.get("screening_basis") == "TITLE_ABSTRACT"
+                for paper, decision in candidate_decisions
+                if isinstance(decision, dict)
+                and decision.get("screening_status") == "IN_SCOPE"
+                and decision.get("screening_basis") == "TITLE_ABSTRACT"
                 and not str(paper.get("abstract") or "").strip()
             ]
             if abstract_gaps:
@@ -8148,9 +8387,10 @@ class ARISController:
             if session is None and active is None:
                 readable_papers = [
                     str(paper.get("source_id") or "")
-                    for paper in candidate_papers
-                    if paper.get("screening_status") == "IN_SCOPE"
-                    and paper.get("admission_status") in READABLE_ADMISSION_STATUSES
+                    for paper, decision in candidate_decisions
+                    if isinstance(decision, dict)
+                    and decision.get("screening_status") == "IN_SCOPE"
+                    and decision.get("admission_status") in READABLE_ADMISSION_STATUSES
                 ]
                 if not readable_papers:
                     self._route_planned_queries_to_human_search(
@@ -8175,6 +8415,14 @@ class ARISController:
                 for paper_id in active.get("paper_ids", [])
             ):
                 raise ControllerError("the selected reading subset contains no source-policy-readable paper")
+            if session is not None:
+                session["paper_decision_ids"] = {
+                    str(paper.get("source_id") or paper.get("paper_id")): decision["decision_id"]
+                    for paper, decision in candidate_decisions
+                    if isinstance(decision, dict)
+                    and decision.get("screening_status") == "IN_SCOPE"
+                    and decision.get("admission_status") in READABLE_ADMISSION_STATUSES
+                }
             research["current_stage"] = "PAPER_READING"
             return state
 
@@ -8204,6 +8452,11 @@ class ARISController:
             if self._incremental_literature_active(research) is not None:
                 raise ControllerError("incremental literature uses its existing phase-scoped reading session")
             existing = self._active_reading_session(research)
+            decision_context = (
+                deepcopy(existing["decision_context"])
+                if isinstance(existing, dict) and isinstance(existing.get("decision_context"), dict)
+                else self._active_screening_context(research)
+            )
             if stage == "PAPER_READING":
                 if not existing or existing.get("purpose") != "initial_cognition":
                     raise ControllerError("only the live initial-cognition pass may receive fallback additions")
@@ -8223,7 +8476,12 @@ class ARISController:
                 if purpose == "initial_cognition":
                     unresolved = [
                         paper_id for paper_id, paper in research["papers"].items()
-                        if paper.get("screening_status") not in SCREENING_FINAL_STATUSES
+                        if not isinstance(
+                            self._paper_context_decision(paper, context=decision_context), dict
+                        )
+                        or self._paper_context_decision(
+                            paper, context=decision_context
+                        ).get("screening_status") not in SCREENING_FINAL_STATUSES
                     ]
                     if unresolved:
                         raise ControllerError(
@@ -8232,33 +8490,63 @@ class ARISController:
                         )
                     corpus_ids = sorted(
                         paper_id for paper_id, paper in research["papers"].items()
-                        if paper.get("screening_status") in SCREENING_FINAL_STATUSES
+                        if isinstance(
+                            self._paper_context_decision(paper, context=decision_context), dict
+                        )
+                        and self._paper_context_decision(
+                            paper, context=decision_context
+                        ).get("screening_status") in SCREENING_FINAL_STATUSES
                     )
                     if not corpus_ids:
                         raise ControllerError("initial reading selection requires the screened initial corpus")
                     research["initial_screened_corpus_ids"] = corpus_ids
+                    research["initial_screening_context"] = deepcopy(decision_context)
             allowed_corpus = (
                 set(research.get("initial_screened_corpus_ids") or [])
                 if purpose == "initial_cognition"
                 else set(research["papers"])
             )
+            paper_decision_ids = dict(
+                existing.get("paper_decision_ids") or {}
+                if isinstance(existing, dict)
+                else {}
+            )
             for paper_id in ids:
                 paper = research["papers"].get(paper_id)
                 if not isinstance(paper, dict) or paper_id not in allowed_corpus:
                     raise ControllerError(f"selected paper is outside the bound screened corpus: {paper_id}")
-                if paper.get("screening_status") != "IN_SCOPE" or paper.get("duplicate"):
+                decision = self._paper_context_decision(paper, context=decision_context)
+                if (
+                    not isinstance(decision, dict)
+                    or decision.get("screening_status") != "IN_SCOPE"
+                    or decision.get("duplicate")
+                ):
                     raise ControllerError(f"selected paper is excluded, duplicate, or out of scope: {paper_id}")
                 if paper.get("identity_status") != "verified":
                     raise ControllerError(f"selected paper identity is not verified: {paper_id}")
                 if not self._paper_readable_in_active_session(
-                    {**research, "active_reading_session": {"paper_ids": ids}}, paper_id
+                    {
+                        **research,
+                        "active_reading_session": {
+                            "paper_ids": ids,
+                            "decision_context": decision_context,
+                            "paper_decision_ids": {
+                                **paper_decision_ids,
+                                paper_id: decision["decision_id"],
+                            },
+                        },
+                    },
+                    paper_id,
                 ):
                     raise ControllerError(f"selected paper is not eligible under the existing source policy: {paper_id}")
+                paper_decision_ids[paper_id] = decision["decision_id"]
             research["active_reading_session"] = {
                 "purpose": purpose,
                 "paper_ids": ids,
                 "rationale": reason,
                 "created_at": now(),
+                "decision_context": decision_context,
+                "paper_decision_ids": paper_decision_ids,
             }
             if stage == "METADATA_RETRIEVAL":
                 return state
@@ -8393,6 +8681,15 @@ class ARISController:
                 )
             if f"evidence:{paper_id}" in research.get("accepted_artifacts", {}):
                 raise ControllerError("paper already has canonical Evidence; reuse it instead of rereading")
+            active = self._incremental_literature_active(research) or self._active_reading_session(research)
+            decision = self._paper_context_decision(
+                paper,
+                decision_id=(active.get("paper_decision_ids") or {}).get(paper_id),
+                context=active.get("decision_context"),
+            )
+            if not isinstance(decision, dict):
+                raise ControllerError("full-text access has no context-bound admission decision")
+            admission_decision = str(decision["admission_status"])
             before = research["fulltext_count"]
             if before >= research["max_fulltext_papers"]:
                 raise ControllerError("full-text budget exhausted before tool call")
@@ -8412,7 +8709,7 @@ class ARISController:
                     tool=tool,
                     result_status="started",
                     event_id=read_event_id,
-                    admission_decision=paper["admission_status"],
+                    admission_decision=admission_decision,
                     budget_before=budget_before,
                     budget_after=budget_after,
                 ),
@@ -8421,7 +8718,9 @@ class ARISController:
                 "paper_id": paper_id,
                 "tool": tool,
                 "status": "started",
-                "admission_decision": paper["admission_status"],
+                "admission_decision": admission_decision,
+                "admission_decision_id": decision["decision_id"],
+                "decision_context": deepcopy(decision["context"]),
                 "budget_before": budget_before,
                 "budget_after": budget_after,
             }
@@ -8496,7 +8795,7 @@ class ARISController:
                     tool=tool,
                     result_status=status,
                     event_id=read_event_id,
-                    admission_decision=paper["admission_status"],
+                    admission_decision=admission_decision,
                     budget_before=budget_before,
                     budget_after=budget_after,
                     artifact_sha256=(content_sha256 if status == "complete" else None),
@@ -8516,11 +8815,18 @@ class ARISController:
                 raise ControllerError("Evidence Card is not linked to the active readable subset")
             read_event_id = payload.get("read_event_id")
             read_event = research["read_events"].get(read_event_id)
+            active_reading = self._incremental_literature_active(research) or self._active_reading_session(research)
+            active_decision_id = (
+                (active_reading.get("paper_decision_ids") or {}).get(paper_id)
+                if isinstance(active_reading, dict)
+                else None
+            )
             if (
                 not isinstance(read_event, dict)
                 or read_event.get("paper_id") != paper_id
                 or read_event.get("status") != "complete"
                 or payload.get("content_sha256") != read_event.get("content_sha256")
+                or read_event.get("admission_decision_id") != active_decision_id
             ):
                 raise ControllerError(
                     "Evidence Card must reference a completed full-text gateway event"
@@ -8593,6 +8899,11 @@ class ARISController:
                         "obligation_ids": set(),
                         "causal_chain_ids": set(),
                         "search_dimensions": set(),
+                        "search_steps": set(),
+                        "target_mechanism_signature_refs": set(),
+                        "domain_hypothesis_ids": set(),
+                        "terminology_map_ids": set(),
+                        "decision_targets": set(),
                     }
                     for query_id in actual_query_ids:
                         event = research["query_events"][query_id]
@@ -8616,6 +8927,23 @@ class ARISController:
                         ):
                             actual_bindings[field].update(planned.get(field) or [])
                         actual_bindings["search_dimensions"].add(planned["search_dimension"])
+                        actual_bindings["search_steps"].add(planned["search_step"])
+                        for field in (
+                            "target_mechanism_signature_refs", "domain_hypothesis_ids",
+                            "terminology_map_ids",
+                        ):
+                            actual_bindings[field].update(planned.get(field) or [])
+                        actual_bindings["decision_targets"].add(planned["decision_target"])
+                    admission = self._paper_context_decision(
+                        paper, decision_id=str(active_decision_id or "")
+                    )
+                    admitted_targets = set(
+                        ((admission or {}).get("context") or {}).get("decision_targets") or []
+                    )
+                    if not actual_bindings["decision_targets"] <= admitted_targets:
+                        raise ControllerError(
+                            "Principle-search Evidence exceeds its context-bound admission decision targets"
+                        )
                     card = {
                         **card,
                         "method_design_search_context": {
@@ -8625,6 +8953,8 @@ class ARISController:
                                 field: sorted(values)
                                 for field, values in actual_bindings.items()
                             },
+                            "phase_binding_anchor": deepcopy(session["phase_binding_anchor"]),
+                            "admission_decision_id": active_decision_id,
                         },
                     }
                 else:
@@ -8706,7 +9036,22 @@ class ARISController:
                 landscape_evidence = research.setdefault("landscape_evidence_ids", [])
                 if paper_id not in landscape_evidence:
                     landscape_evidence.append(paper_id)
-            paper["admission_status"] = "ADMIT_DECISION_GRADE"
+            decision = self._paper_context_decision(
+                paper,
+                decision_id=str(read_event.get("admission_decision_id") or ""),
+            )
+            if not isinstance(decision, dict):
+                raise ControllerError("Evidence Card read event has no context-bound admission decision")
+            evidence_decision = {
+                **decision,
+                "decision_id": f"admission-{uuid.uuid4().hex}",
+                "admission_status": "ADMIT_DECISION_GRADE",
+                "decided_at": now(),
+            }
+            paper.setdefault("context_decisions", []).append(evidence_decision)
+            active = self._incremental_literature_active(research) or self._active_reading_session(research)
+            if isinstance(active, dict):
+                active.setdefault("paper_decision_ids", {})[paper_id] = evidence_decision["decision_id"]
             corpus_row = dict(paper)
         append_jsonl(self._paths()["literature_corpus"], corpus_row)
         return self.status()
@@ -8827,7 +9172,7 @@ class ARISController:
                 missing = [
                     paper_id
                     for paper_id in session.get("paper_ids", [])
-                    if research["papers"].get(paper_id, {}).get("admission_status") in READABLE_ADMISSION_STATUSES
+                    if self._paper_readable_in_active_session(research, paper_id)
                     and f"evidence:{paper_id}" not in research["accepted_artifacts"]
                 ]
                 if missing:
@@ -8991,6 +9336,9 @@ class ARISController:
                     "initial_screened_corpus_ids": list(
                         research.get("initial_screened_corpus_ids") or []
                     ),
+                    "initial_screening_context": deepcopy(
+                        research.get("initial_screening_context")
+                    ),
                 }
                 research["coverage_review_request"] = None
                 research["required_coverage_gaps"] = []
@@ -9074,20 +9422,34 @@ class ARISController:
             if current.get("sha256") != binding.get("sha256"):
                 raise ControllerError("Initial Field Map is no longer the active selection basis")
             initial_corpus = set(binding.get("initial_screened_corpus_ids") or [])
+            decision_context = binding.get("initial_screening_context")
             if not initial_corpus:
                 raise ControllerError("Initial Field Map lacks recoverable screened-corpus provenance")
+            if not isinstance(decision_context, dict):
+                raise ControllerError("Initial Field Map lacks its context-bound screening provenance")
+            paper_decision_ids: dict[str, str] = {}
             for paper_id in ids:
                 paper = research["papers"].get(paper_id)
                 if not isinstance(paper, dict) or paper_id not in initial_corpus:
                     raise ControllerError(f"formal Primary selection is outside the bound initial corpus: {paper_id}")
-                if paper.get("screening_status") != "IN_SCOPE" or paper.get("duplicate"):
+                decision = self._paper_context_decision(paper, context=decision_context)
+                if not isinstance(decision, dict) or decision.get("screening_status") != "IN_SCOPE" or decision.get("duplicate"):
                     raise ControllerError(f"formal Primary selection cannot reactivate excluded paper: {paper_id}")
                 if paper.get("identity_status") != "verified":
                     raise ControllerError(f"formal Primary selection requires verified identity: {paper_id}")
                 if not self._paper_readable_in_active_session(
-                    {**research, "active_reading_session": {"paper_ids": ids}}, paper_id
+                    {
+                        **research,
+                        "active_reading_session": {
+                            "paper_ids": ids,
+                            "decision_context": decision_context,
+                            "paper_decision_ids": {paper_id: decision["decision_id"]},
+                        },
+                    },
+                    paper_id,
                 ):
                     raise ControllerError(f"formal Primary selection violates the existing source policy: {paper_id}")
+                paper_decision_ids[paper_id] = decision["decision_id"]
             selection = {
                 "purpose": "formal_primary",
                 "paper_ids": ids,
@@ -9095,6 +9457,8 @@ class ARISController:
                 "initial_field_map_path": binding["path"],
                 "initial_field_map_sha256": binding["sha256"],
                 "initial_screened_corpus_ids": sorted(initial_corpus),
+                "decision_context": deepcopy(decision_context),
+                "paper_decision_ids": paper_decision_ids,
                 "created_at": now(),
             }
             research["formal_primary_selection"] = dict(selection)

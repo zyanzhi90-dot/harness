@@ -160,50 +160,138 @@ def test_source_admission_policy_rejects_overlapping_citation_year_ranges() -> N
 
 
 def method_design_packet(*, cycle_id: str = "DESIGN-1", evidence_refs: list[str] | None = None) -> dict:
-    """Return one mechanically closed Candidate-Principle packet without tests."""
+    """Return one target-state Candidate-Principle packet without concrete tests."""
 
     evidence_refs = list(evidence_refs or [])
+    bridge_evidence = "E-BRIDGE"
+    source_id = "SRC-CROSS-1"
+    source_alignment_id = "ALIGN-CROSS-1"
+    cross_domain_sources = []
+    terminology_maps = []
+    if evidence_refs:
+        terminology_maps.append({
+            "terminology_map_id": "TERM-1",
+            "domain_hypothesis_id": "DH-MODEL-1",
+            "canonical_problem_terms": ["canonical instability term"],
+            "canonical_variable_state_relation_terms": ["canonical relation term"],
+            "canonical_intervention_terms": ["canonical intervention term"],
+            "canonical_method_families": ["canonical mechanism family"],
+            "evidence_refs": evidence_refs,
+            "search_read_provenance": ["query:terminology-grounding-1", "read:E-CROSS"],
+            "query_plan_sha256": "2" * 64,
+        })
+        cross_domain_sources.append({
+            "source_mechanism_id": source_id,
+            "served_rmc_ids": ["RMC-1"],
+            "served_capability_ids": ["CAP-1"],
+            "served_obligation_ids": ["OBL-1"],
+            "discovery_provenance": {
+                "query_plan_sha256": "1" * 64,
+                "plan_item_id": "domain-discovery-1",
+                "target_mechanism_signature_ref": "TMS-1",
+                "domain_hypothesis_id": "DH-MODEL-1",
+                "terminology_map_id": "TERM-1",
+            },
+            "search_provenance": {
+                "query_plan_sha256": "3" * 64,
+                "plan_item_id": "source-search-1",
+            },
+            "genealogy": {
+                "nodes": [{
+                    "node_id": "GN-1",
+                    "paper_id": evidence_refs[0],
+                    "mechanism_role": "demonstrates the source intervention and outcome",
+                    "evidence_refs": evidence_refs,
+                }],
+                "relations": [],
+            },
+            "mechanism_origin_or_stop_rationale": "The retained paper establishes the traceable mechanism origin.",
+            "source_problem": "a source relation remains unstable",
+            "source_root_cause": None,
+            "source_intervention": "apply feedback to the unstable relation",
+            "changed_variable_relation_or_structure": "the unstable relation becomes corrected",
+            "causal_or_computational_effect": "feedback changes the state transition",
+            "outcome": "the source failure is reduced",
+            "assumptions": ["the relation is observable"],
+            "activation_conditions": ["the unstable regime is active"],
+            "boundaries": ["the relation must remain observable"],
+            "evidence_refs": evidence_refs,
+            "intervention_level_alignment": {
+                "alignment_id": source_alignment_id,
+                "rmc_id": "RMC-1",
+                "source_mechanism_id": source_id,
+                "variable_or_relation_role_mapping": "the source and Target interventions act on the same causal role",
+                "change_direction_alignment": "both restore the failed relation",
+                "intervention_position_alignment": "both act before the failure propagates",
+                "activation_condition_alignment": "both activate in the declared unstable regime",
+                "source_actual_effect": "the source relation is restored and the outcome improves",
+                "assumption_boundary_mismatches": ["the physical substrate differs"],
+                "decision": "PASS",
+                "evidence_refs": evidence_refs,
+                "solution_principle_abstraction": "Apply state-dependent feedback at the failed relation before propagation.",
+                "failure_disposition": None,
+            },
+        })
+
     principles = []
     for suffix in ("A", "B"):
+        source_origin = suffix == "B" and bool(evidence_refs)
         principle_id = f"PR-{suffix}"
         assumption_id = f"ASM-{suffix}"
         prediction_id = f"PRED-{suffix}"
-        principles.append(
-            {
-                "principle_id": principle_id,
-                "principle_version": "1",
-                "parent_version": None,
-                "principle": f"Principle {suffix}",
-                "origin": "first_principles" if suffix == "A" else "cross_domain_isomorphism",
-                "mechanism_change_ids": ["RMC-1"],
-                "capability_ids": ["CAP-1"],
-                "obligation_ids": ["OBL-1"],
-                "causal_chain_ids": ["CHAIN-1"],
+        principles.append({
+            "principle_id": principle_id,
+            "principle_version": "1",
+            "parent_version": None,
+            "principle": (
+                "Apply state-dependent feedback at the failed relation before propagation."
+                if source_origin else f"Principle {suffix}"
+            ),
+            "origin_type": (
+                "CROSS_DOMAIN_SOURCE" if source_origin
+                else "FIRST_PRINCIPLES" if suffix == "A"
+                else "REPRESENTATION_TRANSFORMATION"
+            ),
+            "origin_ref_id": source_id if source_origin else f"{'FP' if suffix == 'A' else 'REP'}-1",
+            "alignment_ref_id": source_alignment_id if source_origin else None,
+            "mechanism_change_ids": ["RMC-1"],
+            "capability_ids": ["CAP-1"],
+            "obligation_ids": ["OBL-1"],
+            "causal_chain_ids": ["CHAIN-1"],
+            "activation_conditions": ["declared operating condition"],
+            "intervention": f"intervention {suffix}",
+            "changed_structure": f"changed relation {suffix}",
+            "root_cause_resolution_rationale": "closes the accepted causal chain",
+            "failure_conditions": [f"failure boundary {suffix}"],
+            "fatal_assumptions": [{
+                "assumption_id": assumption_id,
+                "assumption": f"assumption {suffix}",
+                "failure_consequence": f"invalidates Principle {suffix}",
+            }],
+            "target_domain_operationalization": {"observable": f"signal {suffix}"},
+            "target_intervention_novelty": {
+                "novelty_closure_id": f"NOVELTY-{suffix}",
+                "nearest_target_prior_evidence_refs": [bridge_evidence],
+                "causal_equivalent_intervention_check": "UNCOVERED",
+                "evidence_search_provenance": ["query:target-prior-1"],
+                "uncovered_residual_delta": f"Target residual delta {suffix}",
+                "mechanism_delta": f"Target mechanism delta {suffix}",
+                "scientific_delta": f"Target scientific delta {suffix}",
+                "disposition": "NOVEL_DELTA",
+            },
+            "provisional_scientific_delta": f"delta {suffix}",
+            "substantive_difference": f"mechanism {suffix} changes a distinct relation",
+            "predictions": [{
+                "prediction_id": prediction_id,
+                "assumption_ids": [assumption_id],
+                "predicted_observation": f"observation {suffix}",
                 "activation_conditions": ["declared operating condition"],
-                "intervention": f"intervention {suffix}",
-                "changed_structure": f"changed relation {suffix}",
-                "root_cause_resolution_rationale": "closes the accepted causal chain",
-                "failure_conditions": [f"failure boundary {suffix}"],
-                "fatal_assumptions": [{
-                    "assumption_id": assumption_id,
-                    "assumption": f"assumption {suffix}",
-                    "failure_consequence": f"invalidates Principle {suffix}",
-                }],
-                "target_domain_operationalization": {"observable": f"signal {suffix}"},
-                "provisional_scientific_delta": f"delta {suffix}",
-                "substantive_difference": f"mechanism {suffix} changes a distinct relation",
-                "predictions": [{
-                    "prediction_id": prediction_id,
-                    "assumption_ids": [assumption_id],
-                    "predicted_observation": f"observation {suffix}",
-                    "activation_conditions": ["declared operating condition"],
-                    "discriminates_from_principle_ids": [f"PR-{'B' if suffix == 'A' else 'A'}"],
-                }],
-                "evidence_refs": evidence_refs,
-                "status": "ACTIVE",
-                "status_rationale": "awaiting discriminating Evidence",
-            }
-        )
+                "discriminates_from_principle_ids": [f"PR-{'B' if suffix == 'A' else 'A'}"],
+            }],
+            "evidence_refs": evidence_refs if source_origin else [],
+            "status": "ACTIVE",
+            "status_rationale": "awaiting discriminating Evidence",
+        })
     return {
         "schema_version": 1,
         "design_cycle_id": cycle_id,
@@ -218,15 +306,24 @@ def method_design_packet(*, cycle_id: str = "DESIGN-1", evidence_refs: list[str]
             "analysis_sha256": "c" * 64,
             "causal_chain_ids": ["CHAIN-1"],
         },
+        "primary_chain_dispositions": [{
+            "causal_chain_id": "CHAIN-1",
+            "disposition": "RMC",
+            "mechanism_change_ids": ["RMC-1"],
+            "evidence_refs": [],
+            "rationale": "The accepted primary chain is consumed by RMC-1.",
+        }],
         "required_mechanism_changes": [{
             "mechanism_change_id": "RMC-1",
             "causal_chain_ids": ["CHAIN-1"],
             "failed_relation_state_or_information_structure": "miscalibrated state",
             "required_mechanism_change": "restore calibrated state",
+            "change_direction": "miscalibrated to calibrated",
+            "causal_position": "before the failure propagates",
+            "activation_condition": "the declared unstable regime",
             "root_cause_resolution_rationale": "directly intervenes on CHAIN-1",
             "capability_ids": ["CAP-1"],
             "obligation_ids": ["OBL-1"],
-            "acceptance_conditions": ["calibration error decreases"],
         }],
         "required_capabilities": [{
             "capability_id": "CAP-1",
@@ -242,22 +339,95 @@ def method_design_packet(*, cycle_id: str = "DESIGN-1", evidence_refs: list[str]
             "acceptance_conditions": ["declared metric improves"],
         }],
         "principle_search_record": {
-            "first_principles": ["derive from accepted mechanism"],
-            "representation_transformations": ["state to relation representation"],
-            "same_field_mechanisms": ["calibration mechanism"],
-            "cross_domain_structural_isomorphisms": ([{
-                "source_problem": "source instability",
-                "source_root_cause": "untracked state",
-                "source_intervention": "state feedback",
-                "changed_relation_state_or_information_structure": "closed-loop relation",
-                "source_mechanism_evidence_refs": evidence_refs,
-                "solution_principle": "feedback restores state",
-                "target_source_structural_mapping": {"source_state": "target uncertainty"},
-                "causal_direction": "feedback reduces error",
-                "activation_transfer_conditions": ["observable state"],
-                "disanalogies": ["different physical substrate"],
-                "transfer_boundaries": ["unobservable state"],
-            }] if evidence_refs else []),
+            "target_mechanism_signatures": [{
+                "target_mechanism_signature_id": "TMS-1",
+                "rmc_id": "RMC-1",
+                "domain_neutral_failure_structure": "a failed relation propagates error",
+                "causal_or_computational_variable_or_relation": "calibration relation",
+                "current_relation_or_state": "miscalibrated",
+                "required_intervention": "restore the calibration relation",
+                "change_direction": "miscalibrated to calibrated",
+                "causal_position": "before the failure propagates",
+                "activation_condition": "the declared unstable regime",
+            }],
+            "first_principles": [{
+                "origin_record_id": "FP-1",
+                "rmc_id": "RMC-1",
+                "premises": ["the failed relation is observable"],
+                "derivation_steps": ["intervene before error propagation"],
+                "formal_or_evidence_basis": ["bounded causal derivation"],
+                "derived_intervention": "correct the relation before propagation",
+                "rmc_resolution_rationale": "the intervention directly restores the failed relation",
+                "assumptions": ["the relation is identifiable"],
+                "boundaries": ["identifiability is retained"],
+            }],
+            "representation_transformations": [{
+                "origin_record_id": "REP-1",
+                "rmc_id": "RMC-1",
+                "old_representation": "an uncalibrated scalar state",
+                "new_representation": "a calibrated relational state",
+                "failure_mechanism_resolution": "the new relation exposes the propagation error",
+                "information_preserved": ["the target state"],
+                "information_lost": [],
+                "formal_or_evidence_basis": ["invertible relation on the declared envelope"],
+                "assumptions": ["the mapping is identifiable"],
+                "boundaries": ["the declared operating envelope"],
+            }],
+            "same_field_mechanisms": [],
+            "cross_domain_structural_isomorphisms": cross_domain_sources,
+            "discovery_executions": [{
+                "discovery_execution_id": "DISC-MODEL-1",
+                "rmc_id": "RMC-1",
+                "target_mechanism_signature_ref": "TMS-1",
+                "source_channel": "MODEL_PRIOR",
+                "outcome": "HYPOTHESES_REGISTERED",
+                "query_plan_sha256": None,
+                "plan_item_ids": [],
+                "evidence_refs": [],
+                "registered_domain_hypothesis_ids": ["DH-MODEL-1"],
+                "closure_rationale": "Model knowledge proposed one structural Search Hypothesis only.",
+            }, {
+                "discovery_execution_id": "DISC-BRIDGE-1",
+                "rmc_id": "RMC-1",
+                "target_mechanism_signature_ref": "TMS-1",
+                "source_channel": "ACADEMIC_BRIDGE",
+                "outcome": "NO_ADDITIONAL_DOMAIN_HYPOTHESIS",
+                "query_plan_sha256": "1" * 64,
+                "plan_item_ids": ["domain-discovery-1"],
+                "evidence_refs": [bridge_evidence],
+                "registered_domain_hypothesis_ids": [],
+                "closure_rationale": "The scholarly bridge read yielded no additional high-value domain hypothesis.",
+            }],
+            "domain_hypotheses": [{
+                "domain_hypothesis_id": "DH-MODEL-1",
+                "rmc_id": "RMC-1",
+                "target_mechanism_signature_ref": "TMS-1",
+                "source_channel": "MODEL_PRIOR",
+                "domain_or_research_community_or_paradigm": "relational state estimation",
+                "structural_rationale": "the community intervenes on an equivalent relation",
+                "expected_problem_structure": "an unstable relation propagates error",
+                "expected_intervention_family": "state-dependent relational correction",
+                "provenance_refs": [],
+                "introduced_query_plan_sha256": "1" * 64,
+                "disposition": "CLOSED",
+                "closure_rationale": "The branch was searched or bounded in the accepted provenance.",
+                "closure_provenance_refs": ["query:domain-discovery-1"],
+            }],
+            "terminology_maps": terminology_maps,
+            "search_space_closures": [{
+                "rmc_id": "RMC-1",
+                "same_field_search_provenance": ["query:same-field-source-1"],
+                "same_field_outcome": "NO_CREDIBLE_SOURCE_FOUND",
+                "cross_domain_search_provenance": ["query:domain-discovery-1"],
+                "cross_domain_outcome": (
+                    "CREDIBLE_SOURCE_RETAINED" if evidence_refs else "NO_CREDIBLE_SOURCE_FOUND"
+                ),
+                "model_prior_executed": True,
+                "academic_bridge_executed": True,
+                "unresolved_high_value_branches": [],
+                "literature_budget_disposition": "scientific closure reached before budget exhaustion",
+                "closure_rationale": "Every high-value branch was explored or explicitly closed.",
+            }],
             "closure_rationale": "all declared search families were recorded",
         },
         "candidate_principles": principles,
@@ -271,6 +441,7 @@ def validate_packet_fixture(
     *,
     current_evidence_ids: set[str] | None = None,
     required_combine_sources: set[tuple[str, str]] | None = None,
+    query_plan_provenance: dict[str, dict] | None = None,
 ) -> dict:
     workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))
     return validate_method_design_packet(
@@ -285,6 +456,7 @@ def validate_packet_fixture(
         primary_causal_chain_ids={"CHAIN-1"},
         current_evidence_ids=current_evidence_ids,
         required_combine_sources=required_combine_sources,
+        query_plan_provenance=query_plan_provenance,
     )
 
 
@@ -345,7 +517,10 @@ def principle_test_plan(
 
 
 def test_method_design_packet_closes_rmc_capability_obligation_and_candidate_bindings() -> None:
-    validated = validate_packet_fixture(method_design_packet(evidence_refs=["E-CROSS"]), current_evidence_ids={"E-CROSS"})
+    validated = validate_packet_fixture(
+        method_design_packet(evidence_refs=["E-CROSS"]),
+        current_evidence_ids={"E-BRIDGE", "E-CROSS"},
+    )
     assert validated["mechanism_change_ids"] == ["RMC-1"]
     assert validated["capability_ids"] == ["CAP-1"]
     assert validated["obligation_ids"] == ["OBL-1"]
@@ -363,6 +538,134 @@ def test_method_design_packet_closes_rmc_capability_obligation_and_candidate_bin
     candidate_with_tests["candidate_principles"][0]["proposed_test_ids"] = ["TEST-OLD"]
     with pytest.raises(ValidationError, match="must not contain test design fields"):
         validate_packet_fixture(candidate_with_tests)
+
+
+def test_derivation_origins_need_no_literature_query_and_scientific_quality_is_reviewer_owned() -> None:
+    packet = method_design_packet()
+    packet["principle_search_record"]["first_principles"][0].update({
+        "premises": ["placeholder premise"],
+        "derivation_steps": ["placeholder inference"],
+        "formal_or_evidence_basis": ["placeholder basis"],
+        "derived_intervention": "placeholder intervention",
+        "rmc_resolution_rationale": "placeholder rationale",
+    })
+    packet["principle_search_record"]["representation_transformations"][0].update({
+        "old_representation": "placeholder old representation",
+        "new_representation": "placeholder new representation",
+        "failure_mechanism_resolution": "placeholder resolution",
+        "formal_or_evidence_basis": ["placeholder basis"],
+    })
+
+    validated = validate_packet_fixture(packet)
+    origins = {
+        candidate["origin_type"] for candidate in validated["packet"]["candidate_principles"]
+    }
+    assert origins == {"FIRST_PRINCIPLES", "REPRESENTATION_TRANSFORMATION"}
+    assert all(
+        "query_plan_sha256" not in record
+        for field in ("first_principles", "representation_transformations")
+        for record in validated["packet"]["principle_search_record"][field]
+    )
+    reviewer = (REPO / ".codex" / "agents" / "independent_method_reviewer.toml").read_text(
+        encoding="utf-8"
+    )
+    assert "structurally valid but scientifically empty derivation" in reviewer
+
+
+def test_academic_bridge_can_close_without_fabricating_a_domain_hypothesis() -> None:
+    plan_sha = "1" * 64
+    provenance = {
+        plan_sha: {
+            "order": 1,
+            "search_step_by_plan_item": {"domain-discovery-1": "DOMAIN_DISCOVERY"},
+            "domain_hypothesis_ids": ["DH-MODEL-1"],
+            "evidence_ids_by_plan_item": {"domain-discovery-1": ["E-BRIDGE"]},
+        }
+    }
+    packet = method_design_packet()
+    validated = validate_packet_fixture(
+        packet,
+        current_evidence_ids={"E-BRIDGE"},
+        query_plan_provenance=provenance,
+    )
+    bridge = validated["packet"]["principle_search_record"]["discovery_executions"][1]
+    assert bridge["outcome"] == "NO_ADDITIONAL_DOMAIN_HYPOTHESIS"
+    assert bridge["registered_domain_hypothesis_ids"] == []
+
+    missing_read = deepcopy(provenance)
+    missing_read[plan_sha]["evidence_ids_by_plan_item"] = {}
+    with pytest.raises(ValidationError, match="scholarly read provenance"):
+        validate_packet_fixture(
+            packet,
+            current_evidence_ids={"E-BRIDGE"},
+            query_plan_provenance=missing_read,
+        )
+
+
+def test_source_efficacy_alignment_and_target_novelty_are_hard_machine_gates() -> None:
+    packet = method_design_packet(evidence_refs=["E-CROSS"])
+    source = packet["principle_search_record"]["cross_domain_structural_isomorphisms"][0]
+    source["evidence_refs"] = []
+    with pytest.raises(ValidationError, match="evidence_refs"):
+        validate_packet_fixture(packet, current_evidence_ids={"E-BRIDGE", "E-CROSS"})
+
+    packet = method_design_packet(evidence_refs=["E-CROSS"])
+    alignment = packet["principle_search_record"]["cross_domain_structural_isomorphisms"][0][
+        "intervention_level_alignment"
+    ]
+    alignment.update({
+        "decision": "FAIL",
+        "solution_principle_abstraction": None,
+        "failure_disposition": "The intervention changes a different causal relation.",
+    })
+    with pytest.raises(ValidationError, match="accepted intervention-level alignment"):
+        validate_packet_fixture(packet, current_evidence_ids={"E-BRIDGE", "E-CROSS"})
+
+    packet = method_design_packet()
+    novelty = packet["candidate_principles"][0]["target_intervention_novelty"]
+    novelty.update({
+        "causal_equivalent_intervention_check": "COVERED",
+        "disposition": "REJECTED_AS_COVERED",
+    })
+    with pytest.raises(ValidationError, match="causal-equivalent intervention"):
+        validate_packet_fixture(packet)
+
+
+def test_post_hoc_cross_domain_discovery_and_unresolved_budget_closure_are_rejected() -> None:
+    packet = method_design_packet(evidence_refs=["E-CROSS"])
+    provenance = {
+        "1" * 64: {
+            "order": 3,
+            "search_step_by_plan_item": {"domain-discovery-1": "DOMAIN_DISCOVERY"},
+            "domain_hypothesis_ids": ["DH-MODEL-1"],
+            "evidence_ids_by_plan_item": {"domain-discovery-1": ["E-BRIDGE"]},
+        },
+        "2" * 64: {
+            "order": 2,
+            "search_step_by_plan_item": {"terminology-grounding-1": "TERMINOLOGY_GROUNDING"},
+        },
+        "3" * 64: {
+            "order": 1,
+            "search_step_by_plan_item": {"source-search-1": "SOURCE_SEARCH"},
+            "terminology_map_ids": ["TERM-1"],
+        },
+    }
+    with pytest.raises(ValidationError, match="pre-Source discovery and terminology"):
+        validate_packet_fixture(
+            packet,
+            current_evidence_ids={"E-BRIDGE", "E-CROSS"},
+            query_plan_provenance=provenance,
+        )
+
+    packet = method_design_packet()
+    packet["principle_search_record"]["search_space_closures"][0][
+        "unresolved_high_value_branches"
+    ] = ["a high-value intervention branch remains unread"]
+    packet["principle_search_record"]["search_space_closures"][0][
+        "literature_budget_disposition"
+    ] = "fixed budget exhausted"
+    with pytest.raises(ValidationError, match="fixed search budget"):
+        validate_packet_fixture(packet)
 
 
 def test_method_design_synthesis_lineage_requires_current_multi_candidate_sources() -> None:
@@ -494,7 +797,7 @@ def test_candidate_principle_version_lineage_and_cross_domain_evidence_are_mecha
     packet = method_design_packet(evidence_refs=["E-CROSS"])
     packet["candidate_principles"][0]["parent_version"] = "1"
     with pytest.raises(ValidationError, match="earlier version"):
-        validate_packet_fixture(packet, current_evidence_ids={"E-CROSS"})
+        validate_packet_fixture(packet, current_evidence_ids={"E-BRIDGE", "E-CROSS"})
     packet = method_design_packet(evidence_refs=["E-CROSS"])
     with pytest.raises(ValidationError, match="outside the current formal context"):
         validate_packet_fixture(packet, current_evidence_ids={"E-OTHER"})
@@ -1903,10 +2206,113 @@ def controller_at_method_design(root: Path) -> ARISController:
             "contract_path": "idea-stage/RESEARCH_CONTRACT.md",
             "evidence_capsule_path": "idea-stage/PROBLEM_EVIDENCE_CAPSULE.md",
         }
+        packet_template = method_design_packet()
+        _, query_plan = principle_search_plan_fixture()
+        query_plan["method_design_context"].update({
+            "root_cause_analysis_sha256": accepted[
+                "idea-stage/ROOT_CAUSE_ANALYSIS.json"
+            ]["sha256"],
+            "active_field_map_sha256": accepted[
+                "idea-stage/ACTIVE_FIELD_MAP.md"
+            ]["sha256"],
+            "problem_id": binding["problem_id"],
+            "problem_version": binding["version"],
+            "problem_contract_sha256": binding["contract_sha256"],
+            "evidence_capsule_sha256": binding["evidence_capsule_sha256"],
+            "required_mechanism_changes": deepcopy(
+                packet_template["required_mechanism_changes"]
+            ),
+            "required_capabilities": deepcopy(packet_template["required_capabilities"]),
+            "design_obligations": deepcopy(packet_template["design_obligations"]),
+        })
+        principle_context = query_plan["method_design_context"]["principle_search_context"]
+        principle_context["target_mechanism_signatures"] = deepcopy(
+            packet_template["principle_search_record"]["target_mechanism_signatures"]
+        )
+        principle_context["domain_hypotheses"][0]["domain_hypothesis_id"] = "DH-MODEL-1"
+        principle_context["domain_hypotheses"][0][
+            "target_mechanism_signature_ref"
+        ] = "TMS-1"
+        principle_context["terminology_maps"][0]["domain_hypothesis_id"] = "DH-MODEL-1"
+        for item in query_plan["queries"]:
+            item["domain_hypothesis_ids"] = [
+                "DH-MODEL-1" if value == "DH-1" else value
+                for value in item["domain_hypothesis_ids"]
+            ]
+        for index, item in enumerate(query_plan["queries"], 1):
+            item["plan_item_id"] = f"method-search-{index}"
+        domain_item = next(
+            item
+            for item in query_plan["queries"]
+            if item["search_step"] == "DOMAIN_DISCOVERY"
+        )
+        domain_item["plan_item_id"] = "domain-discovery-1"
+        plan_path = root / "idea-stage" / "QUERY_PLAN_METHOD_DESIGN_FIXTURE.json"
+        plan_path.write_text(json.dumps(query_plan, indent=2), encoding="utf-8")
+        plan_sha256 = sha256_file(plan_path)
+        plan_record = {
+            "path": str(plan_path.relative_to(root)),
+            "sha256": plan_sha256,
+            "accepted_at": "2026-08-30T00:00:00Z",
+            "validator_result": "PASS",
+        }
+        state["research_lit"]["accepted_artifacts"][
+            "incremental-query-plan-method_design"
+        ] = dict(plan_record)
+        state["research_lit"]["query_plan_history"] = [dict(plan_record)]
+
+        evidence_card = {
+            "source_id": "E-BRIDGE",
+            "read_event_id": "READ-BRIDGE",
+            "content_sha256": "e" * 64,
+            "method_design_search_context": {
+                "query_plan_sha256": plan_sha256,
+                "actual_hit_query_ids": ["Q-BRIDGE"],
+            },
+        }
+        evidence_path = root / "idea-stage" / "EVIDENCE_CARD_E-BRIDGE.json"
+        evidence_path.write_text(json.dumps(evidence_card), encoding="utf-8")
+        evidence_record = {
+            "path": str(evidence_path.relative_to(root)),
+            "sha256": sha256_file(evidence_path),
+            "validator_result": "PASS",
+            "read_event_id": "READ-BRIDGE",
+            "accepted_at": "2026-08-30T00:01:00Z",
+        }
+        state["research_lit"]["accepted_artifacts"]["evidence:E-BRIDGE"] = dict(
+            evidence_record
+        )
+        state["research_lit"]["query_events"]["Q-BRIDGE"] = {
+            "query_plan_sha256": plan_sha256,
+            "plan_item_id": "domain-discovery-1",
+            "status": "complete",
+        }
+        state["research_lit"]["read_events"]["READ-BRIDGE"] = {
+            "paper_id": "E-BRIDGE",
+            "status": "complete",
+            "content_sha256": "e" * 64,
+        }
+        phase_anchor = controller._phase_evidence_anchor(state, "method_design")
+        state["research_lit"].setdefault("incremental_evidence_by_phase", {})[
+            "method_design"
+        ] = {
+            "evidence:E-BRIDGE": {
+                **evidence_record,
+                "evidence_key": "evidence:E-BRIDGE",
+                "phase_binding_anchor": phase_anchor,
+            }
+        }
     return controller
 
 
 def bound_method_design_packet(controller: ARISController, *, cycle_id: str = "DESIGN-1") -> dict:
+    with controller._store.mutate() as live_state:
+        binding = live_state["research_lit"]["incremental_evidence_by_phase"][
+            "method_design"
+        ]["evidence:E-BRIDGE"]
+        binding["phase_binding_anchor"] = controller._phase_evidence_anchor(
+            live_state, "method_design"
+        )
     packet = method_design_packet(cycle_id=cycle_id)
     active = controller.status()["scientific_core"]["active_problem_version"]
     packet["problem_binding"] = {
@@ -1919,12 +2325,58 @@ def bound_method_design_packet(controller: ARISController, *, cycle_id: str = "D
         controller.root / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json"
     )
     state = controller.status()
+    plan_sha256 = state["research_lit"]["accepted_artifacts"][
+        "incremental-query-plan-method_design"
+    ]["sha256"]
+    packet["principle_search_record"]["domain_hypotheses"][0][
+        "introduced_query_plan_sha256"
+    ] = plan_sha256
+    packet["principle_search_record"]["discovery_executions"][1][
+        "query_plan_sha256"
+    ] = plan_sha256
     packet["relevant_history_refs"] = sorted(
         run_state._relevant_scientific_history_refs(str(controller.root), state, packet)
     )
     feedback_ref = run_state._latest_return_feedback_ref(state, "method_design")
     packet["return_feedback_refs"] = [feedback_ref] if feedback_ref else []
     return packet
+
+
+def activate_method_design_admission_context(
+    controller: ARISController,
+    paper_id: str,
+    *,
+    prior_decisions: list[dict] | None = None,
+) -> dict:
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        plan_record = research["accepted_artifacts"]["incremental-query-plan-method_design"]
+        anchor = controller._phase_evidence_anchor(state, "method_design")
+        context = {
+            "phase": "method_design",
+            "query_plan_sha256": plan_record["sha256"],
+            "phase_binding_anchor": anchor,
+        }
+        research["incremental_literature_active"] = {
+            "phase": "method_design",
+            "query_plan_path": plan_record["path"],
+            "query_plan_sha256": plan_record["sha256"],
+            "phase_binding_anchor": anchor,
+            "decision_context": deepcopy(context),
+            "paper_ids": [paper_id],
+            "paper_decision_ids": {},
+            "evidence_artifacts": {},
+        }
+        research["current_stage"] = "METADATA_RETRIEVAL"
+        paper = {
+            **metadata(paper_id, venue="Ordinary"),
+            "source_id": paper_id,
+            "source_origin": "gateway_discovery",
+            "found_by_query_ids": ["Q-BRIDGE"],
+            "context_decisions": deepcopy(prior_decisions or []),
+        }
+        research["papers"][paper_id] = paper
+        return context
 
 
 def json_review_payload(
@@ -2329,6 +2781,13 @@ def metadata(paper_id: str = "P1", *, venue: str = "Test Elite Venue") -> dict:
         "abstract": "This paper studies a test mechanism in the declared field.",
         "abstract_source": "test_fixture",
     }
+
+
+def latest_paper_decision(controller: ARISController, paper_id: str) -> dict:
+    paper = controller.status()["research_lit"]["papers"][paper_id]
+    decisions = paper.get("context_decisions") or []
+    assert decisions
+    return decisions[-1]
 
 
 def card(read: dict, paper_id: str = "P1") -> dict:
@@ -3439,6 +3898,12 @@ def principle_search_plan_fixture() -> tuple[dict, dict]:
         "required_mechanism_changes": [{
             "mechanism_change_id": "RMC-1",
             "causal_chain_ids": ["CHAIN-1"],
+            "failed_relation_state_or_information_structure": "miscalibrated state",
+            "required_mechanism_change": "restore calibrated state",
+            "change_direction": "miscalibrated to calibrated",
+            "causal_position": "before failure propagation",
+            "activation_condition": "the unstable regime",
+            "root_cause_resolution_rationale": "directly resolves CHAIN-1",
             "capability_ids": ["CAP-1"],
             "obligation_ids": ["OBL-1"],
         }],
@@ -3464,23 +3929,101 @@ def principle_search_plan_fixture() -> tuple[dict, dict]:
         "required_mechanism_changes": deepcopy(context["required_mechanism_changes"]),
         "required_capabilities": deepcopy(context["required_capabilities"]),
         "design_obligations": deepcopy(context["design_obligations"]),
+        "principle_search_context": {
+            "target_mechanism_signatures": [{
+                "target_mechanism_signature_id": "TMS-1",
+                "rmc_id": "RMC-1",
+                "domain_neutral_failure_structure": "a failed relation propagates error",
+                "causal_or_computational_variable_or_relation": "calibration relation",
+                "current_relation_or_state": "miscalibrated",
+                "required_intervention": "restore the calibration relation",
+                "change_direction": "miscalibrated to calibrated",
+                "causal_position": "before failure propagation",
+                "activation_condition": "the unstable regime",
+            }],
+            "domain_hypotheses": [{
+                "domain_hypothesis_id": "DH-1",
+                "rmc_id": "RMC-1",
+                "target_mechanism_signature_ref": "TMS-1",
+                "source_channel": "MODEL_PRIOR",
+                "domain_or_research_community_or_paradigm": "relational estimation",
+                "structural_rationale": "the same relation role is corrected",
+                "expected_problem_structure": "unstable relational state",
+                "expected_intervention_family": "state-dependent correction",
+                "provenance_refs": [],
+                "disposition": "EXPLORE",
+            }],
+            "terminology_maps": [{
+                "terminology_map_id": "TERM-1",
+                "domain_hypothesis_id": "DH-1",
+                "canonical_problem_terms": ["canonical instability"],
+                "canonical_variable_state_relation_terms": ["canonical relation"],
+                "canonical_intervention_terms": ["canonical correction"],
+                "canonical_method_families": ["relational estimator"],
+                "evidence_refs": ["E-TERM"],
+                "search_read_provenance": ["read:E-TERM"],
+                "query_plan_sha256": "1" * 64,
+            }],
+            "decision_targets": ["source:RMC-1", "same-field:RMC-1"],
+        },
     }
     queries = [
         {
-            "query": f"{dimension.lower()} calibrated uncertainty",
-            "purpose": f"record {dimension} search",
-            "search_dimension": dimension,
+            "query": "same-field calibrated relation intervention",
+            "purpose": "search same-field mechanisms",
+            "search_dimension": "SAME_FIELD_MECHANISM",
             "mechanism_change_ids": ["RMC-1"],
             "capability_ids": ["CAP-1"],
             "obligation_ids": ["OBL-1"],
             "causal_chain_ids": ["CHAIN-1"],
-        }
-        for dimension in (
-            "FIRST_PRINCIPLES",
-            "REPRESENTATION_TRANSFORMATION",
-            "SAME_FIELD_MECHANISM",
-            "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM",
-        )
+            "search_step": "SOURCE_SEARCH",
+            "target_mechanism_signature_refs": ["TMS-1"],
+            "domain_hypothesis_ids": [],
+            "terminology_map_ids": [],
+            "decision_target": "same-field:RMC-1",
+        },
+        {
+            "query": "domain-neutral failed relation intervention review",
+            "purpose": "execute the scholarly ACADEMIC_BRIDGE discovery",
+            "search_dimension": "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM",
+            "mechanism_change_ids": ["RMC-1"],
+            "capability_ids": ["CAP-1"],
+            "obligation_ids": ["OBL-1"],
+            "causal_chain_ids": ["CHAIN-1"],
+            "search_step": "DOMAIN_DISCOVERY",
+            "target_mechanism_signature_refs": ["TMS-1"],
+            "domain_hypothesis_ids": [],
+            "terminology_map_ids": [],
+            "decision_target": "source:RMC-1",
+        },
+        {
+            "query": "canonical instability canonical correction",
+            "purpose": "ground the candidate domain's canonical terminology",
+            "search_dimension": "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM",
+            "mechanism_change_ids": ["RMC-1"],
+            "capability_ids": ["CAP-1"],
+            "obligation_ids": ["OBL-1"],
+            "causal_chain_ids": ["CHAIN-1"],
+            "search_step": "TERMINOLOGY_GROUNDING",
+            "target_mechanism_signature_refs": ["TMS-1"],
+            "domain_hypothesis_ids": ["DH-1"],
+            "terminology_map_ids": [],
+            "decision_target": "source:RMC-1",
+        },
+        {
+            "query": "canonical instability canonical correction intervention outcome",
+            "purpose": "search a local Problem-Intervention pair",
+            "search_dimension": "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM",
+            "mechanism_change_ids": ["RMC-1"],
+            "capability_ids": ["CAP-1"],
+            "obligation_ids": ["OBL-1"],
+            "causal_chain_ids": ["CHAIN-1"],
+            "search_step": "SOURCE_SEARCH",
+            "target_mechanism_signature_refs": ["TMS-1"],
+            "domain_hypothesis_ids": ["DH-1"],
+            "terminology_map_ids": ["TERM-1"],
+            "decision_target": "source:RMC-1",
+        },
     ]
     return context, {
         "coverage_gaps": [],
@@ -3494,14 +4037,42 @@ def test_method_design_principle_search_consumes_complete_rmc_context() -> None:
     validated = validate_query_plan(plan, method_design_context=context)
     assert validated["queries"] == plan["queries"]
     assert plan["method_design_context"]["search_mode"] == "PRINCIPLE_SEARCH"
-    assert {
-        query["search_dimension"] for query in plan["queries"]
-    } == {
-        "FIRST_PRINCIPLES",
-        "REPRESENTATION_TRANSFORMATION",
-        "SAME_FIELD_MECHANISM",
-        "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM",
+    assert {query["search_dimension"] for query in plan["queries"]} == {
+        "SAME_FIELD_MECHANISM", "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM",
     }
+    assert {query["search_step"] for query in plan["queries"]} == {
+        "DOMAIN_DISCOVERY", "TERMINOLOGY_GROUNDING", "SOURCE_SEARCH",
+    }
+
+
+def test_terminology_grounding_is_required_only_when_an_explore_domain_enters_source_search() -> None:
+    context, plan = principle_search_plan_fixture()
+    plan["method_design_context"]["principle_search_context"]["terminology_maps"] = []
+    plan["queries"] = [
+        item
+        for item in plan["queries"]
+        if not (
+            item["search_dimension"] == "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM"
+            and item["search_step"] in {"TERMINOLOGY_GROUNDING", "SOURCE_SEARCH"}
+        )
+    ]
+    validate_query_plan(plan, method_design_context=context)
+
+    _, source_plan = principle_search_plan_fixture()
+    source_plan["method_design_context"]["principle_search_context"]["terminology_maps"] = []
+    source_plan["queries"] = [
+        item for item in source_plan["queries"]
+        if item["search_step"] != "TERMINOLOGY_GROUNDING"
+    ]
+    source_query = next(
+        item
+        for item in source_plan["queries"]
+        if item["search_dimension"] == "CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM"
+        and item["search_step"] == "SOURCE_SEARCH"
+    )
+    source_query["terminology_map_ids"] = []
+    with pytest.raises(ValidationError, match="Terminology Map"):
+        validate_query_plan(source_plan, method_design_context=context)
 
 
 @pytest.mark.parametrize(
@@ -3518,8 +4089,13 @@ def test_method_design_principle_search_consumes_complete_rmc_context() -> None:
             "unresolved mechanism-change binding",
         ),
         (
-            lambda plan: plan["queries"].pop(),
-            "all four search dimensions",
+            lambda plan: plan.update(
+                queries=[
+                    query for query in plan["queries"]
+                    if query["search_dimension"] != "SAME_FIELD_MECHANISM"
+                ]
+            ),
+            "formal SAME_FIELD_MECHANISM",
         ),
         (
             lambda plan: plan["queries"][0].update(obligation_ids=["OBL-MISSING"]),
@@ -4359,7 +4935,7 @@ def test_rediscovery_does_not_rollback_verified_admission(tmp_path: Path) -> Non
     controller.execute_query("second query", "fake", lambda _: [rediscovered])
 
     paper = controller.status()["research_lit"]["papers"]["P1"]
-    assert paper["admission_status"] == "ADMIT_FOR_READING"
+    assert paper["context_decisions"][-1]["admission_status"] == "ADMIT_FOR_READING"
     assert paper["identity_status"] == "verified"
     assert paper["title"] == "Test paper"
     assert paper["citation_count"] == 42
@@ -4378,15 +4954,16 @@ def test_finish_retrieval_repairs_pre_fix_accepted_evidence_rollback(
             **metadata(),
             "source_id": "P1",
             "identity_status": "verify_pending",
-            "admission_status": "DISCOVERY_METADATA_ONLY",
             "found_by_query_ids": ["Q0001", "Q0002"],
         }
 
-    controller.finish_retrieval()
+    with controller._store.mutate() as state:
+        restored = controller._reconcile_accepted_evidence_papers(state["research_lit"])
 
     paper = controller.status()["research_lit"]["papers"]["P1"]
+    assert restored == ["P1"]
     assert paper["identity_status"] == "verified"
-    assert paper["admission_status"] == "ADMIT_DECISION_GRADE"
+    assert paper["context_decisions"][-1]["admission_status"] == "ADMIT_DECISION_GRADE"
     assert paper["found_by_query_ids"] == ["Q0001", "Q0002"]
     assert "record_sha256" not in paper
     assert "previous_record_sha256" not in paper
@@ -4408,7 +4985,6 @@ def test_accepted_user_source_does_not_require_gateway_identity_for_reconciliati
     controller.register_user_source(supplied)
     with controller._store.mutate() as state:
         research = state["research_lit"]
-        research["papers"]["USER1"]["admission_status"] = "ADMIT_DECISION_GRADE"
         research["accepted_artifacts"]["evidence:USER1"] = {"path": "evidence.json"}
         restored = controller._reconcile_accepted_evidence_papers(research)
 
@@ -4754,9 +5330,9 @@ def test_decisive_low_citation_source_requires_and_records_bounded_exception(
     )
 
     assert decision == "ADMIT_FOR_READING"
-    paper = controller.status()["research_lit"]["papers"]["P1"]
-    assert paper["admission_exception"]["kind"] == "decisive_closest_prior_or_concurrent"
-    assert paper["admission_exception"]["decision_targets"] == [
+    context_decision = latest_paper_decision(controller, "P1")
+    assert context_decision["admission_exception"]["kind"] == "decisive_closest_prior_or_concurrent"
+    assert context_decision["admission_exception"]["decision_targets"] == [
         "coverage:recent_prior_work",
         "problem_novelty:P-1",
     ]
@@ -4764,6 +5340,118 @@ def test_decisive_low_citation_source_requires_and_records_bounded_exception(
         encoding="utf-8"
     )
     assert '"admission_exception"' in ledger
+
+
+def test_rmc_bound_exception_closes_cli_policy_and_current_read_execution_path(
+    tmp_path: Path,
+) -> None:
+    controller = controller_at_method_design(tmp_path)
+    context = activate_method_design_admission_context(controller, "P-METHOD")
+    decision = controller.decide_admission(
+        "P-METHOD",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="The paper may establish the RMC-bound source mechanism genealogy.",
+        reading_priority="TARGETED_GAP_FOLLOWUP",
+        decision_grade_exception="rmc_bound_source_mechanism_or_genealogy",
+        exception_reason="The identity-verified source may change the RMC-1 transfer decision.",
+        decision_targets=["source:RMC-1"],
+    )
+    assert decision == "ADMIT_FOR_READING"
+    recorded = latest_paper_decision(controller, "P-METHOD")
+    assert recorded["context"] == {
+        **context,
+        "paper_id": "P-METHOD",
+        "decision_targets": ["source:RMC-1"],
+    }
+    assert recorded["admission_exception"]["kind"] == (
+        "rmc_bound_source_mechanism_or_genealogy"
+    )
+    assert controller._paper_readable_in_active_session(
+        controller.status()["research_lit"], "P-METHOD"
+    )
+
+    parsed = build_parser().parse_args([
+        "admit",
+        controller.run_id,
+        "P-METHOD",
+        "--screening-basis",
+        "TITLE_ABSTRACT",
+        "--screening-reason",
+        "source mechanism",
+        "--reading-priority",
+        "TARGETED_GAP_FOLLOWUP",
+        "--decision-grade-exception",
+        "rmc_bound_source_mechanism_or_genealogy",
+    ])
+    assert parsed.decision_grade_exception == "rmc_bound_source_mechanism_or_genealogy"
+
+
+def test_context_bound_admissions_keep_landscape_and_rmc_decisions_distinct_and_reject_stale_plan(
+    tmp_path: Path,
+) -> None:
+    controller = controller_at_method_design(tmp_path)
+    landscape_decision = {
+        "decision_id": "admission-landscape-out",
+        "context": {
+            "paper_id": "P-CONTEXT",
+            "phase": "landscape",
+            "query_plan_sha256": "f" * 64,
+            "phase_binding_anchor": {"query_plan_sha256": "f" * 64},
+            "decision_targets": [],
+        },
+        "admission_status": "EXCLUDE_IRRELEVANT",
+        "screening_status": "OUT_OF_SCOPE",
+        "screening_in_scope": False,
+        "duplicate": False,
+    }
+    context = activate_method_design_admission_context(
+        controller,
+        "P-CONTEXT",
+        prior_decisions=[landscape_decision],
+    )
+    assert controller.decide_admission(
+        "P-CONTEXT",
+        screening_in_scope=True,
+        screening_basis="TITLE_ABSTRACT",
+        screening_reason="In scope for the RMC-bound source mechanism.",
+        reading_priority="TARGETED_GAP_FOLLOWUP",
+        decision_grade_exception="rmc_bound_source_mechanism_or_genealogy",
+        exception_reason="May change the RMC-1 mechanism-origin decision.",
+        decision_targets=["source:RMC-1"],
+    ) == "ADMIT_FOR_READING"
+    paper = controller.status()["research_lit"]["papers"]["P-CONTEXT"]
+    assert [item["screening_status"] for item in paper["context_decisions"]] == [
+        "OUT_OF_SCOPE",
+        "IN_SCOPE",
+    ]
+
+    rmc_one = deepcopy(paper["context_decisions"][-1])
+    rmc_one["decision_id"] = "admission-rmc-one"
+    rmc_one["context"]["decision_targets"] = ["source:RMC-1"]
+    rmc_two = deepcopy(rmc_one)
+    rmc_two["decision_id"] = "admission-rmc-two"
+    rmc_two["context"]["decision_targets"] = ["source:RMC-2"]
+    paper["context_decisions"].extend([rmc_one, rmc_two])
+    assert controller._paper_context_decision(
+        paper, context={**context, "decision_targets": ["source:RMC-1"]}
+    )["decision_id"] == "admission-rmc-one"
+    assert controller._paper_context_decision(
+        paper, context={**context, "decision_targets": ["source:RMC-2"]}
+    )["decision_id"] == "admission-rmc-two"
+
+    with controller._store.mutate() as state:
+        active = state["research_lit"]["incremental_literature_active"]
+        active["paper_decision_ids"]["P-CONTEXT"] = paper["context_decisions"][1][
+            "decision_id"
+        ]
+        active["decision_context"] = {
+            **active["decision_context"],
+            "query_plan_sha256": "0" * 64,
+        }
+    assert not controller._paper_readable_in_active_session(
+        controller.status()["research_lit"], "P-CONTEXT"
+    )
 
 
 def test_unadmitted_fulltext_never_calls_gateway_when_other_paper_allows_reading(
@@ -4804,7 +5492,7 @@ def test_real_read_receipt_allows_evidence_and_promotes_decision_grade(tmp_path:
     attest(controller, "paper_reader", evidence)
     controller.submit_evidence_card("P1", evidence)
     state = controller.status()["research_lit"]
-    assert state["papers"]["P1"]["admission_status"] == "ADMIT_DECISION_GRADE"
+    assert latest_paper_decision(controller, "P1")["admission_status"] == "ADMIT_DECISION_GRADE"
     assert state["accepted_artifacts"]["evidence:P1"]["read_event_id"] == read["read_event_id"]
 
 
@@ -4835,8 +5523,7 @@ def test_accepted_evidence_can_be_rescreened_without_duplicate_read(tmp_path: Pa
         identity_verifier=forbidden_verifier,
     ) == "ADMIT_DECISION_GRADE"
     assert verifier_called is False
-    paper = controller.status()["research_lit"]["papers"]["P1"]
-    assert paper["screening_basis"] == "FULL_TEXT"
+    assert latest_paper_decision(controller, "P1")["screening_basis"] == "FULL_TEXT"
 
 
 def test_revised_scope_can_exclude_a_paper_with_old_accepted_evidence(tmp_path: Path) -> None:
@@ -4860,7 +5547,7 @@ def test_revised_scope_can_exclude_a_paper_with_old_accepted_evidence(tmp_path: 
     with controller._store.mutate() as state:
         restored = controller._reconcile_accepted_evidence_papers(state["research_lit"])
     assert restored == []
-    assert controller.status()["research_lit"]["papers"]["P1"]["admission_status"] == (
+    assert latest_paper_decision(controller, "P1")["admission_status"] == (
         "EXCLUDE_IRRELEVANT"
     )
 
@@ -5012,7 +5699,22 @@ def test_landscape_audit_rejects_duplicate_evidence_ids_and_dangling_references(
         json.dumps(evidence) + "\n", encoding="utf-8"
     )
     (stage / "LITERATURE_CORPUS.jsonl").write_text(
-        json.dumps({"source_id": "P1", "admission_status": "ADMIT_DECISION_GRADE"}) + "\n",
+        json.dumps({
+            "source_id": "P1",
+            "context_decisions": [{
+                "decision_id": "admission-landscape-p1",
+                "context": {
+                    "paper_id": "P1",
+                    "phase": "landscape",
+                    "query_plan_sha256": "a" * 64,
+                    "phase_binding_anchor": {"query_plan_sha256": "a" * 64},
+                    "decision_targets": [],
+                },
+                "admission_status": "ADMIT_DECISION_GRADE",
+                "screening_status": "IN_SCOPE",
+                "screening_reason": "fixture decision-grade source",
+            }],
+        }) + "\n",
         encoding="utf-8",
     )
     (stage / "SOURCE_ADMISSION_POLICY.yaml").write_text(
@@ -5107,7 +5809,7 @@ def test_provider_unavailable_requests_a_fulltext_batch_and_resumes_reading(
         "withdraw_admission",
     ]
     state = controller.status()["research_lit"]
-    assert state["papers"]["P2"]["admission_status"] == "ADMIT_FOR_READING"
+    assert latest_paper_decision(controller, "P2")["admission_status"] == "ADMIT_FOR_READING"
     assert state["papers"]["P2"]["fulltext_failure"]["read_event_id"]
     assert [item["paper_id"] for item in state["human_fulltext_request"]["papers"]] == ["P2"]
     source = tmp_path / "source-materials" / "p2.txt"
@@ -5207,7 +5909,7 @@ def test_user_can_withdraw_unread_admission_during_paper_reading(tmp_path: Path)
     )
     state = controller.finish_reading()["research_lit"]
     assert state["current_stage"] == "FIELD_SYNTHESIS"
-    assert state["papers"]["P2"]["admission_status"] == "EXCLUDE_USER_WITHDRAWN"
+    assert latest_paper_decision(controller, "P2")["admission_status"] == "EXCLUDE_USER_WITHDRAWN"
     assert state["papers"]["P2"]["admission_withdrawal"]["reason"] == (
         "user corrected the reading scope"
     )
@@ -5264,7 +5966,7 @@ def test_admitted_identity_can_be_corrected_only_before_evidence(tmp_path: Path)
     )
     assert correction["previous"]["doi_or_stable_url"] == "https://doi.org/10.1/test"
     assert correction["corrected"]["doi"] == "10.1/corrected"
-    assert controller.status()["research_lit"]["papers"]["P1"]["admission_status"] == (
+    assert latest_paper_decision(controller, "P1")["admission_status"] == (
         "ADMIT_FOR_READING"
     )
 
@@ -5328,7 +6030,7 @@ def test_discovered_paper_can_be_promoted_when_user_later_supplies_fulltext(
         },
     )
 
-    assert promoted["admission_status"] == "USER_SUPPLIED_READ"
+    assert promoted["context_decisions"][-1]["admission_status"] == "USER_SUPPLIED_READ"
     assert promoted["source_origin"] == "gateway_discovery"
     assert promoted["identity_status"] == "verified"
     assert Path(promoted["user_fulltext"]["source_path"]) == Path("source-materials/p2.pdf")
@@ -6471,6 +7173,7 @@ def test_structural_paper_reading_migration_reuses_completed_events_and_resynthe
         research["active_reading_session"] = None
         research["initial_screened_corpus_ids"] = None
         research["initial_field_map_binding"] = None
+        research["initial_screening_context"] = None
         research["formal_primary_selection"] = None
         research["landscape_evidence_ids"] = []
         research["accepted_artifacts"]["active_field_map"] = {
@@ -6480,6 +7183,17 @@ def test_structural_paper_reading_migration_reuses_completed_events_and_resynthe
             "accepted_at": "2026-08-12T00:00:00Z",
             "author_role": "main_research_agent",
         }
+        screening_context = controller._active_screening_context(research)
+        prior_decision = deepcopy(research["papers"]["P1"]["context_decisions"][-1])
+        prior_decision.update({
+            "decision_id": "admission-current-structural-migration",
+            "context": {
+                **screening_context,
+                "paper_id": "P1",
+                "decision_targets": [],
+            },
+        })
+        research["papers"]["P1"]["context_decisions"].append(prior_decision)
         state["workflow"] = json.loads(json.dumps(state["workflow"]))
         state["workflow"]["research_lit"]["allowed_agents"]["PAPER_READING"] = [
             "paper_reader"
@@ -7253,6 +7967,15 @@ def test_field_map_gaps_are_bound_to_targeted_queries_and_the_same_map_is_revise
         screening_reason="direct evidence for the unresolved failure regime",
         reading_priority="TARGETED_GAP_FOLLOWUP",
     ) == "ADMIT_FOR_READING"
+    assert controller.decide_admission(
+        "P1",
+        screening_in_scope=True,
+        screening_basis="FULL_TEXT",
+        screening_reason="accepted Evidence remains in scope under the revised Landscape Query Plan",
+        reading_priority="HIGH_CITATION_BACKBONE",
+        fulltext_selected=False,
+        fulltext_selection_reason="the accepted Evidence Card already contains the completed read",
+    ) == "ADMIT_DECISION_GRADE"
     controller.select_reading_subset(
         ["P2"],
         rationale="The targeted failure-boundary paper is the next coverage pass.",
@@ -7408,7 +8131,7 @@ def test_candidate_can_be_enriched_before_screening_decision(tmp_path: Path) -> 
         },
     )
     assert enriched["abstract"].startswith("A retrieved abstract")
-    assert controller.status()["research_lit"]["papers"]["P1"].get("screening_status") is None
+    assert not controller.status()["research_lit"]["papers"]["P1"].get("context_decisions")
 
 
 def test_verified_candidate_without_abstract_can_route_to_mandatory_fulltext(

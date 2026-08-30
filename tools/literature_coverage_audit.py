@@ -247,10 +247,21 @@ def audit_landscape(
         if not isinstance(source_id, str) or not source_id.strip():
             errors.append(f"literature_corpus row {index} has no source_id")
             continue
-        admission_status = row.get("admission_status")
-        if not isinstance(admission_status, str) or not admission_status.strip():
-            errors.append(f"literature_corpus row {index} has no admission_status")
+        decisions = row.get("context_decisions") or []
+        landscape_decision = next(
+            (
+                decision
+                for decision in reversed(decisions)
+                if isinstance(decision, dict)
+                and isinstance(decision.get("context"), dict)
+                and decision["context"].get("phase") == "landscape"
+            ),
+            None,
+        )
+        if not isinstance(landscape_decision, dict):
+            errors.append(f"literature_corpus row {index} has no landscape context decision")
             continue
+        admission_status = landscape_decision.get("admission_status")
         if admission_status in DECISION_GRADE_STATUSES and source_id not in evidence_ids:
             errors.append(
                 f"literature_corpus row {index} ({source_id}) is decision-grade without an evidence card"
@@ -259,15 +270,26 @@ def audit_landscape(
     if formal and coverage_status == "SUFFICIENT":
         unresolved_screening: list[str] = []
         for source_id, row in latest_corpus.items():
-            screening_status = row.get("screening_status")
+            decisions = row.get("context_decisions") or []
+            decision = next(
+                (
+                    item
+                    for item in reversed(decisions)
+                    if isinstance(item, dict)
+                    and isinstance(item.get("context"), dict)
+                    and item["context"].get("phase") == "landscape"
+                ),
+                {},
+            )
+            screening_status = decision.get("screening_status")
             if screening_status not in FINAL_SCREENING_STATUSES:
                 unresolved_screening.append(source_id)
                 continue
-            if not str(row.get("screening_reason") or "").strip():
+            if not str(decision.get("screening_reason") or "").strip():
                 errors.append(f"literature candidate {source_id} lacks a screening reason")
             if screening_status != "IN_SCOPE":
                 continue
-            basis = row.get("screening_basis")
+            basis = decision.get("screening_basis")
             abstract_unavailable = (
                 basis == "TITLE_ONLY_ABSTRACT_UNAVAILABLE"
                 and row.get("identity_status") == "verified"
@@ -280,19 +302,19 @@ def audit_landscape(
                 )
             if basis == "TITLE_ABSTRACT" and not str(row.get("abstract") or "").strip():
                 errors.append(f"in-scope candidate {source_id} has no actual abstract")
-            priority = row.get("reading_priority")
+            priority = decision.get("reading_priority")
             if priority in MANDATORY_FULLTEXT_PRIORITIES and source_id not in evidence_ids:
                 errors.append(
                     f"mandatory review/high-citation backbone paper {source_id} has no full-text Evidence Card"
                 )
-            if not row.get("fulltext_selected"):
-                if not str(row.get("fulltext_selection_reason") or "").strip():
+            if not decision.get("fulltext_selected"):
+                if not str(decision.get("fulltext_selection_reason") or "").strip():
                     errors.append(
                         f"abstract-only candidate {source_id} lacks a representative-selection reason"
                     )
             elif (
                 source_id not in evidence_ids
-                and row.get("admission_status") != "ADMIT_DISCOVERY_ONLY"
+                and decision.get("admission_status") != "ADMIT_DISCOVERY_ONLY"
             ):
                 errors.append(
                     f"full-text-selected candidate {source_id} has no accepted Evidence Card"

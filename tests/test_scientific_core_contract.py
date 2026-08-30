@@ -108,6 +108,18 @@ def test_method_design_contract_is_mirrored_and_declares_principle_first_lifecyc
         "SELECTED_PRINCIPLE.yaml",
     ):
         assert marker in main
+    reviewer = read(REPO_ROOT / ".codex" / "agents" / "independent_method_reviewer.toml")
+    for marker in (
+        "NO_ADDITIONAL_DOMAIN_HYPOTHESIS",
+        "task, algorithm, architecture, venue, popularity, or buzzword similarity is insufficient",
+        "Source Intervention -> Mechanism Change -> Outcome",
+        "FAIL forbids an active Candidate",
+        "A Target causal-equivalent intervention rejects or restructures the Candidate",
+        "an old Source primitive, or small Target adaptation cannot by itself weaken a Candidate",
+        "structurally valid but scientifically empty derivation",
+        "post-hoc discovery story",
+    ):
+        assert marker in reviewer
 
 def test_literature_stage_builds_an_evidence_map_before_methods() -> None:
     for root in (MAIN, CODEX):
@@ -210,6 +222,11 @@ def test_source_admission_policy_is_strict_for_search_and_reads_user_materials()
     assert "user-supplied papers and notes" in compact
     assert "`user_supplied_read`" in compact
     assert "never discard user-supplied material before content inspection" in compact
+    assert "`rmc_bound_source_mechanism_or_genealogy`" in compact
+    assert "it only permits the full-text read needed to judge" in compact
+    assert "nor an exception establishes relevance, source causal efficacy" in compact
+    assert "keep paper identity, metadata, full text, and canonical evidence globally unique" in compact
+    assert "query_plan_sha256" in compact and "phase_binding_anchor" in compact
 
 
 def test_source_admission_gate_precedes_all_scientific_reading_paths() -> None:

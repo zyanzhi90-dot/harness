@@ -104,11 +104,16 @@ HOLD_IDENTITY / EXCLUDE_IRRELEVANT / EXCLUDE_DUPLICATE
 For Track A, citation count or elite-venue status is required for active reading,
 except for the narrow decision-grade exception above. The exception must record
 one of `decisive_closest_prior_or_concurrent`,
-`negative_or_contradictory_result`, or
-`diagnostic_or_replication_evidence`, a scientific reason, and the explicit
-problem/novelty/coverage/diagnostic decision targets it may change. Neither the
-default gate nor an exception can establish relevance, correctness, novelty, or
-evidence grade.
+`negative_or_contradictory_result`,
+`diagnostic_or_replication_evidence`, or
+`rmc_bound_source_mechanism_or_genealogy`, a scientific reason, and the explicit
+problem/novelty/coverage/diagnostic/Source decision targets it may change. The
+RMC-bound exception additionally requires a verified Source identity, the
+current Method Design Query Plan/RMC decision context, and
+`TARGETED_GAP_FOLLOWUP` priority; it only permits the full-text read needed to
+judge Source intervention, causal efficacy, or genealogy. Neither the default
+gate nor an exception establishes relevance, Source causal efficacy,
+intervention-level alignment, novelty, strength, or evidence grade.
 Deliberately search recent work, negative/null results, replications,
 benchmarks, diagnostics, and contradictory findings; retain candidates that do
 not pass the gate as metadata-only records rather than silently deleting them.
@@ -119,6 +124,17 @@ Do not use a discovery-only record as prior work, contradiction evidence,
 problem evidence, transferred method, novelty evidence, or support for a
 scientific claim. It may seed a query or citation expansion, and remains in the
 auditable candidate corpus with its uncertainty.
+
+Screening and admission are decisions in a scientific context, not global paper
+properties. Keep paper identity, metadata, full text, and canonical Evidence
+globally unique, while recording each decision under its immutable current
+context. Incremental Method Design decisions bind at least `paper_id + phase +
+query_plan_sha256 + phase_binding_anchor + decision_targets[]`; Landscape and
+other phases use their own accepted context. A changed Query Plan, Problem/phase
+binding, RMC, or Target Mechanism Signature makes an older decision non-current.
+The reading session and Evidence lifecycle consume only the exact decision ID
+selected for their current context, so Landscape and distinct RMC decisions for
+the same paper remain separately auditable and cannot overwrite one another.
 
 Decision-grade evidence requires inspected content, an exact locator, and
 enough surrounding context to verify the claim, setting, comparison, and

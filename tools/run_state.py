@@ -885,6 +885,106 @@ def _accepted_necessity_binding(root: str, state: dict) -> dict:
     }
 
 
+def _method_design_query_plan_provenance(root: str, state: dict) -> dict[str, dict]:
+    """Resolve immutable Method Design Query Plans in acceptance order."""
+
+    research = state.get("research_lit") or {}
+    records: list[dict] = [
+        item for item in research.get("query_plan_history") or [] if isinstance(item, dict)
+    ]
+    current = (research.get("accepted_artifacts") or {}).get(
+        "incremental-query-plan-method_design"
+    )
+    if isinstance(current, dict):
+        records.append(current)
+    ordered = sorted(
+        records,
+        key=lambda item: str(item.get("accepted_at") or ""),
+    )
+    resolved: dict[str, dict] = {}
+    for order, record in enumerate(ordered):
+        digest = str(record.get("sha256") or "")
+        raw_path = record.get("archive_path") or record.get("path")
+        path = _artifact_path(root, str(raw_path or ""))
+        if not digest or not path.is_file() or _sha256(path) != digest:
+            raise ValueError("Method Design Query Plan provenance is stale")
+        try:
+            plan = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Method Design Query Plan provenance is invalid JSON") from exc
+        context = plan.get("method_design_context") if isinstance(plan, dict) else None
+        if not isinstance(context, dict):
+            continue
+        principle_context = context.get("principle_search_context") or {}
+        resolved[digest] = {
+            "order": order,
+            "search_step_by_plan_item": {
+                str(item.get("plan_item_id")): str(item.get("search_step"))
+                for item in plan.get("queries") or []
+                if isinstance(item, dict) and item.get("plan_item_id") and item.get("search_step")
+            },
+            "domain_hypothesis_ids": [
+                item["domain_hypothesis_id"]
+                for item in principle_context.get("domain_hypotheses") or []
+                if isinstance(item, dict) and isinstance(item.get("domain_hypothesis_id"), str)
+            ],
+            "terminology_map_ids": [
+                item["terminology_map_id"]
+                for item in principle_context.get("terminology_maps") or []
+                if isinstance(item, dict) and isinstance(item.get("terminology_map_id"), str)
+            ],
+            "evidence_ids_by_plan_item": {},
+        }
+    evidence_records: dict[str, dict] = {
+        key: value
+        for key, value in (research.get("accepted_artifacts") or {}).items()
+        if key.startswith("evidence:") and isinstance(value, dict)
+    }
+    evidence_records.update({
+        key: value
+        for key, value in (
+            ((research.get("incremental_evidence_by_phase") or {}).get("method_design") or {})
+        ).items()
+        if key.startswith("evidence:") and isinstance(value, dict)
+    })
+    query_events = research.get("query_events") or {}
+    for artifact_name, record in evidence_records.items():
+        path = _artifact_path(root, str(record.get("path") or ""))
+        digest = str(record.get("sha256") or "")
+        if not digest or not path.is_file() or _sha256(path) != digest:
+            raise ValueError("Method Design Evidence provenance is stale")
+        try:
+            card = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Method Design Evidence provenance is invalid JSON") from exc
+        context = card.get("method_design_search_context") if isinstance(card, dict) else None
+        if not isinstance(context, dict):
+            continue
+        plan_sha256 = str(context.get("query_plan_sha256") or "")
+        plan_record = resolved.get(plan_sha256)
+        if not isinstance(plan_record, dict):
+            raise ValueError("Method Design Evidence cites an unknown accepted Query Plan")
+        evidence_id = str(card.get("source_id") or artifact_name.split(":", 1)[1])
+        for query_id in context.get("actual_hit_query_ids") or []:
+            event = query_events.get(query_id)
+            plan_item_id = event.get("plan_item_id") if isinstance(event, dict) else None
+            if (
+                not isinstance(plan_item_id, str)
+                or event.get("query_plan_sha256") != plan_sha256
+                or event.get("status") not in {"complete", "complete_human"}
+            ):
+                raise ValueError("Method Design Evidence has stale query-event provenance")
+            plan_record["evidence_ids_by_plan_item"].setdefault(plan_item_id, []).append(
+                evidence_id
+            )
+    for plan_record in resolved.values():
+        plan_record["evidence_ids_by_plan_item"] = {
+            plan_item_id: sorted(set(evidence_ids))
+            for plan_item_id, evidence_ids in plan_record["evidence_ids_by_plan_item"].items()
+        }
+    return resolved
+
+
 def _validate_method_main_artifact(
     root: str,
     state: dict,
@@ -966,6 +1066,7 @@ def _validate_method_main_artifact(
                 required_history_refs=_relevant_scientific_history_refs(root, state, packet),
                 required_return_ref=_latest_return_feedback_ref(state, phase),
                 required_combine_sources=_combine_sources_for_method_design_return(state),
+                query_plan_provenance=_method_design_query_plan_provenance(root, state),
             )
         if phase == "principle_test_design":
             packet, _ = _accepted_json_artifact(root, state, "method_design_packet")
@@ -1517,10 +1618,9 @@ def _current_decision_grade_evidence_card_source_ids(root: str, state: dict) -> 
         if (
             source_id != evidence_id
             or not isinstance(paper, dict)
-            or paper.get("admission_status") != "ADMIT_DECISION_GRADE"
         ):
             raise ValueError(
-                f"accepted Evidence Card {evidence_id!r} no longer matches its admitted paper identity"
+                f"accepted Evidence Card {evidence_id!r} no longer matches its global paper identity"
             )
         sources[evidence_id] = source_id
     return sources

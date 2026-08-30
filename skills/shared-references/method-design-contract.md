@@ -111,11 +111,27 @@ mechanism_change_id:
 causal_chain_ids: []
 failed_relation_state_or_information_structure:
 required_mechanism_change:
+change_direction:
+causal_position:
+activation_condition:
 root_cause_resolution_rationale:
 capability_ids: []
 obligation_ids: []
-acceptance_conditions: []
 ```
+
+The change states what causal/computational variable, relation, state, or
+information structure must move from its failed condition toward the required
+condition, where the intervention acts, and when it activates. It is derived
+from the accepted residual RCA; it is not a desired metric or an algorithm.
+Observable PASS/FAIL conditions belong to Capabilities and Design Obligations.
+
+Record exactly one `primary_chain_disposition` per accepted primary causal
+chain. `RMC` names the consuming RMC IDs. `CLAIM_BOUNDARY` or
+`OUTSIDE_FINAL_CLAIM_ENVELOPE` requires current Evidence and a scientific
+rationale and may not also bind an RMC. A boundary is not an empty escape hatch:
+if it changes the residual Failure or Problem identity, return to Necessity or
+Problem Generation. The independent reviewer, not the structural validator,
+judges whether each RMC is actually entailed by the accepted RCA.
 
 Each Required Capability contains:
 
@@ -159,43 +175,131 @@ The packet records those dimensions as:
 
 ```yaml
 principle_search_record:
+  target_mechanism_signatures: []
   first_principles: []
   representation_transformations: []
   same_field_mechanisms: []
   cross_domain_structural_isomorphisms: []
+  discovery_executions: []
+  domain_hypotheses: []
+  terminology_maps: []
+  search_space_closures: []
   closure_rationale:
 ```
 
-When new literature is necessary, use the existing Controller-governed
-incremental gateway with `search_mode: PRINCIPLE_SEARCH`. The query-plan context
-must bind the current Problem and RCA hashes and the complete RMC/Capability/
-Obligation/causal-chain relation. Every query names its search dimension and
-the linked IDs it serves. Finish all acquisition or re-adoption before the Main
-artifact is sealed for review.
+`FIRST_PRINCIPLES` and `REPRESENTATION_TRANSFORMATION` are cognition operations,
+not literature queries. Each has a reviewable derivation record. A
+first-principles record binds an origin ID and RMC to explicit premises,
+derivation steps, formal/Evidence basis, derived intervention, RMC-resolution
+rationale, assumptions, and boundaries. A representation record binds an
+origin ID and RMC to the old and new representation, how the Failure mechanism
+is removed, information preserved/lost, formal/Evidence basis, assumptions, and
+boundaries. Non-Source Candidates cite exactly one of these records through
+`origin_type + origin_ref_id`.
 
-Cross-domain search is mandatory; adopting a cross-domain Candidate is not. If
-no credible isomorphism is found, record that bounded result and the search
-basis. Never manufacture an analogy.
+Literature search is required only for `SAME_FIELD_MECHANISM` and
+`CROSS_DOMAIN_STRUCTURAL_ISOMORPHISM`. Use the existing Controller-governed
+incremental gateway with `search_mode: PRINCIPLE_SEARCH`. The immutable
+`method_design_context.principle_search_context` carries Target Mechanism
+Signatures, Domain/Paradigm Hypotheses, Terminology Maps, and explicit decision
+targets in addition to the complete Problem/RCA/RMC/Capability/Obligation
+binding. A query may serve multiple RMCs when every binding resolves.
 
-For every retained cross-domain structural isomorphism, record:
+For every RMC, derive one Target Mechanism Signature before transfer search. It
+states the domain-neutral Failure structure, causal/computational variable or
+relation, current state, required intervention and direction, causal position,
+and activation condition. It constrains the mechanism being sought; it is not a
+universal keyword template.
+
+Cross-domain search uses three query steps inside the same literature gateway:
+
+1. `DOMAIN_DISCOVERY` binds the current RMC and Target Mechanism Signature and
+   deliberately does not require a pre-existing Domain Hypothesis;
+2. `TERMINOLOGY_GROUNDING` additionally binds an already registered
+   Domain/Paradigm Hypothesis;
+3. `SOURCE_SEARCH` additionally binds an evidence-grounded Terminology Map and
+   explicit Source decision target.
+
+Discovery must execute both `MODEL_PRIOR` and `ACADEMIC_BRIDGE` for every RMC.
+MODEL_PRIOR is a Search Hypothesis only and cannot support a Source claim.
+ACADEMIC_BRIDGE uses formal scholarly search/read provenance to discover fields,
+communities, paradigms, intervention families, terminology, and genealogy clues
+that the initial model prior may have missed. Record the two channel executions
+separately from Domain Hypotheses. ACADEMIC_BRIDGE may close as
+`NO_ADDITIONAL_DOMAIN_HYPOTHESIS` when its accepted scholarly search/read
+provenance yields no new high-value hypothesis; do not fabricate a hypothesis.
+Every hypothesis it does discover must be registered and bound to that execution.
+A traceable practitioner signal
+may be used only as a discovery clue when the existing runtime or user supplies
+it; it must return to scholarly Evidence before it can support a Source. Do not
+add a provider for it.
+
+An EXPLORE hypothesis that actually enters formal `SOURCE_SEARCH` must first
+obtain an evidence-grounded Terminology Map containing the candidate domain's
+canonical problem, variable/relation, intervention, and method-family terms.
+Discovery or a justified CLOSED disposition alone does not require a Terminology
+Map. SOURCE_SEARCH uses the local canonical terms to recover a real `Problem ->
+Intervention -> Mechanism Change -> Outcome` with assumptions, activation
+conditions, and boundaries. New terminology, mechanism, citation, or community
+clues create a new/updated hypothesis in a later immutable Query Plan; never
+backfill discovery reasoning after seeing a Source.
+
+Search closure requires both discovery channels, CLOSED dispositions with
+search/read provenance, all high-value branches explored or explicitly closed,
+and no unresolved high-value branch. Fixed query counts, search-cycle limits,
+or budget exhaustion cannot supply scientific closure. Use the existing
+literature-budget extension when a high-value branch remains open.
+
+Cross-domain exploration is mandatory; adopting a cross-domain Candidate is
+not. If the branch closes with no credible Source and another origin is stronger,
+continue without fabricating Source, genealogy, or alignment.
+
+Retained same-field and cross-domain Sources remain in the existing
+`same_field_mechanisms` and `cross_domain_structural_isomorphisms` collections.
+They share one stable `source_mechanism_id` namespace and one causal-efficacy
+structure:
 
 ```yaml
+source_mechanism_id:
+served_rmc_ids: []
+served_capability_ids: []
+served_obligation_ids: []
+discovery_provenance:
+search_provenance:
+genealogy:
+mechanism_origin_or_stop_rationale:
 source_problem:
-source_root_cause:
+source_root_cause: null  # optional; only when Evidence reliably supports it
 source_intervention:
-changed_relation_state_or_information_structure:
-source_mechanism_evidence_refs: []
-solution_principle:
-target_source_structural_mapping:
-causal_direction:
-activation_transfer_conditions:
-disanalogies:
-transfer_boundaries:
+changed_variable_relation_or_structure:
+causal_or_computational_effect:
+outcome:
+assumptions:
+activation_conditions:
+boundaries:
+evidence_refs: []
+intervention_level_alignment:
 ```
 
-The cited source Evidence must support the asserted source intervention →
-mechanism change → outcome relation. Shared vocabulary or task resemblance is
-not structural isomorphism.
+Cross-domain Sources additionally bind the Target Mechanism Signature,
+Domain/Paradigm Hypothesis, Terminology Map, and discovery/search provenance.
+Same-field Sources must not fabricate a cross-domain discovery story. The
+genealogy records ordered paper/mechanism nodes and lineage relations, or an
+Evidence-based stop rationale. The Source RCA is optional; `Source Intervention
+-> Mechanism Change -> Outcome` is mandatory and requires current formal
+Evidence. Venue, popularity, primitive age, shared vocabulary, task resemblance,
+algorithm name, or architecture resemblance cannot make a Strong Source.
+
+For every retained Source, perform Intervention-Level Isomorphism against its
+served RMC. Compare the causal/computational role, current-to-required direction,
+intervention position, activation condition, Source actual effect, and
+assumption/boundary mismatches. `PASS` requires that the Source Intervention
+actually changes the very relation the accepted Target RCA/RMC requires, in the
+right place, direction, and activation regime. Whole-problem and whole-root-
+cause isomorphism are not required. `FAIL` forbids an active Candidate: follow a
+new clue back through Discovery/Terminology/Search or, when it exposes an RMC
+error, return to RCA. Only `PASS` may abstract an algorithm-independent Solution
+Principle; never copy the Source implementation.
 
 ## D2 — Candidate Principles
 
@@ -213,7 +317,9 @@ principle_version:
 parent_version: null
 derived_from_principles: []  # optional; multi-Candidate synthesis only
 principle:
-origin:
+origin_type: FIRST_PRINCIPLES | REPRESENTATION_TRANSFORMATION | SAME_FIELD_SOURCE | CROSS_DOMAIN_SOURCE
+origin_ref_id:
+alignment_ref_id: null  # required PASS alignment for Source origins
 mechanism_change_ids: []
 capability_ids: []
 obligation_ids: []
@@ -228,6 +334,15 @@ fatal_assumptions:
     assumption:
     failure_consequence:
 target_domain_operationalization:
+target_intervention_novelty:
+  novelty_closure_id:
+  nearest_target_prior_evidence_refs: []
+  causal_equivalent_intervention_check: UNCOVERED | PARTIALLY_COVERED | COVERED
+  evidence_search_provenance: []
+  uncovered_residual_delta:
+  mechanism_delta:
+  scientific_delta:
+  disposition: NOVEL_DELTA | RESTRUCTURED_DELTA | REJECTED_AS_COVERED
 provisional_scientific_delta:
   predictions:
   - prediction_id:
@@ -258,6 +373,18 @@ substantive mechanism/Scientific-Delta differences from other Candidates. The
 packet must explain why search did not close at the first feasible Candidate.
 Candidate count is determined by substantive competition, not a quota.
 
+Every active Candidate binds one real origin. Source origins cite a stable
+`source_mechanism_id` plus its accepted alignment; derivation origins cite their
+structured cognition record and do not invent Source or Genealogy fields. Before
+`PRINCIPLE_PACKET_READY`, each active Candidate also closes Early Target
+Intervention Novelty against nearest Target-domain priors. If the Target already
+contains a causal-equivalent intervention, a renamed algorithm or architecture
+cannot remain a Strong active Candidate; reject, downgrade, or identify a real
+residual delta. Conversely, transfer, an old Source primitive, or a small Target
+adaptation is never a mechanical weakness. The questions are whether the Target
+causal intervention was previously uncovered, relieves the RMC, and yields a
+clear, meaningful, verifiable Mechanism and Scientific Delta.
+
 ### Provisional Scientific Delta
 
 For each Candidate answer: if this Principle is true within its stated
@@ -279,7 +406,14 @@ every Candidate it states in plain language the mechanism, Provisional
 Scientific Delta, primary risks, and substantive differences. It does not hide
 those decisions inside a raw JSON dump.
 
-The Controller-declared `independent_method_reviewer` judges whether Candidates
+The Controller-declared `independent_method_reviewer` judges whether accepted
+residual RCA really entails each RMC and whether every primary-chain boundary is
+scientifically legitimate; whether the four Principle spaces were genuinely
+covered; whether cognition derivations are substantive; whether Domain Discovery
+and local Terminology/Search closure are complete rather than budget-driven;
+whether Sources have causal-efficacy Evidence and real genealogy; whether
+Intervention-Level Isomorphism passes; whether Early Target Novelty excludes
+causal-equivalent Target priors without penalizing mature transfer; and whether Candidates
 are algorithm-independent, causally close the accepted RCA through the declared
 RMCs/Capabilities/Obligations, are substantively distinct, use real structural
 isomorphism rather than surface analogy, state fatal assumptions and predictions
