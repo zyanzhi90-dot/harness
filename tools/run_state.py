@@ -652,11 +652,21 @@ def _method_principle_context(root: str, state: dict) -> dict:
         raise ValueError("method work has no machine-resolvable accepted RCA handoff")
     if any(not isinstance(item, str) or not item for item in chains):
         raise ValueError("accepted RCA primary causal-chain IDs are invalid")
+    rival_rca_ids = {
+        str(alternative["explanation_id"])
+        for chain in analysis.get("causal_chains") or []
+        if isinstance(chain, dict) and chain.get("chain_id") in set(chains)
+        for alternative in chain.get("alternative_explanations") or []
+        if isinstance(alternative, dict)
+        and isinstance(alternative.get("explanation_id"), str)
+        and alternative["explanation_id"]
+    }
     return {
         "problem_version": dict(active),
         "root_cause_analysis_id": analysis_id,
         "root_cause_analysis_sha256": _sha256(analysis_path),
         "primary_causal_chain_ids": set(chains),
+        "rival_rca_ids": rival_rca_ids,
     }
 
 
@@ -1123,6 +1133,7 @@ def _validate_method_main_artifact(
                 root_cause_analysis_id=context["root_cause_analysis_id"],
                 root_cause_analysis_sha256=context["root_cause_analysis_sha256"],
                 primary_causal_chain_ids=context["primary_causal_chain_ids"],
+                rival_rca_ids=context["rival_rca_ids"],
                 current_evidence_ids=current_phase_evidence_ids,
                 required_history_refs=_relevant_scientific_history_refs(root, state, packet),
                 required_return_ref=_latest_return_feedback_ref(state, phase),
@@ -1159,6 +1170,8 @@ def _validate_method_main_artifact(
             )
         if phase == "principle_evaluation":
             packet, _ = _accepted_json_artifact(root, state, "method_design_packet")
+            test_plan, _ = _accepted_json_artifact(root, state, "principle_test_plan")
+            necessity, _ = _accepted_json_artifact(root, state, "necessity_closure")
             evidence_context, evidence_path = _accepted_json_artifact(
                 root, state, "principle_evidence_context"
             )
@@ -1177,9 +1190,17 @@ def _validate_method_main_artifact(
                 if isinstance(item, dict) and isinstance(item.get("path"), str):
                     current_refs.add(item["path"])
             selection = (state.get("scientific_core") or {}).get("selected_for_testing") or {}
-            candidate_keys = {
-                (str(selection.get("principle_id") or ""), str(selection.get("principle_version") or ""))
-            }
+            candidate = next(
+                (
+                    item
+                    for item in packet.get("candidate_principles") or []
+                    if str(item.get("principle_id")) == str(selection.get("principle_id"))
+                    and str(item.get("principle_version")) == str(selection.get("principle_version"))
+                ),
+                None,
+            )
+            if candidate is None:
+                raise ValidationError("Principle evaluation cannot resolve the Human-selected Candidate")
             return {
                 "evaluation": validate_principle_evaluation(
                     evaluation,
@@ -1187,7 +1208,13 @@ def _validate_method_main_artifact(
                     cycle_id=str(cycle.get("cycle_id") or ""),
                     execution_set_id=str(cycle.get("execution_set_id") or ""),
                     evidence_context_ref=evidence_ref,
-                    candidate_principles=candidate_keys,
+                    test_plan=test_plan,
+                    candidate=candidate,
+                    root_cause_analysis_id=str(packet["root_cause_binding"]["analysis_id"]),
+                    necessity_residual_ids={
+                        str(item["residual_failure_id"])
+                        for item in necessity["residual_failure_envelope"]
+                    },
                     current_evidence_refs=current_refs,
                     required_history_refs=_relevant_scientific_history_refs(
                         root, state, {**packet, "cycle_id": cycle.get("cycle_id")}
@@ -1318,11 +1345,49 @@ def _validate_principle_method_outputs(
                 reviewed_artifact_path=str(workflow["artifact_manifest"]["principle_evaluation"]),
             )
             if verdict["decision"] == "PRINCIPLE_CONVERGED":
-                _require = ("selected_principle_id", "selected_principle_version")
-                if any(not isinstance(verdict.get(field), (str, int)) or str(verdict[field]).strip() == "" for field in _require):
+                if any(
+                    not isinstance(verdict.get(field), (str, int))
+                    or str(verdict[field]).strip() == ""
+                    for field in ("selected_principle_id", "selected_principle_version")
+                ):
                     raise ValidationError("PRINCIPLE_CONVERGED requires one selected Principle ID/version")
+                if not isinstance(verdict.get("accepted_boundary_update_ids"), list):
+                    raise ValidationError(
+                        "PRINCIPLE_CONVERGED requires accepted boundary update IDs"
+                    )
                 result["selected_principle_id"] = str(verdict["selected_principle_id"])
                 result["selected_principle_version"] = str(verdict["selected_principle_version"])
+                boundary_ids = verdict["accepted_boundary_update_ids"]
+                if not isinstance(boundary_ids, list) or any(
+                    not isinstance(item, str) or not item for item in boundary_ids
+                ) or len(boundary_ids) != len(set(boundary_ids)):
+                    raise ValidationError(
+                        "PRINCIPLE_CONVERGED accepted_boundary_update_ids must be unique string IDs"
+                    )
+                evaluation = main["evaluation"]
+                updates = {
+                    str(item["update_id"]): item
+                    for item in evaluation["scientific_updates"]
+                }
+                if not set(boundary_ids) <= set(updates) or any(
+                    updates[item]["consequence"] != "UPDATE_BOUNDARY"
+                    for item in boundary_ids
+                ):
+                    raise ValidationError(
+                        "PRINCIPLE_CONVERGED may accept only reviewed UPDATE_BOUNDARY records"
+                    )
+                result["accepted_boundary_update_ids"] = list(boundary_ids)
+            elif any(
+                field in verdict
+                for field in (
+                    "selected_principle_id",
+                    "selected_principle_version",
+                    "accepted_boundary_update_ids",
+                )
+            ):
+                raise ValidationError(
+                    "non-converged Principle verdict must not carry Selected Principle authority"
+                )
         else:
             return None
     except (ValidationError, OSError, json.JSONDecodeError, KeyError) as exc:

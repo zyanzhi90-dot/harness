@@ -20,7 +20,9 @@ Load:
 - [`reviewer-independence.md`](../shared-references/reviewer-independence.md)
 
 Preserve the accepted Problem/RCA/RMC/Capability/Obligation bindings and the
-Controller-materialized `idea-stage/SELECTED_PRINCIPLE.yaml`. Adapt that
+Controller-materialized `idea-stage/SELECTED_PRINCIPLE.yaml`, including its
+accepted origin/alignment, Target novelty, assumptions/predictions/updates,
+Evidence closure, and boundaries. Adapt that
 Principle to the target domain, derive its minimal faithful realization, attempt
 Principle-only closure, identify concrete residual adaptation/mechanism gaps,
 and add only the minimal composition necessary to close named gaps. Bound the

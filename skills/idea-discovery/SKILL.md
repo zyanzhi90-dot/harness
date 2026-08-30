@@ -243,10 +243,11 @@ Start a new module execution with the accepted contract:
 The module derives Required Mechanism Changes, Required Capabilities, and Design
 Obligations from every accepted primary causal chain. It then executes all four
 Principle Search dimensions, forms algorithm-independent Candidate Principles,
-and states each Candidate's mechanism, fatal assumptions, Provisional
-Scientific Delta, principal risks, and substantive differences in plain
-language. Method Design does not produce concrete tests, an execution set, or
-cost. It consumes the latest directed Human/reviewer feedback and reuses current
+declares whether the solution space is constrained or underconstrained, and
+states each Candidate's mechanism, fatal assumptions, Provisional Scientific
+Delta, principal risks, substantive differences, and Candidate/Rival killer-test
+concept in plain language. Method Design does not produce concrete tests, an
+execution set, or cost. It consumes the latest directed Human/reviewer feedback and reuses current
 Evidence/search/history; it acquires new Evidence only for a real knowledge gap.
 
 Require `METHOD_DESIGN_PACKET.json`, its deterministic `METHOD_DESIGN.md` view,
@@ -266,7 +267,8 @@ review and another human Candidate selection.
 
 After selection, invoke `idea-creator(mode: principle-test-design)`. It designs
 only the current minimum sufficient, highest-information tests for the selected
-Candidate, prioritizing falsification of fatal assumptions. Existing data,
+Candidate by concretizing its reviewed killer-test concept and preserving the
+Candidate/Rival Pattern A/B, prioritizing falsification of fatal assumptions. Existing data,
 analysis, or computation must be preferred whenever sufficient; a large
 physical experiment requires an explicit insufficiency justification. Require
 `PRINCIPLE_TEST_PLAN.json`, its deterministic Markdown view, and an independent
@@ -287,16 +289,18 @@ interpretation. The Controller forms `PRINCIPLE_EVIDENCE_CONTEXT.json` only
 after every approved test is terminal.
 
 Then invoke `idea-creator(mode: method)` again for `principle_evaluation`. Main
-must compare observations with the selected Candidate's predictions, assess
-operationalization fidelity/test validity/activation conditions, and update
-Principles, assumptions, boundaries, or RCA understanding—not only performance
-rankings. Refresh the review request against the final
+must compare observations with Candidate/Rival Pattern A/B, assess per-test
+operationalization fidelity/test validity/activation/rival discrimination, and
+write Evidence-bound `scientific_updates` whose consequences are proposals, not
+transition authority. Refresh the review request against the final
 `PRINCIPLE_EVALUATION.json`. `PRINCIPLE_CONVERGED` names one Principle
 ID/version and causes the Controller to materialize `SELECTED_PRINCIPLE.yaml`;
 `REVISE_EVALUATION` preserves the same cycle/results, `MORE_EVIDENCE` preserves
 the selected binding and returns to Test Design for the next minimum test,
 `CANDIDATE_REJECTED` invalidates the binding and returns the failed Evidence to
-Method Design, and `RCA_CONFLICT` invalidates it and returns to RCA.
+Method Design, `RCA_CONFLICT` returns to RCA, `NECESSITY_CONFLICT` returns to
+Problem Necessity, and `PROBLEM_CONFLICT` returns through the full Problem Gate
+chain. Only the attested reviewer verdict drives that transition.
 
 ## Phase 5 — Refinement and final gates
 

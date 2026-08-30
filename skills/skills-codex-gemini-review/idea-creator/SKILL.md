@@ -79,8 +79,9 @@ transformation, same-field, and cross-domain structural-isomorphism search;
 cross-domain candidates require source Evidence, structural mapping, causal
 direction, activation-transfer conditions, disanalogies, and boundaries. Form
 algorithm-independent Candidate Principles with lineage, fatal assumptions,
-target operationalization, Provisional Scientific Delta, discriminating
-predictions, principal risks, and substantive differences. Write the
+target operationalization, Provisional Scientific Delta, a constrained or
+underconstrained solution-space assessment, and Candidate/Rival killer-test
+concepts. Write the
 candidate-only `METHOD_DESIGN_PACKET.json`, its
 deterministic Markdown view, and the Gemini reviewer-backed
 `METHOD_DESIGN_REVIEW.json`. Only `PRINCIPLE_PACKET_READY` reaches Human
@@ -91,7 +92,8 @@ Method Design and must be consumed. Selection creates only the Controller's
 ## `mode: principle-test-design`
 
 Require the active Human-selected Candidate binding. Design only the current
-minimum sufficient, highest-information tests for that Candidate, prioritizing
+minimum sufficient, highest-information tests by concretizing that Candidate's
+reviewed Pattern A/B killer-test concepts, prioritizing
 fatal-assumption falsification and preferring existing data, analysis, or
 computation over large physical experiments. Write `PRINCIPLE_TEST_PLAN.json`,
 its deterministic Markdown view, and the Gemini reviewer-backed independent
@@ -101,14 +103,16 @@ before that approval.
 
 After all approved tests have terminal outcomes, require the Controller-formed
 `PRINCIPLE_EVIDENCE_CONTEXT.json`. Assess operationalization and test validity,
-activation conditions, prediction-level outcomes, and Evidence-supported
-Principle updates. Write `PRINCIPLE_EVALUATION.json`; the independent Gemini
+activation conditions, observed Pattern A/B, Rival discrimination, and
+Evidence-bound `scientific_updates`; Main's proposed consequence is not the
+transition authority. Write `PRINCIPLE_EVALUATION.json`; the independent Gemini
 review produces `PRINCIPLE_EVALUATION_VERDICT.json`. `PRINCIPLE_CONVERGED`
 materializes `SELECTED_PRINCIPLE.yaml`; `REVISE_EVALUATION`, `MORE_EVIDENCE`,
-`CANDIDATE_REJECTED`, and `RCA_CONFLICT` follow their fixed Controller return
+`CANDIDATE_REJECTED`, `RCA_CONFLICT`, `NECESSITY_CONFLICT`, and
+`PROBLEM_CONFLICT` follow their fixed Controller return
 targets. `MORE_EVIDENCE` preserves selection and returns to test design;
-Candidate rejection returns failed Evidence to Method Design; RCA conflict
-returns to RCA.
+Candidate rejection returns failed Evidence to Method Design; the other
+conflicts return to RCA, Problem Necessity, or Problem Generation respectively.
 
 Keep problem novelty, Principle/Scientific-Delta novelty, and concrete Method
 embodiment novelty separate. Pre-convergence realization is test-only and must

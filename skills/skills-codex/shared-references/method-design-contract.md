@@ -344,12 +344,17 @@ target_intervention_novelty:
   scientific_delta:
   disposition: NOVEL_DELTA | RESTRUCTURED_DELTA | REJECTED_AS_COVERED
 provisional_scientific_delta:
-  predictions:
+predictions:
   - prediction_id:
     assumption_ids: []
-    predicted_observation:
-    activation_conditions:
-    discriminates_from_principle_ids: []
+    observable:
+    pattern_a:
+    rival_type: PRINCIPLE | RIVAL_RCA
+    rival_id:
+    pattern_b:
+    activation_condition:
+    killer_criterion:
+    cheapest_informative_rationale:
 substantive_difference:
 evidence_refs: []
 status: ACTIVE | REVISED | WEAKENED | MERGED | RETIRED | REJECTED
@@ -372,6 +377,29 @@ target-domain operational meaning, predicted observations, primary risks, and
 substantive mechanism/Scientific-Delta differences from other Candidates. The
 packet must explain why search did not close at the first feasible Candidate.
 Candidate count is determined by substantive competition, not a quota.
+
+The packet records one `solution_space_constraint_assessment`:
+
+```yaml
+solution_space_constraint_assessment:
+  disposition: UNDERCONSTRAINED | CONSTRAINED
+  constraint_basis:
+```
+
+`UNDERCONSTRAINED` requires multiple surviving Candidates whose intervention
+mechanisms are scientifically distinct. `CONSTRAINED` permits one surviving
+Candidate only when the declared constraints genuinely determine that solution
+space. Backbone, optimizer, parameter, implementation, or module differences do
+not create Principle competition. The Validator checks disposition and active
+Candidate multiplicity; the reviewer judges whether the constraint basis and
+mechanism differences are scientifically real.
+
+Every Candidate prediction is a Human-selection-time killer-test concept: one
+observable, this Candidate's Pattern A, a relevant Rival Principle or Rival RCA
+and its Pattern B, the activation condition, a falsification/killer criterion,
+and why it is the cheapest informative distinction. It is not a concrete test
+and contains no operationalization, execution requirements, test-only
+realization, execution set, or cost.
 
 Every active Candidate binds one real origin. Source origins cite a stable
 `source_mechanism_id` plus its accepted alignment; derivation origins cite their
@@ -451,8 +479,20 @@ contains:
 test_id:
 test_type:
 evidence_tier: EXISTING_DATA_ANALYSIS | COMPUTATIONAL | TARGETED_BENCH | PHYSICAL_EXPERIMENT
+killer_test_concept_ref:
 operationalization:
 test_only_concrete_realization: {}  # optional; only what the test requires
+observation_contract:
+  observable:
+  pattern_a:
+  rival_type: PRINCIPLE | RIVAL_RCA
+  rival_id:
+  pattern_b:
+  activation_condition:
+terminal_criteria:
+  pattern_a_criterion:
+  pattern_b_criterion:
+  inconclusive_criterion:
 targets:
   - principle_id:
     principle_version:
@@ -466,6 +506,13 @@ execution_requirements:
 estimated_cost:
 terminal_outcome_contract:
 ```
+
+The concrete plan preserves the reviewed killer-test concept's observable,
+Candidate/Rival Pattern A/B, rival identity, and activation condition while
+adding operationalization, execution requirements, test-only realization,
+execution set, cost, and formal terminal criteria. A performance-only ablation
+is not automatically discriminating; the reviewer rejects a schema-valid plan
+that cannot distinguish the competing mechanisms.
 
 The plan records fatal-assumption priority, minimum-sufficiency and information-
 gain rationales, lower-cost Evidence assessment, and the reason any physical
@@ -548,19 +595,28 @@ operationalization, feasibility, or test-design failure. Do not convert missing
 or invalid results into a scientific rejection.
 
 Write `idea-stage/PRINCIPLE_EVALUATION.json` with the active cycle and execution
-set, the exact Evidence Context reference, operationalization/test-validity/
-activation assessments, prediction comparisons, one update for the selected
-Candidate, RCA conflicts, remaining uncertainties, relevant history references,
-and current return-feedback references. Principle update decisions are:
+set, the exact Evidence Context reference, and structured per-test records for
+operationalization fidelity, test validity/discriminativeness, activation
+outcome, observed Pattern A/B/other, and Rival discrimination. Each record binds
+the reviewed test and prediction IDs and cites only current Evidence.
+
+Add `scientific_updates[]`; each update contains a stable `update_id`,
+`target_type`, `target_id`, `before`, `proposed_after`, `evidence_refs`,
+`consequence`, and rationale. Target types cover Principle, assumption,
+Source–Target mapping, target operationalization, applicability boundary, Rival
+Principle, Rival RCA, Root Cause, and Necessity/residual envelope. Consequence is
+exactly one of:
 
 ```text
-SUPPORTED | EXTENDED | REVISED | WEAKENED | MERGED | RETIRED | REJECTED | UNCHANGED
+REVISE_EVALUATION | MORE_EVIDENCE | UPDATE_BOUNDARY | RETURN_METHOD_DESIGN
+REOPEN_RCA | REOPEN_NECESSITY | REDEFINE_PROBLEM
 ```
 
-An Evidence-changing decision cites current Evidence. Update the persistent
-ledgers only through Controller actions. Evidence Update must change scientific
-understanding—Principle, assumption, boundary, prediction, test validity, or
-RCA—not merely rank performance.
+These are Main's Evidence interpretation and proposed consequences, never
+Controller transition authority. Main cannot edit an accepted RCA or Necessity
+artifact in place. Update persistent ledgers only through Controller actions.
+Evidence Update must change scientific understanding—not merely rank
+performance.
 
 After writing the evaluation, refresh the formal review request so it binds the
 current inputs and final `PRINCIPLE_EVALUATION.json`, then dispatch the declared
@@ -587,14 +643,21 @@ REVISE_EVALUATION   -> principle_evaluation
 MORE_EVIDENCE       -> principle_test_design
 CANDIDATE_REJECTED  -> method_design
 RCA_CONFLICT        -> root_cause_analysis
+NECESSITY_CONFLICT  -> problem_necessity
+PROBLEM_CONFLICT    -> problem_generation
 ```
 
 `PRINCIPLE_CONVERGED` names exactly one `selected_principle_id` and
-`selected_principle_version`. Main must not write `SELECTED_PRINCIPLE.yaml`.
+`selected_principle_version`, plus the IDs of any reviewed `UPDATE_BOUNDARY`
+records the reviewer accepts. Main must not write `SELECTED_PRINCIPLE.yaml`.
 Only after the verdict is accepted does the Controller materialize that file
-from the reviewed Candidate and register its Problem/RCA/causal-chain/RMC/
-Capability/Obligation bindings, Evidence closure, activation/failure
-conditions, applicability boundaries, and remaining uncertainty.
+from the reviewed Candidate, evaluation, Evidence Context, and verdict. It
+preserves the Principle/intervention/changed structure; Problem/RCA/causal-chain/
+RMC/Capability/Obligation bindings; exact derivation or Source origin and
+alignment; Target novelty closure; accepted assumptions and killer predictions;
+Provisional Scientific Delta; accepted scientific updates and Evidence closure;
+activation/failure/applicability boundaries; and remaining uncertainty. It
+contains only the converged Candidate closure, not rejected-Candidate noise.
 
 `REVISE_EVALUATION` preserves the same cycle, selection, tests, and raw results
 and changes only interpretation or attribution; no test is rerun.
@@ -604,6 +667,12 @@ Human approval. `CANDIDATE_REJECTED` requires current Evidence rejecting the
 core mechanism or fatal assumption, records the failed version as stopped,
 invalidates the selection binding, and returns that failure Evidence to
 `method_design`. `RCA_CONFLICT` invalidates the binding and reopens RCA.
+`NECESSITY_CONFLICT` invalidates it and reopens `problem_necessity` when the
+accepted residual envelope or Necessity premise conflicts with Evidence.
+`PROBLEM_CONFLICT` invalidates it and returns to `problem_generation`, including
+the complete Problem quality, novelty, and Human-acceptance chain. Only the
+attested reviewer verdict selects these transitions; Main's consequence never
+does.
 
 ## Persistent scientific history
 

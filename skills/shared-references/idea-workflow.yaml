@@ -63,7 +63,7 @@
       "format": "json",
       "schema_version": 1,
       "lifecycle": "phase_scoped_cycle_artifact",
-      "required_fields": ["schema_version", "design_cycle_id", "problem_binding", "root_cause_binding", "primary_chain_dispositions", "required_mechanism_changes", "required_capabilities", "design_obligations", "principle_search_record", "candidate_principles", "relevant_history_refs", "return_feedback_refs"],
+      "required_fields": ["schema_version", "design_cycle_id", "problem_binding", "root_cause_binding", "primary_chain_dispositions", "required_mechanism_changes", "required_capabilities", "design_obligations", "principle_search_record", "solution_space_constraint_assessment", "candidate_principles", "relevant_history_refs", "return_feedback_refs"],
       "forbidden_fields": ["cycle_id", "execution_set_id", "discriminating_tests", "recommended_execution_set", "estimated_total_cost"],
       "primary_chain_disposition_fields": ["causal_chain_id", "disposition", "mechanism_change_ids", "evidence_refs", "rationale"],
       "primary_chain_disposition_enum": ["RMC", "CLAIM_BOUNDARY", "OUTSIDE_FINAL_CLAIM_ENVELOPE"],
@@ -73,10 +73,13 @@
       "candidate_principle_fields": ["principle_id", "principle_version", "parent_version", "principle", "origin_type", "origin_ref_id", "alignment_ref_id", "mechanism_change_ids", "capability_ids", "obligation_ids", "causal_chain_ids", "activation_conditions", "intervention", "changed_structure", "root_cause_resolution_rationale", "failure_conditions", "fatal_assumptions", "target_domain_operationalization", "target_intervention_novelty", "provisional_scientific_delta", "substantive_difference", "predictions", "evidence_refs", "status", "status_rationale"],
       "candidate_origin_type_enum": ["FIRST_PRINCIPLES", "REPRESENTATION_TRANSFORMATION", "SAME_FIELD_SOURCE", "CROSS_DOMAIN_SOURCE"],
       "candidate_derived_from_principle_fields": ["principle_id", "principle_version"],
-      "candidate_forbidden_fields": ["proposed_test_ids", "tests", "execution_set", "estimated_cost"],
+      "candidate_forbidden_fields": ["proposed_test_ids", "tests", "test_operationalization", "execution_requirements", "test_only_concrete_realization", "execution_set", "estimated_cost"],
       "candidate_status_enum": ["ACTIVE", "REVISED", "WEAKENED", "MERGED", "RETIRED", "REJECTED"],
       "fatal_assumption_fields": ["assumption_id", "assumption", "failure_consequence"],
-      "prediction_fields": ["prediction_id", "assumption_ids", "predicted_observation", "activation_conditions", "discriminates_from_principle_ids"],
+      "solution_space_constraint_assessment_fields": ["disposition", "constraint_basis"],
+      "solution_space_constraint_disposition_enum": ["UNDERCONSTRAINED", "CONSTRAINED"],
+      "prediction_fields": ["prediction_id", "assumption_ids", "observable", "pattern_a", "rival_type", "rival_id", "pattern_b", "activation_condition", "killer_criterion", "cheapest_informative_rationale"],
+      "prediction_rival_type_enum": ["PRINCIPLE", "RIVAL_RCA"],
       "principle_search_record_fields": ["target_mechanism_signatures", "first_principles", "representation_transformations", "same_field_mechanisms", "cross_domain_structural_isomorphisms", "discovery_executions", "domain_hypotheses", "terminology_maps", "search_space_closures", "closure_rationale"],
       "target_mechanism_signature_fields": ["target_mechanism_signature_id", "rmc_id", "domain_neutral_failure_structure", "causal_or_computational_variable_or_relation", "current_relation_or_state", "required_intervention", "change_direction", "causal_position", "activation_condition"],
       "first_principles_derivation_fields": ["origin_record_id", "rmc_id", "premises", "derivation_steps", "formal_or_evidence_basis", "derived_intervention", "rmc_resolution_rationale", "assumptions", "boundaries"],
@@ -116,10 +119,12 @@
       "required_fields": ["schema_version", "cycle_id", "execution_set_id", "selected_for_testing_binding", "test_strategy", "discriminating_tests", "recommended_execution_set", "estimated_total_cost", "relevant_history_refs", "return_feedback_refs"],
       "selected_for_testing_binding_fields": ["selection_request_id", "principle_id", "principle_version", "method_design_packet", "method_design_review"],
       "test_strategy_fields": ["fatal_assumption_priority", "minimum_sufficiency_rationale", "highest_information_gain_rationale", "lower_cost_evidence_assessment", "physical_experiment_escalation_justification"],
-      "discriminating_test_required_fields": ["test_id", "test_type", "evidence_tier", "operationalization", "targets", "information_gain", "falsification_criterion", "execution_requirements", "estimated_cost", "terminal_outcome_contract"],
+      "discriminating_test_required_fields": ["test_id", "test_type", "evidence_tier", "killer_test_concept_ref", "operationalization", "observation_contract", "terminal_criteria", "targets", "information_gain", "falsification_criterion", "execution_requirements", "estimated_cost", "terminal_outcome_contract"],
       "discriminating_test_optional_fields": ["test_only_concrete_realization"],
       "evidence_tier_enum": ["EXISTING_DATA_ANALYSIS", "COMPUTATIONAL", "TARGETED_BENCH", "PHYSICAL_EXPERIMENT"],
       "test_target_fields": ["principle_id", "principle_version", "assumption_id", "prediction_id", "mechanism_change_id", "causal_chain_id"],
+      "observation_contract_fields": ["observable", "pattern_a", "rival_type", "rival_id", "pattern_b", "activation_condition"],
+      "terminal_criteria_fields": ["pattern_a_criterion", "pattern_b_criterion", "inconclusive_criterion"],
       "recommended_execution_set_fields": ["execution_set_id", "test_ids", "estimated_total_cost"]
     },
     "principle_test_plan_view": {
@@ -158,28 +163,39 @@
       "required_fields": ["schema_version", "cycle_id", "execution_set_id", "active_principles", "test_targets", "approved_test_ids", "terminal_outcomes", "result_refs", "historical_evidence_refs", "current_evidence_refs", "unresolved_assumption_ids", "execution_metadata"],
       "test_target_fields": ["test_id", "principle_id", "principle_version", "assumption_id", "prediction_id", "mechanism_change_id", "causal_chain_id"],
       "same_cycle_rebuild_on": ["REVISE_EVALUATION"],
-      "deactivate_on": ["PRINCIPLE_CONVERGED", "MORE_EVIDENCE", "CANDIDATE_REJECTED", "RCA_CONFLICT", "new_test_cycle", "principle_reopened", "root_cause_reopened", "problem_premise_reopened"]
+      "deactivate_on": ["PRINCIPLE_CONVERGED", "MORE_EVIDENCE", "CANDIDATE_REJECTED", "RCA_CONFLICT", "NECESSITY_CONFLICT", "PROBLEM_CONFLICT", "new_test_cycle", "principle_reopened", "root_cause_reopened", "necessity_reopened", "problem_premise_reopened"]
     },
     "principle_evaluation": {
       "format": "json",
       "schema_version": 1,
       "lifecycle": "phase_scoped_cycle_artifact",
-      "required_fields": ["schema_version", "cycle_id", "execution_set_id", "evidence_context_ref", "operationalization_assessments", "test_validity_assessments", "activation_condition_assessments", "prediction_comparisons", "principle_updates", "rca_conflicts", "remaining_uncertainties", "relevant_history_refs", "return_feedback_refs"],
-      "principle_update_fields": ["principle_id", "principle_version", "evidence_refs", "decision", "rationale", "updated_boundary_or_assumption_refs"],
-      "principle_update_decisions": ["SUPPORTED", "EXTENDED", "REVISED", "WEAKENED", "MERGED", "RETIRED", "REJECTED", "UNCHANGED"]
+      "required_fields": ["schema_version", "cycle_id", "execution_set_id", "evidence_context_ref", "operationalization_assessments", "test_validity_assessments", "activation_condition_assessments", "prediction_comparisons", "scientific_updates", "remaining_uncertainties", "relevant_history_refs", "return_feedback_refs"],
+      "operationalization_assessment_fields": ["test_id", "status", "evidence_refs", "rationale"],
+      "operationalization_status_enum": ["FAITHFUL", "UNFAITHFUL", "UNRESOLVED"],
+      "test_validity_assessment_fields": ["test_id", "status", "discriminativeness", "evidence_refs", "rationale"],
+      "test_validity_status_enum": ["VALID", "INVALID", "UNRESOLVED"],
+      "test_discriminativeness_enum": ["DISCRIMINATING", "NON_DISCRIMINATING", "UNRESOLVED"],
+      "activation_condition_assessment_fields": ["test_id", "prediction_id", "status", "evidence_refs", "rationale"],
+      "activation_status_enum": ["HELD", "NOT_HELD", "UNRESOLVED"],
+      "prediction_comparison_fields": ["test_id", "prediction_id", "observable", "observed_pattern", "rival_type", "rival_id", "rival_discrimination", "evidence_refs", "rationale"],
+      "rival_discrimination_enum": ["FAVORS_PATTERN_A", "FAVORS_PATTERN_B", "INCONCLUSIVE", "INVALID_COMPARISON"],
+      "scientific_update_fields": ["update_id", "target_type", "target_id", "before", "proposed_after", "evidence_refs", "consequence", "rationale"],
+      "scientific_update_target_type_enum": ["PRINCIPLE", "ASSUMPTION", "SOURCE_TARGET_MAPPING", "TARGET_OPERATIONALIZATION", "APPLICABILITY_BOUNDARY", "RIVAL_PRINCIPLE", "RIVAL_RCA", "ROOT_CAUSE", "NECESSITY_RESIDUAL_ENVELOPE"],
+      "scientific_update_consequence_enum": ["REVISE_EVALUATION", "MORE_EVIDENCE", "UPDATE_BOUNDARY", "RETURN_METHOD_DESIGN", "REOPEN_RCA", "REOPEN_NECESSITY", "REDEFINE_PROBLEM"]
     },
     "principle_evaluation_verdict": {
       "format": "json",
       "schema_version": 1,
       "required_fields": ["schema_version", "review_request_id", "reviewer", "verdict_id", "decision", "reviewed_artifact", "findings", "return_guidance"],
-      "decision_enum": ["PRINCIPLE_CONVERGED", "REVISE_EVALUATION", "MORE_EVIDENCE", "CANDIDATE_REJECTED", "RCA_CONFLICT"],
-      "principle_converged_required_fields": ["selected_principle_id", "selected_principle_version"]
+      "decision_enum": ["PRINCIPLE_CONVERGED", "REVISE_EVALUATION", "MORE_EVIDENCE", "CANDIDATE_REJECTED", "RCA_CONFLICT", "NECESSITY_CONFLICT", "PROBLEM_CONFLICT"],
+      "principle_converged_required_fields": ["selected_principle_id", "selected_principle_version", "accepted_boundary_update_ids"]
     },
     "selected_principle": {
       "format": "yaml",
       "schema_version": 1,
       "lifecycle": "controller_materialized_after_accepted_convergence",
-      "required_fields": ["schema_version", "principle_id", "principle_version", "problem_binding", "root_cause_binding", "causal_chain_ids", "mechanism_change_ids", "capability_ids", "obligation_ids", "evidence_closure", "activation_conditions", "failure_conditions", "applicability_boundaries", "remaining_uncertainty"],
+      "required_fields": ["schema_version", "principle_id", "principle_version", "principle", "intervention", "changed_structure", "problem_binding", "root_cause_binding", "causal_chain_ids", "mechanism_change_ids", "capability_ids", "obligation_ids", "origin_binding", "origin_closure", "intervention_alignment", "target_intervention_novelty", "accepted_assumptions", "accepted_predictions", "provisional_scientific_delta", "accepted_scientific_updates", "evidence_closure", "activation_conditions", "failure_conditions", "applicability_boundaries", "remaining_uncertainty"],
+      "origin_binding_fields": ["origin_type", "origin_ref_id", "alignment_ref_id"],
       "preserve_on": ["REVISE", "HOLD", "REVISE_METHOD_DELTA", "final_human_request_revision", "METHOD_REFINEMENT_REQUIRED"],
       "invalidate_on": ["RETHINK", "RETHINK_PRINCIPLE_DELTA", "SELECTED_PRINCIPLE_REJECTED", "RCA_CONFLICT", "ROOT_CAUSE_REJECTED", "PROBLEM_PREMISE_REJECTED"]
     },
@@ -531,13 +547,17 @@
         "REVISE_EVALUATION": "principle_evaluation",
         "MORE_EVIDENCE": "principle_test_design",
         "CANDIDATE_REJECTED": "method_design",
-        "RCA_CONFLICT": "root_cause_analysis"
+        "RCA_CONFLICT": "root_cause_analysis",
+        "NECESSITY_CONFLICT": "problem_necessity",
+        "PROBLEM_CONFLICT": "problem_generation"
       },
       "return_effects": {
         "REVISE_EVALUATION": "preserve_cycle_execution_set_and_terminal_results_then_rebuild_equivalent_evidence_context_without_new_tests",
         "MORE_EVIDENCE": "preserve_selected_for_testing_binding_end_the_active_evidence_context_and_design_a_new_minimum_test_cycle_requiring_independent_review_and_Human_approval",
         "CANDIDATE_REJECTED": "end_active_evidence_context_stop_the_failed_Candidate_version_in_history_invalidate_selected_for_testing_binding_and_return_failure_Evidence_to_method_design",
-        "RCA_CONFLICT": "end_active_evidence_context_invalidate_selected_for_testing_binding_and_reopen_root_cause_with_linked_evidence_and_return_guidance"
+        "RCA_CONFLICT": "end_active_evidence_context_invalidate_selected_for_testing_binding_and_reopen_root_cause_with_linked_evidence_and_return_guidance",
+        "NECESSITY_CONFLICT": "end_active_evidence_context_invalidate_selected_for_testing_binding_and_reopen_problem_necessity_with_linked_evidence_and_return_guidance",
+        "PROBLEM_CONFLICT": "end_active_evidence_context_invalidate_selected_for_testing_binding_and_return_to_problem_generation_with_linked_evidence_and_return_guidance"
       }
     },
     {

@@ -1,6 +1,7 @@
 ---
 name: research-refine
 description: Refine one Controller-materialized Selected Principle into a target-adapted, minimal faithful Method and bounded Final Scientific Delta Claim. Use only after accepted Principle convergence; do not use for problem discovery, Principle formation, or pre-convergence test operationalization.
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__codex__codex, mcp__codex__codex-reply, mcp__manual_review__review, mcp__manual_review__review_reply
 ---
 
 # Research Refine
@@ -48,7 +49,8 @@ Require and hash-check:
 - `ROOT_CAUSE_ANALYSIS.json` and `ROOT_CAUSE_VERDICT.json` with
   `DIAGNOSIS_READY`;
 - `SELECTED_PRINCIPLE.yaml` materialized by the Controller after accepted
-  convergence;
+  convergence, including its exact origin/alignment, Target novelty, accepted
+  assumptions/predictions/updates, Evidence closure, and boundaries;
 - the Controller-exposed return/validation feedback directed to
   `method_refinement`, if any.
 
@@ -73,7 +75,9 @@ Allow explicit overrides. Do not hard-code domain doctrine.
 
 Follow R0–R6 in `method-refinement-protocol.md`:
 
-- bind the active Problem, RCA, and Selected Principle without drift;
+- bind the active Problem, RCA, and complete Selected Principle closure without
+  drift; use its accepted origin/alignment, novelty, assumptions, predictions,
+  Evidence updates, and boundaries as adaptation constraints;
 - adapt the algorithm-independent intervention to the target domain;
 - construct the minimal faithful realization and attempt Principle-only
   closure against every selected RMC, Capability, Obligation, condition, and
@@ -94,11 +98,10 @@ sealing the final review request.
 
 ## Reviewer transport
 
-The base reviewer provides a same-family provisional review. Start Round 1
-with a fresh secondary reviewer agent and use
-that same agent only to check resolution of its own issue IDs. Persist path-only
-review bundles and record the iterative agent ID separately from the Controller
-review request. Continuity cannot accept the phase.
+Use the existing iterative reviewer only to create and resolve issue IDs.
+Persist path-only review bundles for Codex and equivalent attached/inline
+content for a manual backend. Continuity may verify that reviewer's own issues;
+it cannot accept the phase.
 
 The Controller-issued `independent_method_reviewer` is the sole formal final
 reviewer. When `FINAL_PROPOSAL.md` is final and all Evidence work is complete,

@@ -37,6 +37,9 @@ For each approved test, read its:
 
 - `targets[]` bindings to Principle/version, assumption, prediction, RMC, and
   causal chain;
+- `killer_test_concept_ref`, observable, Candidate Pattern A, Rival
+  Principle/RCA Pattern B, activation condition, and formal Pattern A/Pattern B/
+  inconclusive terminal criteria;
 - operationalization and optional `test_only_concrete_realization`;
 - execution requirements, estimated cost, and terminal outcome contract.
 
@@ -109,7 +112,9 @@ creates that Context nor starts or evaluates the phase.
 ## Prohibited judgments and mutations
 
 - Do not decide `SUPPORTED`, `REJECTED`, or any other Principle status.
-- Do not compare results to choose a Principle or declare convergence.
+- Record the approved observable without changing its Pattern A/B criteria; do
+  not interpret which scientific explanation wins, choose a Principle, or
+  declare convergence.
 - Do not edit Candidate Principles, ledgers, Controller State, the approved
   execution set, or `PRINCIPLE_EVIDENCE_CONTEXT.json`.
 - Do not add tests, alter targets, expand cost, or silently retry with a changed

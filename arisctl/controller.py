@@ -3519,17 +3519,8 @@ class ARISController:
         elif phase_name == "principle_evaluation":
             packet = self._method_packet(state, accepted=True)
             evaluation = json.loads(path.read_text(encoding="utf-8"))
-            updates_by_principle = {
-                (str(update["principle_id"]), str(update["principle_version"])): update
-                for update in evaluation["principle_updates"]
-            }
-            for update in evaluation["principle_updates"]:
-                candidate = next(
-                    item
-                    for item in packet["candidate_principles"]
-                    if str(item["principle_id"]) == str(update["principle_id"])
-                    and str(item["principle_version"]) == str(update["principle_version"])
-                )
+            selection, candidate = self._selected_for_testing_candidate(state)
+            for update in evaluation["scientific_updates"]:
                 self._append_method_history_event(
                     "method_principles",
                     {
@@ -3537,13 +3528,16 @@ class ARISController:
                         "event_id": f"principle-{uuid.uuid4().hex}",
                         "event_type": "EVIDENCE_UPDATED",
                         "cycle_id": str(evaluation["cycle_id"]),
-                        "principle_id": str(update["principle_id"]),
-                        "principle_version": str(update["principle_version"]),
+                        "principle_id": str(selection["principle_id"]),
+                        "principle_version": str(selection["principle_version"]),
                         "parent_version": candidate.get("parent_version"),
                         "scientific_context_refs": self._candidate_scientific_context_refs(candidate),
                         "evidence_refs": list(update.get("evidence_refs") or []),
                         "reason": str(update["rationale"]),
-                        "decision": str(update["decision"]),
+                        "scientific_update_id": str(update["update_id"]),
+                        "target_type": str(update["target_type"]),
+                        "target_id": str(update["target_id"]),
+                        "proposed_consequence": str(update["consequence"]),
                         "recorded_at": recorded_at,
                         "record_refs": [{"path": reviewed[0], "sha256": digest}],
                     },
@@ -3570,34 +3564,6 @@ class ARISController:
                         "recorded_at": recorded_at,
                     },
                 )
-                principle_keys = {
-                    (str(target["principle_id"]), str(target["principle_version"]))
-                    for target in test["targets"]
-                }
-                for principle_key in sorted(principle_keys & updates_by_principle.keys()):
-                    update = updates_by_principle[principle_key]
-                    self._append_method_history_event(
-                        "method_test_evidence",
-                        {
-                            "schema_version": 1,
-                            "event_id": f"method-test-{uuid.uuid4().hex}",
-                            "event_type": "PRINCIPLE_DECISION_RECORDED",
-                            "cycle_id": str(cycle["cycle_id"]),
-                            "execution_set_id": str(cycle["execution_set_id"]),
-                            "test_id": test_id,
-                            "targets": deepcopy(test["targets"]),
-                            "principle_id": principle_key[0],
-                            "principle_version": principle_key[1],
-                            "decision": str(update["decision"]),
-                            "evidence_refs": deepcopy(update.get("evidence_refs") or []),
-                            "updated_boundary_or_assumption_refs": deepcopy(
-                                update.get("updated_boundary_or_assumption_refs") or []
-                            ),
-                            "record_refs": deepcopy(record_refs),
-                            "reason": str(update["rationale"]),
-                            "recorded_at": recorded_at,
-                        },
-                    )
         phase["history_recorded_for_reviewed_sha256"] = digest
 
     def refresh_current_review_request(self) -> dict[str, Any]:
@@ -4046,19 +4012,40 @@ class ARISController:
             evaluation = json.loads((self.root / evaluation_path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ControllerError("cannot materialize Selected Principle from the accepted evaluation") from exc
-        update = next(
-            (
-                item
-                for item in evaluation["principle_updates"]
-                if str(item["principle_id"]) == principle_id
-                and str(item["principle_version"]) == principle_version
-            ),
-            None,
+        boundary_update_ids = {
+            str(item) for item in (phase.get("accepted_boundary_update_ids") or [])
+        }
+        search = packet["principle_search_record"]
+        if candidate["origin_type"] == "FIRST_PRINCIPLES":
+            origin_records = search["first_principles"]
+        elif candidate["origin_type"] == "REPRESENTATION_TRANSFORMATION":
+            origin_records = search["representation_transformations"]
+        elif candidate["origin_type"] == "SAME_FIELD_SOURCE":
+            origin_records = search["same_field_mechanisms"]
+        else:
+            origin_records = search["cross_domain_structural_isomorphisms"]
+        origin = next(
+            item
+            for item in origin_records
+            if str(item.get("origin_record_id") or item.get("source_mechanism_id"))
+            == str(candidate["origin_ref_id"])
         )
-        if update is None:
-            raise ControllerError("selected Principle has no reviewed Evidence Update")
-        if update["decision"] in {"MERGED", "RETIRED", "REJECTED"}:
-            raise ControllerError("accepted convergence selected a non-surviving Principle update")
+        accepted_boundary_updates = [
+            deepcopy(item)
+            for item in evaluation["scientific_updates"]
+            if str(item["update_id"]) in boundary_update_ids
+        ]
+        evidence_refs = sorted(
+            {
+                str(ref)
+                for update in evaluation["scientific_updates"]
+                for ref in update.get("evidence_refs") or []
+            }
+        )
+        test_plan_path = str(self.workflow["artifact_manifest"]["principle_test_plan"])
+        evidence_context_path = str(
+            self.workflow["artifact_manifest"]["principle_evidence_context"]
+        )
         selected = {
             "schema_version": 1,
             "principle_id": principle_id,
@@ -4072,8 +4059,36 @@ class ARISController:
             "mechanism_change_ids": deepcopy(candidate["mechanism_change_ids"]),
             "capability_ids": deepcopy(candidate["capability_ids"]),
             "obligation_ids": deepcopy(candidate["obligation_ids"]),
+            "origin_binding": {
+                "origin_type": candidate["origin_type"],
+                "origin_ref_id": candidate["origin_ref_id"],
+                "alignment_ref_id": candidate["alignment_ref_id"],
+            },
+            "origin_closure": deepcopy(origin),
+            "intervention_alignment": deepcopy(
+                origin.get("intervention_level_alignment")
+                if candidate["origin_type"] in {"SAME_FIELD_SOURCE", "CROSS_DOMAIN_SOURCE"}
+                else None
+            ),
+            "target_intervention_novelty": deepcopy(
+                candidate["target_intervention_novelty"]
+            ),
+            "accepted_assumptions": deepcopy(candidate["fatal_assumptions"]),
+            "accepted_predictions": deepcopy(candidate["predictions"]),
+            "provisional_scientific_delta": deepcopy(
+                candidate["provisional_scientific_delta"]
+            ),
+            "accepted_scientific_updates": deepcopy(evaluation["scientific_updates"]),
             "evidence_closure": {
-                "evidence_refs": deepcopy(update.get("evidence_refs") or []),
+                "evidence_refs": evidence_refs,
+                "test_plan": {
+                    "path": test_plan_path,
+                    "sha256": sha256_file(self.root / test_plan_path),
+                },
+                "evidence_context": {
+                    "path": evidence_context_path,
+                    "sha256": sha256_file(self.root / evidence_context_path),
+                },
                 "evaluation": {
                     "path": evaluation_path,
                     "sha256": sha256_file(self.root / evaluation_path),
@@ -4088,9 +4103,7 @@ class ARISController:
             "applicability_boundaries": {
                 "activation_conditions": deepcopy(candidate["activation_conditions"]),
                 "failure_conditions": deepcopy(candidate["failure_conditions"]),
-                "updated_boundary_or_assumption_refs": deepcopy(
-                    update.get("updated_boundary_or_assumption_refs") or []
-                ),
+                "accepted_boundary_updates": accepted_boundary_updates,
             },
             "remaining_uncertainty": deepcopy(evaluation.get("remaining_uncertainties") or []),
         }
@@ -4101,6 +4114,8 @@ class ARISController:
                 expected_principle_id=principle_id,
                 expected_principle_version=principle_version,
                 packet=packet,
+                evaluation=evaluation,
+                accepted_boundary_update_ids=boundary_update_ids,
             )
         except ValidationError as exc:
             raise ControllerError(str(exc)) from exc
@@ -4151,7 +4166,7 @@ class ARISController:
                     "principle_version": principle_version,
                     "parent_version": candidate.get("parent_version"),
                     "scientific_context_refs": self._candidate_scientific_context_refs(candidate),
-                    "evidence_refs": deepcopy(update.get("evidence_refs") or []),
+                    "evidence_refs": list(evidence_refs),
                     "reason": "independent convergence verdict accepted by the Controller",
                     "recorded_at": acceptance["accepted_at"],
                     "record_refs": [{"path": raw_path, "sha256": record["sha256"]}],
@@ -4774,6 +4789,7 @@ class ARISController:
                         "candidate_ids", "survivor_ids", "return_guidance",
                         "design_cycle_id", "cycle_id", "execution_set_id", "test_ids",
                         "selected_principle_id", "selected_principle_version",
+                        "accepted_boundary_update_ids",
                         "necessity_id", "necessity_closure_sha256",
                         "necessity_verdict_sha256", "residual_failure_ids",
                     ):
@@ -5096,15 +5112,7 @@ class ARISController:
                 selection, candidate = self._selected_for_testing_candidate(state)
                 evaluation_path = str(self.workflow["artifact_manifest"]["principle_evaluation"])
                 evaluation = json.loads((self.root / evaluation_path).read_text(encoding="utf-8"))
-                update = next(
-                    item for item in evaluation["principle_updates"]
-                    if str(item["principle_id"]) == str(selection["principle_id"])
-                    and str(item["principle_version"]) == str(selection["principle_version"])
-                )
-                if update["decision"] != "REJECTED":
-                    raise ControllerError(
-                        "CANDIDATE_REJECTED requires the reviewed evaluation to reject the Human-selected Candidate"
-                    )
+                updates = list(evaluation["scientific_updates"])
                 self._append_method_history_event(
                     "method_principles",
                     {
@@ -5116,8 +5124,14 @@ class ARISController:
                         "principle_version": str(selection["principle_version"]),
                         "parent_version": candidate.get("parent_version"),
                         "scientific_context_refs": self._candidate_scientific_context_refs(candidate),
-                        "evidence_refs": list(update.get("evidence_refs") or []),
-                        "reason": str(update["rationale"]),
+                        "evidence_refs": sorted(
+                            {
+                                str(ref)
+                                for update in updates
+                                for ref in update.get("evidence_refs") or []
+                            }
+                        ),
+                        "reason": "Independent convergence review rejected the Human-selected Candidate.",
                         "recorded_at": now(),
                         "record_refs": [{"path": evaluation_path, "sha256": sha256_file(self.root / evaluation_path)}],
                     },

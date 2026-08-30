@@ -57,7 +57,8 @@ Require and hash-check:
 - `ROOT_CAUSE_ANALYSIS.json` and `ROOT_CAUSE_VERDICT.json` with
   `DIAGNOSIS_READY`;
 - `SELECTED_PRINCIPLE.yaml` materialized by the Controller after accepted
-  convergence;
+  convergence, including its exact origin/alignment, Target novelty, accepted
+  assumptions/predictions/updates, Evidence closure, and boundaries;
 - the Controller-exposed return/validation feedback directed to
   `method_refinement`, if any.
 

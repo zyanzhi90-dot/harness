@@ -1042,6 +1042,7 @@ def validate_method_design_packet(
     root_cause_analysis_id: str,
     root_cause_analysis_sha256: str,
     primary_causal_chain_ids: set[str],
+    rival_rca_ids: set[str] | None = None,
     current_evidence_ids: set[str] | None = None,
     required_history_refs: set[str] | None = None,
     required_return_ref: str | None = None,
@@ -1708,6 +1709,24 @@ def validate_method_design_packet(
             raise ValidationError(f"search-space closure {index} cross-domain outcome does not match retained Sources")
     _required_text(search["closure_rationale"], "method design packet.principle_search_record.closure_rationale")
 
+    constraint_assessment = _require_mapping(
+        packet["solution_space_constraint_assessment"],
+        "method design packet.solution_space_constraint_assessment",
+    )
+    _require_fields(
+        constraint_assessment,
+        tuple(contract["solution_space_constraint_assessment_fields"]),
+        "method design packet.solution_space_constraint_assessment",
+    )
+    if constraint_assessment["disposition"] not in set(
+        contract["solution_space_constraint_disposition_enum"]
+    ):
+        raise ValidationError("method design packet has an invalid solution-space constraint disposition")
+    if not isinstance(constraint_assessment["constraint_basis"], (str, list, dict)) or (
+        constraint_assessment["constraint_basis"] in ("", [], {})
+    ):
+        raise ValidationError("method design packet.solution_space_constraint_assessment.constraint_basis must be non-empty")
+
     principles = _require_list(packet, "candidate_principles", "method design packet", non_empty=True)
     principle_keys: set[tuple[str, str]] = set()
     principle_by_key: dict[tuple[str, str], dict[str, Any]] = {}
@@ -1715,7 +1734,7 @@ def validate_method_design_packet(
     prediction_ids: dict[tuple[str, str], set[str]] = {}
     prediction_assumptions: dict[tuple[str, str], dict[str, set[str]]] = {}
     derived_sources_by_candidate: dict[tuple[str, str], set[tuple[str, str]]] = {}
-    pending_discrimination_refs: list[tuple[str, set[str]]] = []
+    pending_rival_principle_refs: list[tuple[str, str, str]] = []
     statuses = set(contract["candidate_status_enum"])
     for index, raw in enumerate(principles, 1):
         item = _require_mapping(raw, f"candidate principle {index}")
@@ -1869,26 +1888,34 @@ def validate_method_design_packet(
             if not bound_assumptions <= assumption_ids[key]:
                 raise ValidationError(f"candidate principle {index} prediction {number} references an unknown assumption")
             prediction_assumptions[key][prediction["prediction_id"]] = bound_assumptions
-            _required_text(
-                prediction["predicted_observation"],
-                f"candidate principle {index} prediction {number}.predicted_observation",
-            )
-            if not isinstance(prediction["activation_conditions"], (str, list, dict)) or prediction["activation_conditions"] in ("", [], {}):
+            for field in (
+                "observable", "pattern_a", "rival_id", "pattern_b", "killer_criterion",
+                "cheapest_informative_rationale",
+            ):
+                _required_text(
+                    prediction[field],
+                    f"candidate principle {index} prediction {number}.{field}",
+                )
+            if prediction["rival_type"] not in set(contract["prediction_rival_type_enum"]):
                 raise ValidationError(
-                    f"candidate principle {index} prediction {number}.activation_conditions must be non-empty"
+                    f"candidate principle {index} prediction {number}.rival_type is invalid"
                 )
-            pending_discrimination_refs.append(
-                (
-                    f"candidate principle {index} prediction {number}",
-                    set(
-                        _unique_string_values(
-                            prediction["discriminates_from_principle_ids"],
-                            f"candidate principle {index} prediction {number}.discriminates_from_principle_ids",
-                            non_empty=False,
-                        )
-                    ),
+            if not isinstance(prediction["activation_condition"], (str, list, dict)) or prediction["activation_condition"] in ("", [], {}):
+                raise ValidationError(
+                    f"candidate principle {index} prediction {number}.activation_condition must be non-empty"
                 )
-            )
+            if prediction["rival_type"] == "PRINCIPLE":
+                pending_rival_principle_refs.append(
+                    (
+                        f"candidate principle {index} prediction {number}",
+                        principle_id,
+                        str(prediction["rival_id"]),
+                    )
+                )
+            elif rival_rca_ids is not None and str(prediction["rival_id"]) not in rival_rca_ids:
+                raise ValidationError(
+                    f"candidate principle {index} prediction {number} references an unknown Rival RCA"
+                )
         evidence_refs = _unique_string_values(item["evidence_refs"], f"candidate principle {index}.evidence_refs", non_empty=False)
         if current_evidence_ids is not None and not set(evidence_refs) <= current_evidence_ids:
             raise ValidationError(f"candidate principle {index} cites Evidence outside the current formal context")
@@ -1994,14 +2021,21 @@ def validate_method_design_packet(
             raise ValidationError(f"candidate principle {index}.status is invalid")
 
     known_principle_ids = {principle_id for principle_id, _ in principle_keys}
-    for label, refs in pending_discrimination_refs:
-        if not refs <= known_principle_ids:
-            raise ValidationError(f"{label} discriminates against an unknown Principle")
+    for label, principle_id, rival_id in pending_rival_principle_refs:
+        if rival_id not in known_principle_ids or rival_id == principle_id:
+            raise ValidationError(f"{label} references an unknown or self Rival Principle")
 
     active_keys = {key for key, item in principle_by_key.items() if item["status"] in {"ACTIVE", "REVISED", "WEAKENED"}}
     if not active_keys:
         raise ValidationError("method design packet must retain at least one active Candidate Principle")
     active_candidates = [principle_by_key[key] for key in active_keys]
+    if (
+        constraint_assessment["disposition"] == "UNDERCONSTRAINED"
+        and len(active_candidates) < 2
+    ):
+        raise ValidationError(
+            "UNDERCONSTRAINED solution space requires multiple active Candidate Principles"
+        )
     for field, required_ids in (
         ("mechanism_change_ids", mechanism_ids),
         ("capability_ids", capability_ids),
@@ -2055,6 +2089,10 @@ def render_method_design_view(packet: dict[str, Any]) -> str:
         f"Design cycle: `{packet['design_cycle_id']}`",
         "",
         "This packet presents Candidate Principles for Human discussion and selection. It does not contain a test plan, execution set, or cost approval.",
+        "",
+        "**Solution-space constraint.** "
+        f"{packet['solution_space_constraint_assessment']['disposition']}: "
+        f"{packet['solution_space_constraint_assessment']['constraint_basis']}",
     ]
     for candidate in packet["candidate_principles"]:
         lines.extend(
@@ -2074,6 +2112,13 @@ def render_method_design_view(packet: dict[str, Any]) -> str:
                 ),
                 "",
                 f"**Substantive difference.** {candidate['substantive_difference']}",
+                "",
+                "**Killer-test concepts.** " + "; ".join(
+                    f"{item['observable']}: Pattern A={item['pattern_a']} vs "
+                    f"{item['rival_type']} {item['rival_id']} Pattern B={item['pattern_b']} "
+                    f"under {item['activation_condition']}"
+                    for item in candidate["predictions"]
+                ),
                 "",
                 f"**Status.** {candidate['status']}: {candidate['status_rationale']}",
             ]
@@ -2153,6 +2198,13 @@ def validate_principle_test_plan(
             tuple(contract["discriminating_test_required_fields"]),
             f"Principle test {index}",
         )
+        killer_ref = _required_text(
+            item["killer_test_concept_ref"],
+            f"Principle test {index}.killer_test_concept_ref",
+        )
+        if killer_ref not in prediction_by_id:
+            raise ValidationError(f"Principle test {index} cites an unknown killer-test concept")
+        concept = prediction_by_id[killer_ref]
         for field in ("test_type", "operationalization", "information_gain", "falsification_criterion"):
             _required_text(item[field], f"Principle test {index}.{field}")
         if item["evidence_tier"] not in tiers:
@@ -2164,6 +2216,38 @@ def validate_principle_test_plan(
             or item["test_only_concrete_realization"] in ("", {})
         ):
             raise ValidationError(f"Principle test {index}.test_only_concrete_realization is invalid")
+        observation = _require_mapping(
+            item["observation_contract"], f"Principle test {index}.observation_contract"
+        )
+        _require_fields(
+            observation,
+            tuple(contract["observation_contract_fields"]),
+            f"Principle test {index}.observation_contract",
+        )
+        expected_observation = {
+            "observable": concept["observable"],
+            "pattern_a": concept["pattern_a"],
+            "rival_type": concept["rival_type"],
+            "rival_id": concept["rival_id"],
+            "pattern_b": concept["pattern_b"],
+            "activation_condition": concept["activation_condition"],
+        }
+        if observation != expected_observation:
+            raise ValidationError(
+                f"Principle test {index} does not preserve its Candidate/Rival Pattern A/B concept"
+            )
+        terminal_criteria = _require_mapping(
+            item["terminal_criteria"], f"Principle test {index}.terminal_criteria"
+        )
+        _require_fields(
+            terminal_criteria,
+            tuple(contract["terminal_criteria_fields"]),
+            f"Principle test {index}.terminal_criteria",
+        )
+        for field in contract["terminal_criteria_fields"]:
+            _required_text(
+                terminal_criteria[field], f"Principle test {index}.terminal_criteria.{field}"
+            )
         targets = _require_list(item, "targets", f"Principle test {index}", non_empty=True)
         seen_targets: set[tuple[str, ...]] = set()
         for number, raw_target in enumerate(targets, 1):
@@ -2179,6 +2263,10 @@ def validate_principle_test_plan(
             prediction_id = str(target["prediction_id"])
             if assumption_id not in assumption_ids or prediction_id not in prediction_by_id:
                 raise ValidationError(f"Principle test {index} targets an unknown assumption or prediction")
+            if prediction_id != killer_ref:
+                raise ValidationError(
+                    f"Principle test {index} target does not match its killer-test concept"
+                )
             if assumption_id not in {
                 str(value) for value in prediction_by_id[prediction_id]["assumption_ids"]
             }:
@@ -2270,6 +2358,10 @@ def render_principle_test_plan_view(plan: dict[str, Any]) -> str:
                 f"## {test['test_id']} · {test['evidence_tier']}",
                 "",
                 f"**Operationalization.** {test['operationalization']}",
+                "",
+                f"**Pattern A.** {test['observation_contract']['pattern_a']}",
+                "",
+                f"**Pattern B ({test['observation_contract']['rival_type']} {test['observation_contract']['rival_id']}).** {test['observation_contract']['pattern_b']}",
                 "",
                 f"**Information gain.** {test['information_gain']}",
                 "",
@@ -2469,7 +2561,10 @@ def validate_principle_evaluation(
     cycle_id: str,
     execution_set_id: str,
     evidence_context_ref: dict[str, str],
-    candidate_principles: set[tuple[str, str]],
+    test_plan: dict[str, Any],
+    candidate: dict[str, Any],
+    root_cause_analysis_id: str,
+    necessity_residual_ids: set[str],
     current_evidence_refs: set[str],
     required_history_refs: set[str] | None = None,
     required_return_ref: str | None = None,
@@ -2484,37 +2579,179 @@ def validate_principle_evaluation(
         raise ValidationError("Principle evaluation does not match the active cycle")
     if evaluation["evidence_context_ref"] != evidence_context_ref:
         raise ValidationError("Principle evaluation does not bind the active Evidence Context")
-    for field in (
-        "operationalization_assessments",
-        "test_validity_assessments",
-        "activation_condition_assessments",
-        "prediction_comparisons",
-    ):
-        _require_list(evaluation, field, "Principle evaluation", non_empty=True)
-    updates = _require_list(evaluation, "principle_updates", "Principle evaluation", non_empty=True)
-    decisions = set(contract["principle_update_decisions"])
-    seen: set[tuple[str, str]] = set()
-    for index, raw in enumerate(updates, 1):
-        update = _require_mapping(raw, f"Principle update {index}")
-        _require_fields(update, tuple(contract["principle_update_fields"]), f"Principle update {index}")
-        key = (str(update["principle_id"]), str(update["principle_version"]))
-        if key not in candidate_principles or key in seen:
-            raise ValidationError("Principle evaluation contains an unknown or duplicate Principle update")
-        seen.add(key)
-        if update["decision"] not in decisions:
-            raise ValidationError(f"Principle update {index}.decision is invalid")
-        refs = set(_unique_string_values(update["evidence_refs"], f"Principle update {index}.evidence_refs", non_empty=False))
-        if not refs <= current_evidence_refs:
-            raise ValidationError(f"Principle update {index} cites Evidence outside the active Context")
-        if update["decision"] in {"SUPPORTED", "EXTENDED", "WEAKENED", "MERGED", "RETIRED", "REJECTED"} and not refs:
-            raise ValidationError(
-                f"Principle update {index}.{update['decision']} requires current Evidence; NO_RESULT alone cannot support or reject a Principle"
+    tests = {
+        str(item["test_id"]): item for item in test_plan["discriminating_tests"]
+    }
+    if set(tests) != set(test_plan["recommended_execution_set"]["test_ids"]):
+        raise ValidationError("Principle evaluation Test Plan does not resolve the approved execution set")
+    predictions = {
+        str(item["prediction_id"]): item for item in candidate["predictions"]
+    }
+
+    def validate_test_assessment_list(
+        field: str,
+        fields_contract: str,
+        status_field: str,
+        status_contract: str,
+    ) -> None:
+        items = _require_list(evaluation, field, "Principle evaluation", non_empty=True)
+        covered = _unique_ids(items, "test_id", f"Principle evaluation.{field}")
+        if covered != set(tests):
+            raise ValidationError(f"Principle evaluation.{field} must cover every approved test")
+        allowed = set(contract[status_contract])
+        for index, raw in enumerate(items, 1):
+            item = _require_mapping(raw, f"Principle evaluation.{field} item {index}")
+            _require_fields(
+                item,
+                tuple(contract[fields_contract]),
+                f"Principle evaluation.{field} item {index}",
             )
-        _required_text(update["rationale"], f"Principle update {index}.rationale")
-        _unique_string_values(update["updated_boundary_or_assumption_refs"], f"Principle update {index}.updated_boundary_or_assumption_refs", non_empty=False)
-    if seen != candidate_principles:
-        raise ValidationError("Principle evaluation must update every active Candidate Principle version")
-    _require_list(evaluation, "rca_conflicts", "Principle evaluation")
+            if item[status_field] not in allowed:
+                raise ValidationError(
+                    f"Principle evaluation.{field} item {index}.{status_field} is invalid"
+                )
+            refs = set(
+                _unique_string_values(
+                    item["evidence_refs"],
+                    f"Principle evaluation.{field} item {index}.evidence_refs",
+                    non_empty=False,
+                )
+            )
+            if not refs <= current_evidence_refs:
+                raise ValidationError(
+                    f"Principle evaluation.{field} item {index} cites Evidence outside the active Context"
+                )
+            _required_text(item["rationale"], f"Principle evaluation.{field} item {index}.rationale")
+
+    validate_test_assessment_list(
+        "operationalization_assessments",
+        "operationalization_assessment_fields",
+        "status",
+        "operationalization_status_enum",
+    )
+    validate_test_assessment_list(
+        "test_validity_assessments",
+        "test_validity_assessment_fields",
+        "status",
+        "test_validity_status_enum",
+    )
+    for index, item in enumerate(evaluation["test_validity_assessments"], 1):
+        if item["discriminativeness"] not in set(contract["test_discriminativeness_enum"]):
+            raise ValidationError(
+                f"Principle evaluation.test_validity_assessments item {index}.discriminativeness is invalid"
+            )
+    validate_test_assessment_list(
+        "activation_condition_assessments",
+        "activation_condition_assessment_fields",
+        "status",
+        "activation_status_enum",
+    )
+    for index, item in enumerate(evaluation["activation_condition_assessments"], 1):
+        test = tests[str(item["test_id"])]
+        if str(item["prediction_id"]) != str(test["killer_test_concept_ref"]):
+            raise ValidationError(
+                f"Principle evaluation.activation_condition_assessments item {index} has a stale prediction binding"
+            )
+
+    comparisons = _require_list(
+        evaluation, "prediction_comparisons", "Principle evaluation", non_empty=True
+    )
+    comparison_tests = _unique_ids(
+        comparisons, "test_id", "Principle evaluation.prediction_comparisons"
+    )
+    if comparison_tests != set(tests):
+        raise ValidationError("Principle evaluation.prediction_comparisons must cover every approved test")
+    for index, raw in enumerate(comparisons, 1):
+        item = _require_mapping(raw, f"Principle evaluation prediction comparison {index}")
+        _require_fields(
+            item,
+            tuple(contract["prediction_comparison_fields"]),
+            f"Principle evaluation prediction comparison {index}",
+        )
+        test = tests[str(item["test_id"])]
+        prediction_id = str(item["prediction_id"])
+        if prediction_id != str(test["killer_test_concept_ref"]) or prediction_id not in predictions:
+            raise ValidationError(
+                f"Principle evaluation prediction comparison {index} has a stale prediction binding"
+            )
+        concept = predictions[prediction_id]
+        for field in ("observable", "rival_type", "rival_id"):
+            if item[field] != concept[field]:
+                raise ValidationError(
+                    f"Principle evaluation prediction comparison {index}.{field} does not match the reviewed killer-test concept"
+                )
+        if item["rival_discrimination"] not in set(contract["rival_discrimination_enum"]):
+            raise ValidationError(
+                f"Principle evaluation prediction comparison {index}.rival_discrimination is invalid"
+            )
+        refs = set(
+            _unique_string_values(
+                item["evidence_refs"],
+                f"Principle evaluation prediction comparison {index}.evidence_refs",
+                non_empty=False,
+            )
+        )
+        if not refs <= current_evidence_refs:
+            raise ValidationError(
+                f"Principle evaluation prediction comparison {index} cites Evidence outside the active Context"
+            )
+        _required_text(item["observed_pattern"], f"Principle evaluation prediction comparison {index}.observed_pattern")
+        _required_text(item["rationale"], f"Principle evaluation prediction comparison {index}.rationale")
+
+    principle_key = f"{candidate['principle_id']}@{candidate['principle_version']}"
+    assumption_ids = {
+        str(item["assumption_id"]) for item in candidate["fatal_assumptions"]
+    }
+    rival_principle_ids = {
+        str(item["rival_id"])
+        for item in candidate["predictions"]
+        if item["rival_type"] == "PRINCIPLE"
+    }
+    rival_rca_ids = {
+        str(item["rival_id"])
+        for item in candidate["predictions"]
+        if item["rival_type"] == "RIVAL_RCA"
+    }
+    valid_targets = {
+        "PRINCIPLE": {principle_key},
+        "ASSUMPTION": assumption_ids,
+        "SOURCE_TARGET_MAPPING": ({str(candidate["alignment_ref_id"])} if candidate.get("alignment_ref_id") else set()),
+        "TARGET_OPERATIONALIZATION": {principle_key},
+        "APPLICABILITY_BOUNDARY": {principle_key},
+        "RIVAL_PRINCIPLE": rival_principle_ids,
+        "RIVAL_RCA": rival_rca_ids,
+        "ROOT_CAUSE": {root_cause_analysis_id},
+        "NECESSITY_RESIDUAL_ENVELOPE": set(necessity_residual_ids),
+    }
+    updates = _require_list(
+        evaluation, "scientific_updates", "Principle evaluation", non_empty=True
+    )
+    _unique_ids(updates, "update_id", "Principle evaluation.scientific_updates")
+    target_types = set(contract["scientific_update_target_type_enum"])
+    consequences = set(contract["scientific_update_consequence_enum"])
+    for index, raw in enumerate(updates, 1):
+        update = _require_mapping(raw, f"Scientific update {index}")
+        _require_fields(
+            update, tuple(contract["scientific_update_fields"]), f"Scientific update {index}"
+        )
+        target_type = update["target_type"]
+        target_id = _required_text(update["target_id"], f"Scientific update {index}.target_id")
+        if target_type not in target_types:
+            raise ValidationError(f"Scientific update {index}.target_type is invalid")
+        if target_id not in valid_targets[target_type]:
+            raise ValidationError(f"Scientific update {index} has a stale or unknown target binding")
+        if update["consequence"] not in consequences:
+            raise ValidationError(f"Scientific update {index}.consequence is invalid")
+        if update["before"] is None or update["proposed_after"] is None:
+            raise ValidationError(f"Scientific update {index} requires before and proposed_after")
+        refs = set(
+            _unique_string_values(
+                update["evidence_refs"], f"Scientific update {index}.evidence_refs", non_empty=False
+            )
+        )
+        if not refs <= current_evidence_refs:
+            raise ValidationError(f"Scientific update {index} cites Evidence outside the active Context")
+        _required_text(update["rationale"], f"Scientific update {index}.rationale")
     _require_list(evaluation, "remaining_uncertainties", "Principle evaluation")
     history_refs = set(_unique_string_values(evaluation["relevant_history_refs"], "Principle evaluation.relevant_history_refs", non_empty=False))
     if not set(required_history_refs or set()) <= history_refs:
@@ -2532,9 +2769,16 @@ def validate_selected_principle(
     expected_principle_id: str,
     expected_principle_version: str,
     packet: dict[str, Any],
+    evaluation: dict[str, Any],
+    accepted_boundary_update_ids: set[str],
 ) -> dict[str, Any]:
     selected = _require_mapping(payload, "Selected Principle")
-    _require_fields(selected, tuple(contract["required_fields"]), "Selected Principle")
+    selected_fields = tuple(
+        field for field in contract["required_fields"] if field != "intervention_alignment"
+    )
+    _require_fields(selected, selected_fields, "Selected Principle")
+    if "intervention_alignment" not in selected:
+        raise ValidationError("Selected Principle is missing intervention_alignment")
     if selected["schema_version"] != contract.get("schema_version", 1):
         raise ValidationError("Selected Principle schema_version is invalid")
     if (
@@ -2553,13 +2797,55 @@ def validate_selected_principle(
     )
     if candidate is None:
         raise ValidationError("Selected Principle is not a reviewed Candidate version")
+    origin_binding = {
+        "origin_type": candidate["origin_type"],
+        "origin_ref_id": candidate["origin_ref_id"],
+        "alignment_ref_id": candidate["alignment_ref_id"],
+    }
+    if selected["origin_binding"] != origin_binding:
+        raise ValidationError("Selected Principle.origin_binding does not match the reviewed Candidate")
+    search = packet["principle_search_record"]
+    if candidate["origin_type"] == "FIRST_PRINCIPLES":
+        origin_records = search["first_principles"]
+    elif candidate["origin_type"] == "REPRESENTATION_TRANSFORMATION":
+        origin_records = search["representation_transformations"]
+    elif candidate["origin_type"] == "SAME_FIELD_SOURCE":
+        origin_records = search["same_field_mechanisms"]
+    else:
+        origin_records = search["cross_domain_structural_isomorphisms"]
+    origin = next(
+        (
+            item
+            for item in origin_records
+            if str(item.get("origin_record_id") or item.get("source_mechanism_id"))
+            == str(candidate["origin_ref_id"])
+        ),
+        None,
+    )
+    if origin is None or selected["origin_closure"] != origin:
+        raise ValidationError("Selected Principle.origin_closure does not match its reviewed origin")
+    expected_alignment = (
+        origin.get("intervention_level_alignment")
+        if candidate["origin_type"] in {"SAME_FIELD_SOURCE", "CROSS_DOMAIN_SOURCE"}
+        else None
+    )
+    if selected["intervention_alignment"] != expected_alignment:
+        raise ValidationError("Selected Principle.intervention_alignment does not match its reviewed origin")
     expected_fields = {
+        "principle": candidate["principle"],
+        "intervention": candidate["intervention"],
+        "changed_structure": candidate["changed_structure"],
         "problem_binding": packet["problem_binding"],
         "root_cause_binding": packet["root_cause_binding"],
         "causal_chain_ids": candidate["causal_chain_ids"],
         "mechanism_change_ids": candidate["mechanism_change_ids"],
         "capability_ids": candidate["capability_ids"],
         "obligation_ids": candidate["obligation_ids"],
+        "target_intervention_novelty": candidate["target_intervention_novelty"],
+        "accepted_assumptions": candidate["fatal_assumptions"],
+        "accepted_predictions": candidate["predictions"],
+        "provisional_scientific_delta": candidate["provisional_scientific_delta"],
+        "accepted_scientific_updates": evaluation["scientific_updates"],
         "activation_conditions": candidate["activation_conditions"],
         "failure_conditions": candidate["failure_conditions"],
     }
@@ -2568,6 +2854,27 @@ def validate_selected_principle(
             raise ValidationError(f"Selected Principle.{field} does not match the reviewed Candidate")
     if not isinstance(selected["evidence_closure"], (dict, list)) or not selected["evidence_closure"]:
         raise ValidationError("Selected Principle.evidence_closure must be non-empty")
+    updates_by_id = {
+        str(item["update_id"]): item for item in evaluation["scientific_updates"]
+    }
+    if not accepted_boundary_update_ids <= set(updates_by_id):
+        raise ValidationError("Selected Principle cites an unknown accepted boundary update")
+    if any(
+        updates_by_id[update_id]["consequence"] != "UPDATE_BOUNDARY"
+        for update_id in accepted_boundary_update_ids
+    ):
+        raise ValidationError("Selected Principle boundary acceptance may contain only UPDATE_BOUNDARY records")
+    expected_boundaries = {
+        "activation_conditions": candidate["activation_conditions"],
+        "failure_conditions": candidate["failure_conditions"],
+        "accepted_boundary_updates": [
+            item
+            for item in evaluation["scientific_updates"]
+            if str(item["update_id"]) in accepted_boundary_update_ids
+        ],
+    }
+    if selected["applicability_boundaries"] != expected_boundaries:
+        raise ValidationError("Selected Principle.applicability_boundaries does not match accepted boundary updates")
     if not isinstance(selected["applicability_boundaries"], (dict, list, str)) or selected["applicability_boundaries"] in ({}, [], ""):
         raise ValidationError("Selected Principle.applicability_boundaries must be non-empty")
     if not isinstance(selected["remaining_uncertainty"], (dict, list, str)):

@@ -549,6 +549,8 @@ def test_formal_negative_verdicts_have_fixed_earlier_return_targets() -> None:
         "MORE_EVIDENCE": "principle_test_design",
         "CANDIDATE_REJECTED": "method_design",
         "RCA_CONFLICT": "root_cause_analysis",
+        "NECESSITY_CONFLICT": "problem_necessity",
+        "PROBLEM_CONFLICT": "problem_generation",
     }
     assert by_phase["final_method_novelty_gate"]["return_targets"] == {
         "REVISE_METHOD_DELTA": "method_refinement",
@@ -563,7 +565,12 @@ def test_formal_test_and_validation_contracts_separate_execution_from_interpreta
     validation = workflow["artifact_contracts"]["validation_result"]
     assert test_contract["terminal_outcomes"] == ["RESULT_AVAILABLE", "NO_RESULT"]
     assert "PRINCIPLE_DECISION_RECORDED" in test_contract["event_types"]
-    assert "principle_updates" in evaluation["required_fields"]
+    assert "scientific_updates" in evaluation["required_fields"]
+    assert evaluation["scientific_update_consequence_enum"] == [
+        "REVISE_EVALUATION", "MORE_EVIDENCE", "UPDATE_BOUNDARY",
+        "RETURN_METHOD_DESIGN", "REOPEN_RCA", "REOPEN_NECESSITY",
+        "REDEFINE_PROBLEM",
+    ]
     assert validation["decision_enum"] == [
         "VALIDATED", "METHOD_REFINEMENT_REQUIRED",
         "SELECTED_PRINCIPLE_REJECTED", "ROOT_CAUSE_REJECTED",

@@ -289,9 +289,14 @@ def method_design_packet(*, cycle_id: str = "DESIGN-1", evidence_refs: list[str]
             "predictions": [{
                 "prediction_id": prediction_id,
                 "assumption_ids": [assumption_id],
-                "predicted_observation": f"observation {suffix}",
-                "activation_conditions": ["declared operating condition"],
-                "discriminates_from_principle_ids": [f"PR-{'B' if suffix == 'A' else 'A'}"],
+                "observable": f"signal {suffix}",
+                "pattern_a": f"observation {suffix}",
+                "rival_type": "PRINCIPLE",
+                "rival_id": f"PR-{'B' if suffix == 'A' else 'A'}",
+                "pattern_b": f"observation {'B' if suffix == 'A' else 'A'}",
+                "activation_condition": "declared operating condition",
+                "killer_criterion": f"Pattern A is absent for Principle {suffix}",
+                "cheapest_informative_rationale": "One bounded observation distinguishes the mechanisms.",
             }],
             "evidence_refs": evidence_refs if source_origin else [],
             "status": "ACTIVE",
@@ -435,6 +440,10 @@ def method_design_packet(*, cycle_id: str = "DESIGN-1", evidence_refs: list[str]
             }],
             "closure_rationale": "all declared search families were recorded",
         },
+        "solution_space_constraint_assessment": {
+            "disposition": "UNDERCONSTRAINED",
+            "constraint_basis": "The accepted RMC permits multiple distinct intervention mechanisms.",
+        },
         "candidate_principles": principles,
         "relevant_history_refs": [],
         "return_feedback_refs": [],
@@ -540,8 +549,22 @@ def principle_test_plan(
             "test_id": "TEST-FATAL-A",
             "test_type": "existing_data_probe",
             "evidence_tier": "EXISTING_DATA_ANALYSIS",
+            "killer_test_concept_ref": "PRED-A",
             "operationalization": "Measure the selected Candidate's predicted signal.",
             "test_only_concrete_realization": {"probe": "bounded analysis"},
+            "observation_contract": {
+                "observable": "signal A",
+                "pattern_a": "observation A",
+                "rival_type": "PRINCIPLE",
+                "rival_id": "PR-B",
+                "pattern_b": "observation B",
+                "activation_condition": "declared operating condition",
+            },
+            "terminal_criteria": {
+                "pattern_a_criterion": "The observation matches Pattern A.",
+                "pattern_b_criterion": "The observation matches Pattern B.",
+                "inconclusive_criterion": "Neither bounded pattern is resolved.",
+            },
             "targets": [{
                 "principle_id": "PR-A",
                 "principle_version": "1",
@@ -589,6 +612,75 @@ def test_method_design_packet_closes_rmc_capability_obligation_and_candidate_bin
     candidate_with_tests["candidate_principles"][0]["proposed_test_ids"] = ["TEST-OLD"]
     with pytest.raises(ValidationError, match="must not contain test design fields"):
         validate_packet_fixture(candidate_with_tests)
+
+
+def test_solution_space_constraint_controls_real_competition_without_a_candidate_quota() -> None:
+    packet = method_design_packet()
+    packet["candidate_principles"] = packet["candidate_principles"][:1]
+    packet["candidate_principles"][0]["predictions"][0].update(
+        rival_type="RIVAL_RCA", rival_id="ALT-1", pattern_b="alternative RCA pattern"
+    )
+    with pytest.raises(ValidationError, match="UNDERCONSTRAINED.*multiple"):
+        validate_packet_fixture(packet)
+
+    packet["solution_space_constraint_assessment"] = {
+        "disposition": "CONSTRAINED",
+        "constraint_basis": "Only one intervention position remains compatible with the accepted RMC.",
+    }
+    validated = validate_packet_fixture(packet)
+    assert validated["principle_keys"] == [("PR-A", "1")]
+
+    semantically_false = method_design_packet()
+    semantically_false["solution_space_constraint_assessment"] = {
+        "disposition": "CONSTRAINED",
+        "constraint_basis": "Both Candidates use different optimizer names.",
+    }
+    validate_packet_fixture(semantically_false)
+    reviewer = (REPO / ".codex" / "agents" / "independent_method_reviewer.toml").read_text(encoding="utf-8")
+    assert "module differences do not create competition" in reviewer
+
+
+def test_killer_concept_stays_pre_selection_and_concrete_test_consumes_pattern_binding() -> None:
+    packet = method_design_packet()
+    candidate = packet["candidate_principles"][0]
+    candidate["test_operationalization"] = "premature concrete procedure"
+    with pytest.raises(ValidationError, match="must not contain test design fields"):
+        validate_packet_fixture(packet)
+
+    workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+    selection = {
+        "selection_request_id": "selection-1", "principle_id": "PR-A",
+        "principle_version": "1",
+        "method_design_packet": {"path": "idea-stage/METHOD_DESIGN_PACKET.json", "sha256": "a" * 64},
+        "method_design_review": {"path": "idea-stage/METHOD_DESIGN_REVIEW.json", "sha256": "b" * 64},
+    }
+    plan = principle_test_plan(selection)
+    validate_principle_test_plan(
+        plan,
+        contract=workflow["artifact_contracts"]["principle_test_plan"],
+        selected_for_testing=selection,
+        candidate=method_design_packet()["candidate_principles"][0],
+    )
+    stale = deepcopy(plan)
+    stale["discriminating_tests"][0]["observation_contract"]["pattern_b"] = "post-selection rival rewrite"
+    with pytest.raises(ValidationError, match="Pattern A/B"):
+        validate_principle_test_plan(
+            stale,
+            contract=workflow["artifact_contracts"]["principle_test_plan"],
+            selected_for_testing=selection,
+            candidate=method_design_packet()["candidate_principles"][0],
+        )
+
+    performance_only = deepcopy(plan)
+    performance_only["discriminating_tests"][0]["information_gain"] = "Reports aggregate performance only."
+    validate_principle_test_plan(
+        performance_only,
+        contract=workflow["artifact_contracts"]["principle_test_plan"],
+        selected_for_testing=selection,
+        candidate=method_design_packet()["candidate_principles"][0],
+    )
+    reviewer = (REPO / ".codex" / "agents" / "independent_method_reviewer.toml").read_text(encoding="utf-8")
+    assert "performance-only ablation is not automatically discriminating" in reviewer
 
 
 def test_derivation_origins_need_no_literature_query_and_scientific_quality_is_reviewer_owned() -> None:
@@ -929,22 +1021,32 @@ def test_terminal_result_identity_and_no_result_do_not_mechanically_reject_a_pri
         "cycle_id": "CYCLE-1",
         "execution_set_id": "EXEC-CYCLE-1",
         "evidence_context_ref": {"path": "idea-stage/PRINCIPLE_EVIDENCE_CONTEXT.json", "sha256": "d" * 64},
-        "operationalization_assessments": ["no usable result"],
-        "test_validity_assessments": ["execution was terminal but uninformative"],
-        "activation_condition_assessments": ["not mechanically decided"],
-        "prediction_comparisons": ["no comparison available"],
-        "principle_updates": [
-            {
-                "principle_id": principle_id,
-                "principle_version": "1",
-                "evidence_refs": [],
-                "decision": "UNCHANGED",
-                "rationale": "NO_RESULT carries no Principle judgment.",
-                "updated_boundary_or_assumption_refs": [],
-            }
-            for principle_id in ("PR-A", "PR-B")
-        ],
-        "rca_conflicts": [],
+        "operationalization_assessments": [{
+            "test_id": "TEST-FATAL-A", "status": "UNRESOLVED", "evidence_refs": [],
+            "rationale": "No usable result was produced.",
+        }],
+        "test_validity_assessments": [{
+            "test_id": "TEST-FATAL-A", "status": "UNRESOLVED",
+            "discriminativeness": "UNRESOLVED", "evidence_refs": [],
+            "rationale": "The terminal outcome was uninformative.",
+        }],
+        "activation_condition_assessments": [{
+            "test_id": "TEST-FATAL-A", "prediction_id": "PRED-A",
+            "status": "UNRESOLVED", "evidence_refs": [],
+            "rationale": "Activation was not observed.",
+        }],
+        "prediction_comparisons": [{
+            "test_id": "TEST-FATAL-A", "prediction_id": "PRED-A",
+            "observable": "signal A", "observed_pattern": "No result",
+            "rival_type": "PRINCIPLE", "rival_id": "PR-B",
+            "rival_discrimination": "INCONCLUSIVE", "evidence_refs": [],
+            "rationale": "No Pattern A/B comparison is available.",
+        }],
+        "scientific_updates": [{
+            "update_id": "UPDATE-1", "target_type": "PRINCIPLE", "target_id": "PR-A@1",
+            "before": "untested", "proposed_after": "unresolved", "evidence_refs": [],
+            "consequence": "MORE_EVIDENCE", "rationale": "NO_RESULT carries no Principle judgment.",
+        }],
         "remaining_uncertainties": ["test remains unresolved"],
         "relevant_history_refs": [],
         "return_feedback_refs": [],
@@ -955,27 +1057,52 @@ def test_terminal_result_identity_and_no_result_do_not_mechanically_reject_a_pri
         cycle_id="CYCLE-1",
         execution_set_id="EXEC-CYCLE-1",
         evidence_context_ref=evaluation["evidence_context_ref"],
-        candidate_principles={("PR-A", "1"), ("PR-B", "1")},
+        test_plan=principle_test_plan({
+            "selection_request_id": "selection-1", "principle_id": "PR-A",
+            "principle_version": "1",
+            "method_design_packet": {"path": "idea-stage/METHOD_DESIGN_PACKET.json", "sha256": "a" * 64},
+            "method_design_review": {"path": "idea-stage/METHOD_DESIGN_REVIEW.json", "sha256": "b" * 64},
+        }),
+        candidate=method_design_packet()["candidate_principles"][0],
+        root_cause_analysis_id="RCA-1",
+        necessity_residual_ids={"RF-1"},
         current_evidence_refs=set(),
     )
     rejected = deepcopy(evaluation)
-    rejected["principle_updates"][0]["decision"] = "REJECTED"
-    with pytest.raises(ValidationError, match="NO_RESULT alone cannot support or reject"):
-        validate_principle_evaluation(
-            rejected,
-            contract=workflow["artifact_contracts"]["principle_evaluation"],
-            cycle_id="CYCLE-1",
-            execution_set_id="EXEC-CYCLE-1",
-            evidence_context_ref=evaluation["evidence_context_ref"],
-            candidate_principles={("PR-A", "1"), ("PR-B", "1")},
-            current_evidence_refs=set(),
-        )
+    rejected["scientific_updates"][0]["consequence"] = "RETURN_METHOD_DESIGN"
+    validate_principle_evaluation(
+        rejected,
+        contract=workflow["artifact_contracts"]["principle_evaluation"],
+        cycle_id="CYCLE-1",
+        execution_set_id="EXEC-CYCLE-1",
+        evidence_context_ref=evaluation["evidence_context_ref"],
+        test_plan=principle_test_plan({
+            "selection_request_id": "selection-1", "principle_id": "PR-A",
+            "principle_version": "1",
+            "method_design_packet": {"path": "idea-stage/METHOD_DESIGN_PACKET.json", "sha256": "a" * 64},
+            "method_design_review": {"path": "idea-stage/METHOD_DESIGN_REVIEW.json", "sha256": "b" * 64},
+        }),
+        candidate=method_design_packet()["candidate_principles"][0],
+        root_cause_analysis_id="RCA-1",
+        necessity_residual_ids={"RF-1"},
+        current_evidence_refs=set(),
+    )
+    reviewer = (REPO / ".codex" / "agents" / "independent_method_reviewer.toml").read_text(encoding="utf-8")
+    assert "NO_RESULT` cannot support or reject" in reviewer
 
 
 def test_selected_principle_and_final_proposal_recover_reviewed_obligations() -> None:
     workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))
     packet = method_design_packet()
     candidate = packet["candidate_principles"][0]
+    evaluation = {
+        "scientific_updates": [{
+            "update_id": "UPDATE-BOUNDARY", "target_type": "APPLICABILITY_BOUNDARY",
+            "target_id": "PR-A@1", "before": "broad", "proposed_after": "declared scope",
+            "evidence_refs": ["results/principle.json"], "consequence": "UPDATE_BOUNDARY",
+            "rationale": "The bound Evidence supports this boundary.",
+        }]
+    }
     selected = {
         "schema_version": 1,
         "principle_id": "PR-A",
@@ -989,10 +1116,26 @@ def test_selected_principle_and_final_proposal_recover_reviewed_obligations() ->
         "mechanism_change_ids": candidate["mechanism_change_ids"],
         "capability_ids": candidate["capability_ids"],
         "obligation_ids": candidate["obligation_ids"],
+        "origin_binding": {
+            "origin_type": candidate["origin_type"],
+            "origin_ref_id": candidate["origin_ref_id"],
+            "alignment_ref_id": candidate["alignment_ref_id"],
+        },
+        "origin_closure": packet["principle_search_record"]["first_principles"][0],
+        "intervention_alignment": None,
+        "target_intervention_novelty": candidate["target_intervention_novelty"],
+        "accepted_assumptions": candidate["fatal_assumptions"],
+        "accepted_predictions": candidate["predictions"],
+        "provisional_scientific_delta": candidate["provisional_scientific_delta"],
+        "accepted_scientific_updates": evaluation["scientific_updates"],
         "evidence_closure": {"evidence_refs": ["results/principle.json"]},
         "activation_conditions": candidate["activation_conditions"],
         "failure_conditions": candidate["failure_conditions"],
-        "applicability_boundaries": ["declared scope"],
+        "applicability_boundaries": {
+            "activation_conditions": candidate["activation_conditions"],
+            "failure_conditions": candidate["failure_conditions"],
+            "accepted_boundary_updates": evaluation["scientific_updates"],
+        },
         "remaining_uncertainty": ["external validity"],
     }
     validate_selected_principle(
@@ -1001,6 +1144,8 @@ def test_selected_principle_and_final_proposal_recover_reviewed_obligations() ->
         expected_principle_id="PR-A",
         expected_principle_version="1",
         packet=packet,
+        evaluation=evaluation,
+        accepted_boundary_update_ids={"UPDATE-BOUNDARY"},
     )
     required_sections = workflow["artifact_contracts"]["final_proposal"]["required_sections"]
     proposal = "\n\n".join(
@@ -2578,6 +2723,7 @@ def json_review_payload(
     }
     if selected_principle is not None:
         payload["selected_principle_id"], payload["selected_principle_version"] = selected_principle
+        payload["accepted_boundary_update_ids"] = ["UPDATE-PR-A"]
     return payload
 
 
@@ -2728,19 +2874,33 @@ def principle_evaluation_payload(controller: ARISController) -> dict:
         "cycle_id": cycle["cycle_id"],
         "execution_set_id": cycle["execution_set_id"],
         "evidence_context_ref": dict(context),
-        "operationalization_assessments": ["operationalization held"],
-        "test_validity_assessments": ["test valid"],
-        "activation_condition_assessments": ["condition active"],
-        "prediction_comparisons": ["PR-A prediction was tested against the falsification criterion"],
-        "principle_updates": [{
-            "principle_id": "PR-A",
-            "principle_version": "1",
-            "evidence_refs": [evidence_path],
-            "decision": "SUPPORTED",
-            "rationale": "bound result updates the Human-selected Candidate",
-            "updated_boundary_or_assumption_refs": ["ASM-A"],
+        "operationalization_assessments": [{
+            "test_id": "TEST-FATAL-A", "status": "FAITHFUL",
+            "evidence_refs": [evidence_path], "rationale": "The approved observable was measured.",
         }],
-        "rca_conflicts": [],
+        "test_validity_assessments": [{
+            "test_id": "TEST-FATAL-A", "status": "VALID",
+            "discriminativeness": "DISCRIMINATING", "evidence_refs": [evidence_path],
+            "rationale": "The result separates Pattern A from Pattern B.",
+        }],
+        "activation_condition_assessments": [{
+            "test_id": "TEST-FATAL-A", "prediction_id": "PRED-A", "status": "HELD",
+            "evidence_refs": [evidence_path], "rationale": "The declared condition was active.",
+        }],
+        "prediction_comparisons": [{
+            "test_id": "TEST-FATAL-A", "prediction_id": "PRED-A",
+            "observable": "signal A", "observed_pattern": "observation A",
+            "rival_type": "PRINCIPLE", "rival_id": "PR-B",
+            "rival_discrimination": "FAVORS_PATTERN_A", "evidence_refs": [evidence_path],
+            "rationale": "The observed Pattern A differs from the Rival Pattern B.",
+        }],
+        "scientific_updates": [{
+            "update_id": "UPDATE-PR-A", "target_type": "APPLICABILITY_BOUNDARY",
+            "target_id": "PR-A@1", "before": "declared operating envelope",
+            "proposed_after": "declared operating condition with observed activation",
+            "evidence_refs": [evidence_path], "consequence": "UPDATE_BOUNDARY",
+            "rationale": "Current Evidence supports a bounded applicability update.",
+        }],
         "remaining_uncertainties": ["external validity"],
         "relevant_history_refs": sorted(
             run_state._relevant_scientific_history_refs(str(controller.root), state, packet)
@@ -2760,11 +2920,6 @@ def write_and_complete_principle_evaluation(
 ) -> tuple[dict, dict]:
     controller.start_current_phase()
     evaluation = principle_evaluation_payload(controller)
-    if decision == "CANDIDATE_REJECTED":
-        evaluation["principle_updates"][0]["decision"] = "REJECTED"
-        evaluation["principle_updates"][0]["rationale"] = (
-            "Current Evidence falsifies the selected Candidate's fatal assumption."
-        )
     evaluation_path = controller.root / "idea-stage" / "PRINCIPLE_EVALUATION.json"
     evaluation_path.write_text(json.dumps(evaluation), encoding="utf-8")
     request = controller.refresh_current_review_request()
@@ -6857,6 +7012,31 @@ def test_revise_evaluation_reuses_cycle_results_and_equivalent_context_without_r
     assert not (tmp_path / "idea-stage" / "PRINCIPLE_EVIDENCE_CONTEXT.json").exists()
 
 
+def test_principle_evaluation_rejects_missing_test_coverage_and_stale_update_target(
+    tmp_path: Path,
+) -> None:
+    controller = controller_at_method_design(tmp_path)
+    reach_principle_test_human_approval(controller)
+    approve(controller, "principle_test_approval")
+    controller.method_test_handoff()
+    controller.submit_method_test_result(terminal_result(controller))
+    controller.start_current_phase()
+    evaluation = principle_evaluation_payload(controller)
+    path = tmp_path / "idea-stage" / "PRINCIPLE_EVALUATION.json"
+
+    missing_coverage = deepcopy(evaluation)
+    missing_coverage["test_validity_assessments"] = []
+    path.write_text(json.dumps(missing_coverage), encoding="utf-8")
+    with pytest.raises(ControllerError, match="test_validity_assessments"):
+        controller.refresh_current_review_request()
+
+    stale_target = deepcopy(evaluation)
+    stale_target["scientific_updates"][0]["target_id"] = "PR-STALE@9"
+    path.write_text(json.dumps(stale_target), encoding="utf-8")
+    with pytest.raises(ControllerError, match="stale or unknown target"):
+        controller.refresh_current_review_request()
+
+
 def test_accepted_convergence_initializes_acceptance_artifacts_and_materializes_principle(
     tmp_path: Path,
 ) -> None:
@@ -6875,6 +7055,28 @@ def test_accepted_convergence_initializes_acceptance_artifacts_and_materializes_
     phase = run_state._find_phase(accepted, "principle_evaluation")
     assert "idea-stage/SELECTED_PRINCIPLE.yaml" in phase["acceptance_artifacts"]
     assert (tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml").is_file()
+    selected = yaml.safe_load(
+        (tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml").read_text(encoding="utf-8")
+    )
+    assert selected["origin_binding"] == {
+        "origin_type": "FIRST_PRINCIPLES",
+        "origin_ref_id": "FP-1",
+        "alignment_ref_id": None,
+    }
+    assert selected["origin_closure"]["origin_record_id"] == "FP-1"
+    assert selected["intervention_alignment"] is None
+    assert selected["target_intervention_novelty"]["novelty_closure_id"] == "NOVELTY-A"
+    assert selected["accepted_assumptions"][0]["assumption_id"] == "ASM-A"
+    assert selected["accepted_predictions"][0]["prediction_id"] == "PRED-A"
+    assert selected["provisional_scientific_delta"] == "delta A"
+    assert selected["accepted_scientific_updates"][0]["update_id"] == "UPDATE-PR-A"
+    assert selected["applicability_boundaries"]["accepted_boundary_updates"][0][
+        "update_id"
+    ] == "UPDATE-PR-A"
+    assert selected["evidence_closure"]["evidence_context"]["sha256"]
+
+    refine = (REPO / "skills" / "research-refine" / "SKILL.md").read_text(encoding="utf-8")
+    assert "origin/alignment, novelty, assumptions, predictions" in refine
 
 
 def test_principle_convergence_requires_one_selected_principle_id_and_version(
@@ -6906,6 +7108,8 @@ def test_principle_convergence_requires_one_selected_principle_id_and_version(
         ("MORE_EVIDENCE", "principle_test_design"),
         ("CANDIDATE_REJECTED", "method_design"),
         ("RCA_CONFLICT", "root_cause_analysis"),
+        ("NECESSITY_CONFLICT", "problem_necessity"),
+        ("PROBLEM_CONFLICT", "problem_generation"),
     ],
 )
 def test_evaluation_returns_deactivate_context_preserve_ledgers_and_bind_feedback(
@@ -6916,7 +7120,7 @@ def test_evaluation_returns_deactivate_context_preserve_ledgers_and_bind_feedbac
     approve(controller, "principle_test_approval")
     controller.method_test_handoff()
     controller.submit_method_test_result(terminal_result(controller))
-    write_and_complete_principle_evaluation(
+    evaluation, _ = write_and_complete_principle_evaluation(
         controller, decision=decision, verdict_id=f"evaluation-{decision.lower()}"
     )
     returned = controller.return_current_phase(
@@ -6930,6 +7134,7 @@ def test_evaluation_returns_deactivate_context_preserve_ledgers_and_bind_feedbac
     event = core["return_history"][-1]
     assert event["return_guidance"]["decision_target"]
     assert event["decision"] == decision
+    assert evaluation["scientific_updates"][0]["consequence"] == "UPDATE_BOUNDARY"
 
     if decision == "MORE_EVIDENCE":
         assert core["method_test_cycle"] is None
@@ -6948,6 +7153,8 @@ def test_evaluation_returns_deactivate_context_preserve_ledgers_and_bind_feedbac
         assert controller.status()["scientific_core"]["selected_for_testing"]["status"] == "ACTIVE"
     else:
         assert core["selected_for_testing"] is None
+    if decision == "PROBLEM_CONFLICT":
+        assert core["active_problem_version"] is None
     if decision == "CANDIDATE_REJECTED":
         history = (tmp_path / "idea-stage" / "METHOD_PRINCIPLES.jsonl").read_text(encoding="utf-8")
         assert '"event_type": "REJECTED"' in history

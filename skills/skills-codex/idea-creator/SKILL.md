@@ -2,9 +2,10 @@
 name: idea-creator
 description: "Run one independent problem-discovery, pre-RCA Necessity, root-cause diagnosis, Principle formation/evaluation, or selected-Candidate test-design module. Use mode: necessity after Human Problem acceptance; diagnosis only after accepted residual Necessity."
 argument-hint: "mode: problem|necessity|diagnosis|method|principle-test-design; direction or handoff path"
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
-# Research Idea Creator (Codex adapter) — independent scientific modes
+# Research Idea Creator — independent scientific modes
 
 Run exactly one mode for: **$ARGUMENTS**.
 
@@ -340,7 +341,12 @@ Follow `method-design-contract.md` in order:
    derivation origin, Early Target Intervention Novelty closure, lineage, bindings,
    activation/failure conditions, fatal assumptions, target-domain
    operationalization, Provisional Scientific Delta, and discriminating
-   predictions, principal risks, and substantive differences.
+   predictions, principal risks, and substantive differences. Declare whether
+   the solution space is `UNDERCONSTRAINED` or `CONSTRAINED`; the former requires
+   multiple mechanism-distinct survivors, while the latter requires a real
+   constraint basis and permits one. Each prediction is a killer-test concept
+   with observable, Candidate Pattern A, Rival Principle/RCA Pattern B,
+   activation condition, killer criterion, and cheapest-informative rationale.
 
 Use only Controller-current Evidence. Cross-cycle history must be consumed, but
 its Evidence is not current unless it is accepted landscape Evidence, current
@@ -359,7 +365,8 @@ do not force a transferred Candidate.
 
 Write `METHOD_DESIGN_PACKET.json` and its exact deterministic
 `METHOD_DESIGN.md` view. The packet contains no concrete tests, execution set,
-cost, or lifecycle status. The Markdown explains each Candidate's mechanism,
+cost, or lifecycle status; a killer-test concept is required because it contains
+none of those concrete execution commitments. The Markdown explains each Candidate's mechanism,
 Scientific Delta, principal risks, and substantive differences in plain
 language. Finish all
 Evidence acquisition/re-adoption, then run `refresh-review-request` so the
@@ -387,7 +394,10 @@ version. The plan must be the current minimum sufficient, highest-information
 set, prioritize falsification of fatal assumptions, and prefer existing data,
 low-cost analysis, or computation. A large physical experiment is allowed only
 with an explicit explanation of why lower-cost tiers cannot decide the present
-question.
+question. Every concrete test references one reviewed killer-test concept,
+preserves its observable and Candidate/Rival Pattern A/B, and then adds only the
+operationalization, execution requirements, test-only realization, execution
+set, cost, and formal Pattern A/Pattern B/inconclusive terminal criteria.
 
 Write `PRINCIPLE_TEST_PLAN.json` and its deterministic Markdown view, then
 refresh the review request. The existing `independent_method_reviewer` applies
@@ -408,9 +418,13 @@ When the phase starts, read the current Evidence Context, accepted Candidate
 packet and Test Plan, all Controller-associated cross-cycle history, and the
 latest return feedback. For the selected Candidate version, assess
 operationalization fidelity, test validity/discriminativeness, activation
-conditions, and the observations relative to its discriminating predictions.
-Update Principles, assumptions, boundaries, or the RCA interpretation; do not
-reduce Evidence Update to performance ranking. `NO_RESULT` can expose an
+conditions, observed pattern, and Rival discrimination for every approved test
+and prediction. Write `scientific_updates[]` with exact target type/ID,
+before/proposed-after state, current Evidence refs, rationale, and only a
+proposed consequence. Update Principles, assumptions, Source–Target mapping,
+target operationalization, boundaries, Rival Principle/RCA, Root Cause, or
+Necessity/residual-envelope understanding; do not reduce Evidence Update to
+performance ranking or edit accepted upstream artifacts in place. `NO_RESULT` can expose an
 operationalization or feasibility problem but cannot support or reject a
 Principle.
 
@@ -418,15 +432,19 @@ Write `PRINCIPLE_EVALUATION.json`, updating the selected Candidate and citing
 only Evidence current in the supplied Context. After the final evaluation is
 written, run `refresh-review-request` and dispatch the declared independent
 reviewer. Its formal outcomes are `PRINCIPLE_CONVERGED`,
-`REVISE_EVALUATION`, `MORE_EVIDENCE`, `CANDIDATE_REJECTED`, or `RCA_CONFLICT`.
+`REVISE_EVALUATION`, `MORE_EVIDENCE`, `CANDIDATE_REJECTED`, `RCA_CONFLICT`,
+`NECESSITY_CONFLICT`, or `PROBLEM_CONFLICT`. Main's proposed consequence never
+drives the transition; only that attested reviewer verdict does.
 
 `REVISE_EVALUATION` preserves the cycle and terminal results and revises only
 interpretation. `MORE_EVIDENCE` preserves the selected binding and returns to
 Test Design for the next minimum test and fresh Human approval.
 `CANDIDATE_REJECTED` stops that Candidate version, invalidates the binding, and
 returns the failed Evidence to Method Design. `RCA_CONFLICT` returns to RCA and
-also invalidates the binding. On convergence, the verdict names the selected
-Principle ID/version;
+also invalidates the binding. `NECESSITY_CONFLICT` returns to Problem Necessity;
+`PROBLEM_CONFLICT` returns to Problem Generation and the full Problem Gate chain.
+On convergence, the verdict names the selected Principle ID/version and any
+accepted boundary-update IDs;
 only the Controller materializes `SELECTED_PRINCIPLE.yaml`. Main never writes
 that artifact.
 

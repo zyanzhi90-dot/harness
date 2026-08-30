@@ -36,9 +36,11 @@ Require:
 - accepted Root-Cause Analysis/verdict with current hashes;
 - accepted `ACTIVE_FIELD_MAP.md` and currently usable Evidence;
 - Controller-materialized `SELECTED_PRINCIPLE.yaml` with the selected
-  Principle ID/version, causal-chain, RMC, Capability, and Obligation bindings,
-  Evidence closure, activation/failure conditions, boundaries, and remaining
-  uncertainty;
+  Principle/intervention/changed structure; exact derivation or Source origin
+  and accepted intervention alignment; Target novelty closure; causal-chain,
+  RMC, Capability, and Obligation bindings; accepted assumptions, killer
+  predictions, scientific updates, and Evidence closure; activation/failure
+  conditions, boundaries, and remaining uncertainty;
 - the latest Controller-exposed method-level reviewer guidance, Human feedback,
   novelty feedback, or Full Validation result directed to this phase;
 - the previous proposal when a validation or method-level return preserves the
