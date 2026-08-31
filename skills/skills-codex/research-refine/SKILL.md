@@ -1,7 +1,7 @@
 ---
 name: research-refine
 description: Refine one Controller-materialized Selected Principle into a target-adapted, minimal faithful Method and bounded Final Scientific Delta Claim. Use only after accepted Principle convergence; do not use for problem discovery, Principle formation, or pre-convergence test operationalization.
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__codex__codex, mcp__codex__codex-reply, mcp__manual_review__review, mcp__manual_review__review_reply
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, mcp__manual_review__review, mcp__manual_review__review_reply
 ---
 
 # Research Refine

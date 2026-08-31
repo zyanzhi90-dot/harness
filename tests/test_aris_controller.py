@@ -3913,6 +3913,32 @@ def test_problem_acceptance_registers_one_independent_contract_and_capsule(
     ]
 
 
+def test_accepted_problem_capsule_keeps_problem_scoped_evidence_current_downstream(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    approve(controller, "problem_acceptance", selected_id="P-1")
+
+    with controller._store.mutate() as state:
+        research = state["research_lit"]
+        research["landscape_evidence_ids"].remove("P1")
+        evidence = dict(research["accepted_artifacts"]["evidence:P1"])
+        evidence.update({
+            "evidence_key": "evidence:P1",
+            "phase_binding_anchor": {"phase": "problem_generation"},
+        })
+        research.setdefault("incremental_evidence_by_phase", {}).setdefault(
+            "problem_generation", {}
+        )["evidence:P1@accepted-problem"] = evidence
+
+    state = controller.status()
+    assert "P1" in controller._current_phase_evidence_ids(
+        state, "problem_necessity"
+    )
+    complete_problem_necessity(controller)
+
+
 def test_root_cause_registers_nonliterature_evidence_and_binds_it_to_review(
     tmp_path: Path,
 ) -> None:

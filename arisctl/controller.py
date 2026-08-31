@@ -57,6 +57,7 @@ from .validators import (
     validate_query_plan,
     validate_problem_acceptance_handoff,
     validate_problem_capsule_nonliterature_artifacts,
+    root_cause_capsule_evidence_ids,
     validate_markdown_review_verdict_artifact,
     validate_source_admission_policy,
 )
@@ -2322,7 +2323,29 @@ class ARISController:
             for evidence_id in state["research_lit"].get("landscape_evidence_ids") or []
             if isinstance(evidence_id, str)
         }
-        return (set(all_paths) - scoped_ids) | current_ids | landscape_ids
+        projected = (set(all_paths) - scoped_ids) | current_ids | landscape_ids
+        active_problem = (state.get("scientific_core") or {}).get(
+            "active_problem_version"
+        )
+        if isinstance(active_problem, dict):
+            active = self._assert_active_problem_version_current(state)
+            capsule_path = self.root / str(active["evidence_capsule_path"])
+            try:
+                capsule_ids = root_cause_capsule_evidence_ids(
+                    capsule_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValidationError) as exc:
+                raise ControllerError(
+                    "accepted Problem Evidence Capsule is not readable"
+                ) from exc
+            unresolved = capsule_ids - set(all_paths)
+            if unresolved:
+                raise ControllerError(
+                    "accepted Problem Evidence Capsule no longer resolves to current "
+                    f"formal Evidence: {sorted(unresolved)}"
+                )
+            projected.update(capsule_ids)
+        return projected
 
     @staticmethod
     def _binding_artifact_identity(record: dict[str, Any]) -> dict[str, Any]:

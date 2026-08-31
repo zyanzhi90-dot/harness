@@ -2,7 +2,7 @@
 name: idea-creator
 description: "Run one independent problem-discovery, pre-RCA Necessity, root-cause diagnosis, Principle formation/evaluation, or selected-Candidate test-design module. Use mode: necessity after Human Problem acceptance; diagnosis only after accepted residual Necessity."
 argument-hint: "mode: problem|necessity|diagnosis|method|principle-test-design; direction or handoff path"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill
 ---
 
 # Research Idea Creator — independent scientific modes

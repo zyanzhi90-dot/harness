@@ -2,7 +2,7 @@
 name: idea-discovery
 description: "Orchestrate the problem-first research workflow from a bounded field map through accepted RCA, Principle formation/testing/convergence, Method adaptation, and final method decision. Each scientific module runs independently with explicit handoff artifacts."
 argument-hint: "[research-direction]"
-allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Bash(*), Read, Write, Edit, Grep, Glob, Skill
 ---
 
 # Idea Discovery — thin orchestrator
