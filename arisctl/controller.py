@@ -4078,7 +4078,6 @@ class ARISController:
             "provisional_scientific_delta": deepcopy(
                 candidate["provisional_scientific_delta"]
             ),
-            "accepted_scientific_updates": deepcopy(evaluation["scientific_updates"]),
             "evidence_closure": {
                 "evidence_refs": evidence_refs,
                 "test_plan": {

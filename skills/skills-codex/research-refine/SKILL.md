@@ -50,7 +50,7 @@ Require and hash-check:
   `DIAGNOSIS_READY`;
 - `SELECTED_PRINCIPLE.yaml` materialized by the Controller after accepted
   convergence, including its exact origin/alignment, Target novelty, accepted
-  assumptions/predictions/updates, Evidence closure, and boundaries;
+  assumptions/predictions, Evidence closure, and Reviewer-accepted boundaries;
 - the Controller-exposed return/validation feedback directed to
   `method_refinement`, if any.
 
@@ -77,7 +77,7 @@ Follow R0–R6 in `method-refinement-protocol.md`:
 
 - bind the active Problem, RCA, and complete Selected Principle closure without
   drift; use its accepted origin/alignment, novelty, assumptions, predictions,
-  Evidence updates, and boundaries as adaptation constraints;
+  Evidence closure, and Reviewer-accepted boundaries as adaptation constraints;
 - adapt the algorithm-independent intervention to the target domain;
 - construct the minimal faithful realization and attempt Principle-only
   closure against every selected RMC, Capability, Obligation, condition, and

@@ -288,7 +288,7 @@ explanatory_coverage: PASS | FAIL | UNCERTAIN
 evidence_calibration: PASS | FAIL | UNCERTAIN
 intervention_relevance: PASS | FAIL | UNCERTAIN
 falsifiability: PASS | FAIL | UNCERTAIN
-residual_failure_fidelity: PASS | FAIL | UNCERTAIN
+residual_failure_alignment: PASS | FAIL | UNCERTAIN
 ```
 
 `DIAGNOSIS_READY` cannot carry a `BLOCKING` issue and requires `PASS` on every

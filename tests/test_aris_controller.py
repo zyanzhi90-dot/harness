@@ -1096,12 +1096,22 @@ def test_selected_principle_and_final_proposal_recover_reviewed_obligations() ->
     packet = method_design_packet()
     candidate = packet["candidate_principles"][0]
     evaluation = {
-        "scientific_updates": [{
-            "update_id": "UPDATE-BOUNDARY", "target_type": "APPLICABILITY_BOUNDARY",
-            "target_id": "PR-A@1", "before": "broad", "proposed_after": "declared scope",
-            "evidence_refs": ["results/principle.json"], "consequence": "UPDATE_BOUNDARY",
-            "rationale": "The bound Evidence supports this boundary.",
-        }]
+        "scientific_updates": [
+            {
+                "update_id": "UPDATE-BOUNDARY", "target_type": "APPLICABILITY_BOUNDARY",
+                "target_id": "PR-A@1", "before": "broad", "proposed_after": "declared scope",
+                "evidence_refs": ["results/principle.json"], "consequence": "UPDATE_BOUNDARY",
+                "rationale": "The bound Evidence supports this boundary.",
+            },
+            {
+                "update_id": "UPDATE-PROPOSAL", "target_type": "APPLICABILITY_BOUNDARY",
+                "target_id": "PR-A@1", "before": "declared scope",
+                "proposed_after": "narrower proposed scope",
+                "evidence_refs": ["results/principle.json"],
+                "consequence": "UPDATE_BOUNDARY",
+                "rationale": "This unaccepted boundary proposal remains outside selected authority.",
+            },
+        ]
     }
     selected = {
         "schema_version": 1,
@@ -1127,14 +1137,13 @@ def test_selected_principle_and_final_proposal_recover_reviewed_obligations() ->
         "accepted_assumptions": candidate["fatal_assumptions"],
         "accepted_predictions": candidate["predictions"],
         "provisional_scientific_delta": candidate["provisional_scientific_delta"],
-        "accepted_scientific_updates": evaluation["scientific_updates"],
         "evidence_closure": {"evidence_refs": ["results/principle.json"]},
         "activation_conditions": candidate["activation_conditions"],
         "failure_conditions": candidate["failure_conditions"],
         "applicability_boundaries": {
             "activation_conditions": candidate["activation_conditions"],
             "failure_conditions": candidate["failure_conditions"],
-            "accepted_boundary_updates": evaluation["scientific_updates"],
+            "accepted_boundary_updates": evaluation["scientific_updates"][:1],
         },
         "remaining_uncertainty": ["external validity"],
     }
@@ -1178,11 +1187,22 @@ def test_diagnosis_ready_requires_every_root_cause_rubric_to_pass() -> None:
         "issues": [], "observation_fidelity": "PASS", "grouping_adequacy": "PASS",
         "causal_depth": "PASS", "explanatory_coverage": "PASS",
         "evidence_calibration": "PASS", "intervention_relevance": "PASS",
-        "falsifiability": "PASS", "residual_failure_fidelity": "UNCERTAIN",
+        "falsifiability": "PASS", "residual_failure_alignment": "UNCERTAIN",
     }
     with pytest.raises(ValidationError, match="all root-cause"):
         validate_root_cause_verdict(
             verdict, run_id="run-1", analysis_id="RCA-1", reviewed_analysis_sha256="a" * 64,
+            problem_contract_sha256="b" * 64, evidence_capsule_sha256="c" * 64,
+            necessity_closure_sha256="d" * 64,
+            necessity_verdict_sha256="e" * 64,
+        )
+    legacy = deepcopy(verdict)
+    legacy.pop("residual_failure_alignment")
+    legacy["residual_failure_fidelity"] = "PASS"
+    with pytest.raises(ValidationError, match="residual_failure_alignment"):
+        validate_root_cause_verdict(
+            legacy, run_id="run-1", analysis_id="RCA-1",
+            reviewed_analysis_sha256="a" * 64,
             problem_contract_sha256="b" * 64, evidence_capsule_sha256="c" * 64,
             necessity_closure_sha256="d" * 64,
             necessity_verdict_sha256="e" * 64,
@@ -2015,12 +2035,12 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "idea-stage/NECESSITY_VERDICT.json": necessity_verdict,
         "idea-stage/ROOT_CAUSE_ANALYSIS.json": json.dumps({
             "analysis_id": "RCA-1", "necessity_binding": necessity_binding,
+            "primary_causal_chain_ids": ["CHAIN-1"],
         }) + "\n",
         "idea-stage/ROOT_CAUSE_VERDICT.json": json.dumps({"decision": "DIAGNOSIS_READY"}) + "\n",
         "idea-stage/PRINCIPLE_EVALUATION.json": json.dumps({"cycle_id": "CYCLE-1"}) + "\n",
         "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": json.dumps({"decision": "PRINCIPLE_CONVERGED"}) + "\n",
         "idea-stage/SELECTED_PRINCIPLE.yaml": yaml.safe_dump(selected, sort_keys=False),
-        "refine-logs/FINAL_METHOD_PACKET.json": json.dumps({"schema_version": 1}) + "\n",
         "refine-logs/FINAL_PROPOSAL.md": proposal,
         "refine-logs/FINAL_BLIND_REVIEW.md": "# Accepted method review\n",
         "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "# Novelty\n",
@@ -2055,7 +2075,6 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "idea-stage/PRINCIPLE_EVALUATION.json": "principle_evaluation",
         "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": "principle_evaluation",
         "idea-stage/SELECTED_PRINCIPLE.yaml": "principle_evaluation",
-        "refine-logs/FINAL_METHOD_PACKET.json": "method_refinement",
         "refine-logs/FINAL_PROPOSAL.md": "method_refinement",
         "refine-logs/FINAL_BLIND_REVIEW.md": "method_refinement",
         "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "final_method_novelty_gate",
@@ -2120,6 +2139,11 @@ def confirmed_validation_controller(root: Path) -> ARISController:
                 "idea-stage/NECESSITY_VERDICT.json",
                 "idea-stage/ROOT_CAUSE_ANALYSIS.json",
             )
+        }
+        run_state._find_phase(state, "root_cause_gate")["validated_artifacts"] = {
+            "idea-stage/ROOT_CAUSE_VERDICT.json": accepted[
+                "idea-stage/ROOT_CAUSE_VERDICT.json"
+            ]["sha256"]
         }
         core["active_problem_version"] = {
             **problem_binding,
@@ -2900,6 +2924,12 @@ def principle_evaluation_payload(controller: ARISController) -> dict:
             "proposed_after": "declared operating condition with observed activation",
             "evidence_refs": [evidence_path], "consequence": "UPDATE_BOUNDARY",
             "rationale": "Current Evidence supports a bounded applicability update.",
+        }, {
+            "update_id": "UPDATE-UNACCEPTED", "target_type": "APPLICABILITY_BOUNDARY",
+            "target_id": "PR-A@1", "before": "observed activation condition",
+            "proposed_after": "narrower proposed activation condition",
+            "evidence_refs": [evidence_path], "consequence": "UPDATE_BOUNDARY",
+            "rationale": "This unaccepted boundary interpretation remains a proposal.",
         }],
         "remaining_uncertainties": ["external validity"],
         "relevant_history_refs": sorted(
@@ -7069,10 +7099,27 @@ def test_accepted_convergence_initializes_acceptance_artifacts_and_materializes_
     assert selected["accepted_assumptions"][0]["assumption_id"] == "ASM-A"
     assert selected["accepted_predictions"][0]["prediction_id"] == "PRED-A"
     assert selected["provisional_scientific_delta"] == "delta A"
-    assert selected["accepted_scientific_updates"][0]["update_id"] == "UPDATE-PR-A"
+    assert "accepted_scientific_updates" not in selected
     assert selected["applicability_boundaries"]["accepted_boundary_updates"][0][
         "update_id"
     ] == "UPDATE-PR-A"
+    assert len(selected["applicability_boundaries"]["accepted_boundary_updates"]) == 1
+    evaluation = json.loads(
+        (tmp_path / "idea-stage" / "PRINCIPLE_EVALUATION.json").read_text(encoding="utf-8")
+    )
+    assert {item["update_id"] for item in evaluation["scientific_updates"]} == {
+        "UPDATE-PR-A", "UPDATE-UNACCEPTED",
+    }
+    history = [
+        json.loads(line)
+        for line in (tmp_path / "idea-stage" / "METHOD_PRINCIPLES.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    assert "UPDATE-UNACCEPTED" in {
+        item.get("scientific_update_id") for item in history
+    }
     assert selected["evidence_closure"]["evidence_context"]["sha256"]
 
     refine = (REPO / "skills" / "research-refine" / "SKILL.md").read_text(encoding="utf-8")
@@ -7369,6 +7416,75 @@ def test_final_method_novelty_uses_layered_return_targets(
     )
     assert selected_path.exists() is selected_remains
     assert (selected_record is not None) is selected_remains
+
+
+def test_current_proposal_first_downstream_reaches_final_human_without_future_artifacts(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    future_packet = tmp_path / "refine-logs" / "FINAL_METHOD_PACKET.json"
+    assert not future_packet.exists()
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        core["status"] = "ACTIVE"
+        core["current_phase"] = "method_refinement"
+        core["validation_entry"] = None
+        core["approval_request"] = None
+        state["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
+        for phase_name in (
+            "method_refinement",
+            "final_method_novelty_gate",
+            "final_method_human_acceptance",
+        ):
+            phase = run_state._find_phase(state, phase_name)
+            phase["status"] = "pending"
+            phase["review_request"] = None
+        for raw_path in (
+            "refine-logs/FINAL_PROPOSAL.md",
+            "refine-logs/FINAL_BLIND_REVIEW.md",
+            "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+            "idea-stage/IDEA_REPORT.md",
+        ):
+            core["accepted_artifacts"].pop(raw_path, None)
+
+    controller.start_current_phase()
+    refine_state = tmp_path / "refine-logs" / "REFINE_STATE.json"
+    refine_state.write_text('{"status":"final_review"}\n', encoding="utf-8")
+    method_request = controller.refresh_current_review_request()
+    assert "refine-logs/FINAL_METHOD_PACKET.json" not in method_request["artifact_bindings"]
+    method_verdict_id = "method-ready-proposal-first"
+    (tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
+        formal_verdict_artifact(controller, verdict_id=method_verdict_id),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, method_verdict_id, "claude-sonnet-4")
+    assert controller.status()["scientific_core"]["current_phase"] == (
+        "final_method_novelty_gate"
+    )
+
+    controller.start_current_phase()
+    novelty_verdict_id = "novel-proposal-first"
+    (tmp_path / "idea-stage" / "FINAL_METHOD_NOVELTY_VERDICT.md").write_text(
+        formal_verdict_artifact(controller, verdict_id=novelty_verdict_id),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, novelty_verdict_id, "claude-sonnet-4")
+    state = controller.status()
+    assert state["scientific_core"]["current_phase"] == "final_method_human_acceptance"
+    assert all(
+        phase["phase"] != "top_venue_method_strength_gate"
+        for phase in state["phases"]
+    )
+    human_request = controller.validate_human_gate_request("method_acceptance")
+    assert "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json" not in (
+        human_request["artifact_bindings"]
+    )
+    approve(controller, "method_acceptance")
+    assert controller.status()["scientific_core"]["status"] == (
+        "METHOD_CONFIRMED_AWAITING_USER_VALIDATION"
+    )
 
 
 def test_tampering_accepted_policy_or_field_map_blocks_transition(tmp_path: Path) -> None:
@@ -9127,8 +9243,8 @@ def test_adaptation_gap_evidence_refreshes_the_current_final_review_binding(
     )["status"] == "RE_ADOPTED"
 
     request = controller.refresh_current_review_request()
-    assert request["artifact_bindings"]["refine-logs/FINAL_METHOD_PACKET.json"] == sha256_file(
-        tmp_path / "refine-logs" / "FINAL_METHOD_PACKET.json"
+    assert request["artifact_bindings"]["refine-logs/FINAL_PROPOSAL.md"] == sha256_file(
+        tmp_path / "refine-logs" / "FINAL_PROPOSAL.md"
     )
     assert request["artifact_bindings"]["idea-stage/SELECTED_PRINCIPLE.yaml"] == sha256_file(
         selected_path

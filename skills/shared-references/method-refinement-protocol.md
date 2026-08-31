@@ -39,8 +39,8 @@ Require:
   Principle/intervention/changed structure; exact derivation or Source origin
   and accepted intervention alignment; Target novelty closure; causal-chain,
   RMC, Capability, and Obligation bindings; accepted assumptions, killer
-  predictions, scientific updates, and Evidence closure; activation/failure
-  conditions, boundaries, and remaining uncertainty;
+  predictions, and Evidence closure; activation/failure conditions,
+  Reviewer-accepted boundary updates, and remaining uncertainty;
 - the latest Controller-exposed method-level reviewer guidance, Human feedback,
   novelty feedback, or Full Validation result directed to this phase;
 - the previous proposal when a validation or method-level return preserves the

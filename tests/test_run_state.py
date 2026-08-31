@@ -236,7 +236,7 @@ def _write_root_cause_artifacts(
         "evidence_calibration": "PASS",
         "intervention_relevance": "PASS",
         "falsifiability": "PASS",
-        "residual_failure_fidelity": "PASS",
+        "residual_failure_alignment": "PASS",
     }
     verdict_path.write_text(json.dumps(verdict), encoding="utf-8")
     return verdict["verdict_id"], reviewer

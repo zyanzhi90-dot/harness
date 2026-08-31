@@ -655,8 +655,8 @@ from the reviewed Candidate, evaluation, Evidence Context, and verdict. It
 preserves the Principle/intervention/changed structure; Problem/RCA/causal-chain/
 RMC/Capability/Obligation bindings; exact derivation or Source origin and
 alignment; Target novelty closure; accepted assumptions and killer predictions;
-Provisional Scientific Delta; accepted scientific updates and Evidence closure;
-activation/failure/applicability boundaries; and remaining uncertainty. It
+Provisional Scientific Delta; Evidence closure; Reviewer-accepted boundary
+updates within the applicability boundaries; and remaining uncertainty. It
 contains only the converged Candidate closure, not rejected-Candidate noise.
 
 `REVISE_EVALUATION` preserves the same cycle, selection, tests, and raw results

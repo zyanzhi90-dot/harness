@@ -194,7 +194,7 @@
       "format": "yaml",
       "schema_version": 1,
       "lifecycle": "controller_materialized_after_accepted_convergence",
-      "required_fields": ["schema_version", "principle_id", "principle_version", "principle", "intervention", "changed_structure", "problem_binding", "root_cause_binding", "causal_chain_ids", "mechanism_change_ids", "capability_ids", "obligation_ids", "origin_binding", "origin_closure", "intervention_alignment", "target_intervention_novelty", "accepted_assumptions", "accepted_predictions", "provisional_scientific_delta", "accepted_scientific_updates", "evidence_closure", "activation_conditions", "failure_conditions", "applicability_boundaries", "remaining_uncertainty"],
+      "required_fields": ["schema_version", "principle_id", "principle_version", "principle", "intervention", "changed_structure", "problem_binding", "root_cause_binding", "causal_chain_ids", "mechanism_change_ids", "capability_ids", "obligation_ids", "origin_binding", "origin_closure", "intervention_alignment", "target_intervention_novelty", "accepted_assumptions", "accepted_predictions", "provisional_scientific_delta", "evidence_closure", "activation_conditions", "failure_conditions", "applicability_boundaries", "remaining_uncertainty"],
       "origin_binding_fields": ["origin_type", "origin_ref_id", "alignment_ref_id"],
       "preserve_on": ["REVISE", "HOLD", "REVISE_METHOD_DELTA", "final_human_request_revision", "METHOD_REFINEMENT_REQUIRED"],
       "invalidate_on": ["RETHINK", "RETHINK_PRINCIPLE_DELTA", "SELECTED_PRINCIPLE_REJECTED", "RCA_CONFLICT", "ROOT_CAUSE_REJECTED", "PROBLEM_PREMISE_REJECTED"]
@@ -207,7 +207,6 @@
     },
     "final_proposal": {
       "format": "markdown",
-      "authority": "deterministic_view_of_final_method_packet",
       "required_sections": ["Selected Principle binding", "Target-domain adaptation", "Minimal faithful realization", "Principle-only closure attempt", "Residual mechanism and adaptation gaps", "Minimal necessary composition", "Core method changes", "Predicted mechanism changes", "Failure conditions and applicability boundaries", "Final Scientific Delta Claim", "Claim-validation obligations"]
     },
     "top_venue_method_strength_verdict": {
@@ -260,7 +259,7 @@
   },
   "scientific_core": {
     "controller": "arisctl.controller.ARISController",
-    "phases": ["problem_generation", "problem_quality_gate", "problem_novelty_gate", "problem_human_acceptance", "problem_necessity", "root_cause_analysis", "root_cause_gate", "method_design", "principle_human_selection", "principle_test_design", "principle_test_human_approval", "principle_evaluation", "method_refinement", "final_method_novelty_gate", "top_venue_method_strength_gate", "final_method_human_acceptance"],
+    "phases": ["problem_generation", "problem_quality_gate", "problem_novelty_gate", "problem_human_acceptance", "problem_necessity", "root_cause_analysis", "root_cause_gate", "method_design", "principle_human_selection", "principle_test_design", "principle_test_human_approval", "principle_evaluation", "method_refinement", "final_method_novelty_gate", "final_method_human_acceptance"],
     "allowed_agents": {
       "problem_generation": ["main_research_agent"],
       "problem_quality_gate": ["independent_problem_reviewer"],
@@ -276,7 +275,6 @@
       "principle_evaluation": ["main_research_agent", "independent_method_reviewer"],
       "method_refinement": ["main_research_agent", "independent_method_reviewer"],
       "final_method_novelty_gate": ["independent_novelty_reviewer"],
-      "top_venue_method_strength_gate": ["independent_method_reviewer"],
       "final_method_human_acceptance": ["main_research_agent"]
     },
     "artifact_hook_policy": "registered_path_sha256_provenance_and_upstream_snapshot",
@@ -289,7 +287,7 @@
     },
     "completion_state": "METHOD_CONFIRMED_AWAITING_USER_VALIDATION",
     "validation_entry_policy": "human_initiated_only_after_method_confirmation",
-    "validation_required_inputs": ["idea-stage/RESEARCH_CONTRACT.md", "@artifact:necessity_closure", "@artifact:necessity_verdict", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict", "@artifact:selected_principle", "@artifact:final_method_packet", "@artifact:final_proposal", "@artifact:final_method_novelty_verdict", "@artifact:top_venue_method_strength_verdict", "@artifact:final_human_report"],
+    "validation_required_inputs": ["idea-stage/RESEARCH_CONTRACT.md", "@artifact:necessity_closure", "@artifact:necessity_verdict", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict", "@artifact:selected_principle", "@artifact:final_proposal", "@artifact:final_method_novelty_verdict", "@artifact:final_human_report"],
     "validation_accepted_decisions": ["VALIDATED"],
     "validation_return_targets": {
       "METHOD_REFINEMENT_REQUIRED": "method_refinement",
@@ -564,8 +562,8 @@
       "phase": "method_refinement",
       "depends_on": ["principle_evaluation"],
       "required_inputs": ["idea-stage/ACTIVE_FIELD_MAP.md", "idea-stage/RESEARCH_CONTRACT.md", "@artifact:necessity_closure", "@artifact:necessity_verdict", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict", "@artifact:selected_principle"],
-      "produced_artifacts": ["@artifact:final_method_packet", "@artifact:final_proposal", "@artifact:final_method_review", "@artifact:refine_state"],
-      "reviewed_artifacts": ["@artifact:final_method_packet"],
+      "produced_artifacts": ["@artifact:final_proposal", "@artifact:final_method_review", "@artifact:refine_state"],
+      "reviewed_artifacts": ["@artifact:final_proposal"],
       "requires_validated_artifacts": [
         {"phase": "problem_necessity", "artifacts": ["@artifact:necessity_closure", "@artifact:necessity_verdict"]},
         {"phase": "root_cause_analysis", "artifacts": ["idea-stage/RESEARCH_CONTRACT.md", "@artifact:necessity_closure", "@artifact:necessity_verdict", "@artifact:root_cause_analysis"]},
@@ -583,13 +581,12 @@
         "RETHINK": "method_design",
         "HOLD": "method_refinement",
         "RCA_CONFLICT": "root_cause_analysis"
-      },
-      "terminal_verdicts": {"NO_GO": {"action": "terminate_scientific_core", "status": "SCIENTIFIC_NO_GO"}}
+      }
     },
     {
       "phase": "final_method_novelty_gate",
       "depends_on": ["method_refinement"],
-      "required_inputs": ["@artifact:selected_principle", "@artifact:final_method_packet", "@artifact:final_proposal", "@artifact:final_method_review"],
+      "required_inputs": ["@artifact:selected_principle", "@artifact:final_proposal", "@artifact:final_method_review"],
       "produced_artifacts": ["@artifact:final_method_novelty_verdict"],
       "gate_id": "method_novelty_final",
       "gate_owner": "novelty-check:method-final",
@@ -604,29 +601,9 @@
       }
     },
     {
-      "phase": "top_venue_method_strength_gate",
-      "depends_on": ["final_method_novelty_gate"],
-      "required_inputs": ["idea-stage/RESEARCH_CONTRACT.md", "@artifact:necessity_closure", "@artifact:necessity_verdict", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict", "@artifact:selected_principle", "@artifact:principle_evaluation", "@artifact:principle_evaluation_verdict", "@artifact:final_method_packet", "@artifact:final_method_novelty_verdict"],
-      "produced_artifacts": ["@artifact:top_venue_method_strength_verdict"],
-      "gate_id": "top_venue_method_strength",
-      "gate_owner": "independent-method-reviewer:top-venue-strength",
-      "formal_gate": true,
-      "human_checkpoint": false,
-      "reviewer_role": "independent_method_reviewer",
-      "accepted_verdicts": ["TOP_VENUE_READY"],
-      "return_targets": {
-        "REVISE_METHOD": "method_refinement",
-        "RETHINK_PRINCIPLE": "method_design",
-        "REOPEN_RCA": "root_cause_analysis",
-        "REOPEN_NECESSITY": "problem_necessity",
-        "REDEFINE_PROBLEM": "problem_generation"
-      },
-      "terminal_verdicts": {"NO_GO": {"action": "terminate_scientific_core", "status": "SCIENTIFIC_NO_GO"}}
-    },
-    {
       "phase": "final_method_human_acceptance",
-      "depends_on": ["top_venue_method_strength_gate"],
-      "required_inputs": ["@artifact:selected_principle", "@artifact:final_method_packet", "@artifact:final_proposal", "@artifact:final_method_novelty_verdict", "@artifact:top_venue_method_strength_verdict"],
+      "depends_on": ["final_method_novelty_gate"],
+      "required_inputs": ["@artifact:selected_principle", "@artifact:final_proposal", "@artifact:final_method_novelty_verdict"],
       "produced_artifacts": ["@artifact:final_human_report"],
       "gate_id": "method_acceptance",
       "gate_owner": "human",

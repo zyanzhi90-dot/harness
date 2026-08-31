@@ -305,7 +305,7 @@ def main() -> int:
                 "necessity_closure_sha256", "necessity_verdict_sha256",
                 "observation_fidelity", "grouping_adequacy", "causal_depth",
                 "explanatory_coverage", "evidence_calibration", "intervention_relevance",
-                "falsifiability", "residual_failure_fidelity",
+                "falsifiability", "residual_failure_alignment",
             }
             missing = sorted(required_verdict_fields - set(payload))
             if missing:

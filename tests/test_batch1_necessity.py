@@ -204,6 +204,12 @@ def test_workflow_loader_enforces_disjoint_accept_return_terminal_decisions(
 ) -> None:
     w = json.loads(WORKFLOW_PATH.read_text(encoding="utf-8"))
     refinement = next(item for item in w["phases"] if item["phase"] == "method_refinement")
+    refinement["terminal_verdicts"] = {
+        "NO_GO": {
+            "action": "terminate_scientific_core",
+            "status": "SCIENTIFIC_NO_GO",
+        }
+    }
     refinement["terminal_verdicts"]["METHOD_READY"] = {
         "action": "terminate_scientific_core",
         "status": "SCIENTIFIC_NO_GO",
@@ -216,7 +222,15 @@ def test_workflow_loader_enforces_disjoint_accept_return_terminal_decisions(
 
 def test_controller_review_request_uses_accept_return_terminal_union() -> None:
     w = workflow()
-    spec = next(item for item in w["phases"] if item["phase"] == "method_refinement")
+    spec = deepcopy(
+        next(item for item in w["phases"] if item["phase"] == "method_refinement")
+    )
+    spec["terminal_verdicts"] = {
+        "NO_GO": {
+            "action": "terminate_scientific_core",
+            "status": "SCIENTIFIC_NO_GO",
+        }
+    }
     controller = object.__new__(ARISController)
     controller.run_id = "run-1"
     controller._require_formal_native_runtime = MethodType(lambda self, role: None, controller)
@@ -249,7 +263,15 @@ def test_controller_terminal_verdict_cannot_take_accept_or_return_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     w = workflow()
-    spec = next(item for item in w["phases"] if item["phase"] == "method_refinement")
+    spec = deepcopy(
+        next(item for item in w["phases"] if item["phase"] == "method_refinement")
+    )
+    spec["terminal_verdicts"] = {
+        "NO_GO": {
+            "action": "terminate_scientific_core",
+            "status": "SCIENTIFIC_NO_GO",
+        }
+    }
     phase = {
         "phase": "method_refinement",
         "status": "done",

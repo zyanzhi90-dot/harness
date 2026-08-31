@@ -2845,7 +2845,6 @@ def validate_selected_principle(
         "accepted_assumptions": candidate["fatal_assumptions"],
         "accepted_predictions": candidate["predictions"],
         "provisional_scientific_delta": candidate["provisional_scientific_delta"],
-        "accepted_scientific_updates": evaluation["scientific_updates"],
         "activation_conditions": candidate["activation_conditions"],
         "failure_conditions": candidate["failure_conditions"],
     }
@@ -3406,7 +3405,7 @@ def validate_root_cause_verdict(
             "necessity_closure_sha256", "necessity_verdict_sha256",
             "decision", "reasons", "issues", "observation_fidelity", "grouping_adequacy",
             "causal_depth", "explanatory_coverage", "evidence_calibration",
-            "intervention_relevance", "falsifiability", "residual_failure_fidelity",
+            "intervention_relevance", "falsifiability", "residual_failure_alignment",
         ),
         "root-cause verdict",
     )
@@ -3441,7 +3440,7 @@ def validate_root_cause_verdict(
     for field in (
         "observation_fidelity", "grouping_adequacy", "causal_depth", "explanatory_coverage",
         "evidence_calibration", "intervention_relevance", "falsifiability",
-        "residual_failure_fidelity",
+        "residual_failure_alignment",
     ):
         if verdict[field] not in {"PASS", "FAIL", "UNCERTAIN"}:
             raise ValidationError(f"root-cause verdict {field} must be PASS, FAIL, or UNCERTAIN")
@@ -3450,7 +3449,7 @@ def validate_root_cause_verdict(
         for field in (
             "observation_fidelity", "grouping_adequacy", "causal_depth", "explanatory_coverage",
             "evidence_calibration", "intervention_relevance", "falsifiability",
-            "residual_failure_fidelity",
+            "residual_failure_alignment",
         )
     ):
         raise ValidationError(

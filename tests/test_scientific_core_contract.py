@@ -455,7 +455,11 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
         workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
         refinement = next(item for item in workflow["phases"] if item["phase"] == "method_refinement")
         assert refinement["required_inputs"][-1] == "@artifact:selected_principle"
-        assert refinement["reviewed_artifacts"] == ["@artifact:final_method_packet"]
+        assert refinement["produced_artifacts"] == [
+            "@artifact:final_proposal", "@artifact:final_method_review",
+            "@artifact:refine_state",
+        ]
+        assert refinement["reviewed_artifacts"] == ["@artifact:final_proposal"]
         assert refinement["accepted_verdicts"] == ["METHOD_READY"]
         assert refinement["return_targets"] == {
             "REVISE": "method_refinement",
@@ -463,12 +467,27 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
             "HOLD": "method_refinement",
             "RCA_CONFLICT": "root_cause_analysis",
         }
-        assert refinement["terminal_verdicts"] == {
-            "NO_GO": {
-                "action": "terminate_scientific_core",
-                "status": "SCIENTIFIC_NO_GO",
+        assert "terminal_verdicts" not in refinement
+        assert "top_venue_method_strength_gate" not in workflow["scientific_core"]["phases"]
+        assert all(
+            item["phase"] != "top_venue_method_strength_gate"
+            for item in workflow["phases"]
+        )
+        final_human = next(
+            item for item in workflow["phases"]
+            if item["phase"] == "final_method_human_acceptance"
+        )
+        assert final_human["depends_on"] == ["final_method_novelty_gate"]
+        assert "@artifact:final_method_packet" not in json.dumps(
+            {
+                "scientific_core": workflow["scientific_core"],
+                "phases": workflow["phases"],
             }
-        }
+        )
+        assert "final_method_packet" in workflow["artifact_manifest"]
+        assert "final_method_packet" in workflow["artifact_contracts"]
+        assert "top_venue_method_strength_verdict" in workflow["artifact_manifest"]
+        assert "top_venue_method_strength_verdict" in workflow["artifact_contracts"]
 
 def test_core_codex_adapters_reference_canonical_shared_contracts_and_templates() -> None:
     expected = {
