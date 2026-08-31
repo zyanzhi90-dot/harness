@@ -3386,6 +3386,7 @@ def validate_final_method_packet(
     restrictions = _require_list(feasibility, "claim_restrictions", "feasibility closure", non_empty=False)
     restriction_ids = _unique_ids(restrictions, "restriction_id", "feasibility closure.claim_restrictions")
     restriction_by_id: dict[str, dict[str, Any]] = {}
+    declared_claim_restriction_pairs: set[tuple[str, str]] = set()
     for index, raw in enumerate(restrictions, 1):
         restriction = _require_mapping(raw, f"claim restriction {index}")
         _require_fields(restriction, tuple(contract["claim_restriction_fields"]), f"claim restriction {index}")
@@ -3402,19 +3403,28 @@ def validate_final_method_packet(
             raise ValidationError(f"claim restriction {index}.boundary_id references an unknown boundary")
         if boundary_by_id[boundary_id]["boundary_type"] != "CLAIM_RESTRICTION":
             raise ValidationError(f"claim restriction {index}.boundary_id must reference a CLAIM_RESTRICTION boundary")
-        for claim_element in claim_elements:
-            if str(claim_element["claim_element_id"]) in restricted_claim_ids and boundary_id not in {
-                str(value) for value in claim_element["boundary_refs"]
-            }:
-                raise ValidationError("claim restriction boundary must be referenced by every restricted claim element")
+        declared_claim_restriction_pairs.update(
+            (claim_element_id, boundary_id)
+            for claim_element_id in restricted_claim_ids
+        )
         restriction_by_id[str(restriction["restriction_id"])] = restriction
     restriction_boundary_ids = {
         str(restriction["boundary_id"]) for restriction in restriction_by_id.values()
     }
-    for claim_element in claim_elements:
-        for boundary_id in claim_element["boundary_refs"]:
-            if boundary_by_id[str(boundary_id)]["boundary_type"] == "CLAIM_RESTRICTION" and str(boundary_id) not in restriction_boundary_ids:
-                raise ValidationError("Claim element references a CLAIM_RESTRICTION boundary without a formal claim restriction")
+    claim_side_restriction_pairs = {
+        (str(claim_element["claim_element_id"]), str(boundary_id))
+        for claim_element in claim_elements
+        for boundary_id in claim_element["boundary_refs"]
+        if boundary_by_id[str(boundary_id)]["boundary_type"] == "CLAIM_RESTRICTION"
+    }
+    if declared_claim_restriction_pairs - claim_side_restriction_pairs:
+        raise ValidationError(
+            "claim restriction boundary must be referenced by every restricted claim element"
+        )
+    if claim_side_restriction_pairs - declared_claim_restriction_pairs:
+        raise ValidationError(
+            "Claim element references a CLAIM_RESTRICTION boundary without a formal claim restriction"
+        )
     orphan_claim_restriction_boundaries = {
         boundary_id
         for boundary_id, boundary in boundary_by_id.items()

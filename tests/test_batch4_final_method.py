@@ -505,6 +505,30 @@ def test_nonfatal_feasibility_debt_claim_restriction_closes_to_claim_boundary() 
         validate(packet)
 
 
+def test_claim_element_cannot_share_an_undeclared_claim_restriction_boundary() -> None:
+    packet = packet_with_claim_restriction()
+    second_claim = copy.deepcopy(
+        packet["final_scientific_delta_claim"]["claim_elements"][0]
+    )
+    second_claim.update(
+        claim_element_id="CLAIM-2",
+        claim="a second claim that was not declared by the restriction",
+    )
+    packet["final_scientific_delta_claim"]["claim_elements"].append(second_claim)
+    second_obligation = copy.deepcopy(packet["claim_validation_obligations"][0])
+    second_obligation.update(
+        validation_obligation_id="VAL-2",
+        claim_element_id="CLAIM-2",
+    )
+    packet["claim_validation_obligations"].append(second_obligation)
+
+    with pytest.raises(
+        ValidationError,
+        match="references a CLAIM_RESTRICTION boundary without a formal claim restriction",
+    ):
+        validate(packet)
+
+
 @pytest.mark.parametrize(
     "mutator,match",
     [

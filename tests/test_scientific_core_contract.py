@@ -453,8 +453,22 @@ def test_default_discovery_cannot_cross_human_or_test_gates() -> None:
         ]
 
 def test_refine_phase_mapping_matches_shared_protocol() -> None:
+    assert read(MAIN / "shared-references" / "idea-workflow.yaml") == read(
+        CODEX / "shared-references" / "idea-workflow.yaml"
+    )
     for root in (MAIN, CODEX):
         workflow = json.loads(read(root / "shared-references" / "idea-workflow.yaml"))
+        selected_principle = workflow["artifact_contracts"]["selected_principle"]
+        assert selected_principle["invalidate_on"] == [
+            "RETHINK",
+            "RETHINK_PRINCIPLE_DELTA",
+            "SELECTED_PRINCIPLE_REJECTED",
+            "RCA_CONFLICT",
+            "NECESSITY_CONFLICT",
+            "PROBLEM_CONFLICT",
+            "ROOT_CAUSE_REJECTED",
+            "PROBLEM_PREMISE_REJECTED",
+        ]
         refinement = next(item for item in workflow["phases"] if item["phase"] == "method_refinement")
         assert refinement["required_inputs"][-1] == "@artifact:selected_principle"
         assert refinement["produced_artifacts"] == [
