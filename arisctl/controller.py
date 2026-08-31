@@ -57,6 +57,7 @@ from .validators import (
     validate_query_plan,
     validate_problem_acceptance_handoff,
     validate_problem_capsule_nonliterature_artifacts,
+    validate_markdown_review_verdict_artifact,
     validate_source_admission_policy,
 )
 from .workflow import canonical_workflow_path, load_workflow
@@ -2696,6 +2697,39 @@ class ARISController:
 
         role = str(request["required_reviewer_role"])
         phase_name = str(phase["phase"])
+        if phase_name == "final_method_novelty_gate":
+            payload = self._attested_reviewer_payload(
+                role=role,
+                request_id=str(request["id"]),
+                reviewer=str(result["reviewer"]),
+                verdict_id=str(result["verdict_id"]),
+                decision=str(result["gate_verdict"]),
+                artifact_bindings=dict(request["artifact_bindings"]),
+            )
+            paths = self._resolved_phase_paths(
+                state, phase_name, "produced_artifacts"
+            )
+            if len(paths) != 1:
+                raise ControllerError(
+                    "Final method novelty Gate must declare exactly one verdict artifact"
+                )
+            try:
+                actual = validate_markdown_review_verdict_artifact(
+                    (self.root / paths[0]).read_text(encoding="utf-8"),
+                    label="final method novelty verdict",
+                    request_id=str(request["id"]),
+                    artifact_bindings=dict(request["artifact_bindings"]),
+                    decisions=set(request["allowed_review_verdicts"]),
+                )
+            except (OSError, ValidationError) as exc:
+                raise ControllerError(
+                    "Final method novelty verdict metadata is invalid"
+                ) from exc
+            if actual != payload:
+                raise ControllerError(
+                    "Final method novelty verdict artifact differs from the reviewer payload"
+                )
+            return
         if phase_name == "top_venue_method_strength_gate":
             payload = self._attested_reviewer_payload(
                 role=role,

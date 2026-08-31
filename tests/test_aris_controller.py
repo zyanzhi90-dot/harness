@@ -7593,6 +7593,58 @@ def test_final_method_novelty_uses_layered_return_targets(
     assert (selected_record is not None) is selected_remains
 
 
+def test_final_method_novelty_return_guidance_must_match_reviewer_payload(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    activate_method_refinement_review(controller)
+    method_verdict_id = "method-ready-before-novelty-closure"
+    (tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
+        formal_verdict_artifact(controller, verdict_id=method_verdict_id),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, method_verdict_id, "claude-sonnet-4")
+
+    controller.start_current_phase()
+    verdict_id = "final-novelty-reviewer-guidance"
+    verdict_path = tmp_path / "idea-stage" / "FINAL_METHOD_NOVELTY_VERDICT.md"
+    verdict_path.write_text(
+        formal_verdict_artifact(
+            controller,
+            verdict_id=verdict_id,
+            decision="REVISE_METHOD_DELTA",
+        ),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    request = run_state._find_phase(
+        controller.status(), "final_method_novelty_gate"
+    )["review_request"]
+    metadata = json.loads(
+        verdict_path.read_text(encoding="utf-8")
+        .split("```json\n", 1)[1]
+        .split("\n```", 1)[0]
+    )
+    reviewer_payload = deepcopy(metadata)
+    reviewer_payload["return_guidance"]["required_check"] = [
+        "Apply the independent reviewer's required novelty repair."
+    ]
+    attest(controller, request["required_reviewer_role"], reviewer_payload)
+
+    with pytest.raises(
+        ControllerError,
+        match="Final method novelty verdict artifact differs from the reviewer payload",
+    ):
+        controller.return_current_phase(verdict_id, "claude-sonnet-4")
+
+    state = controller.status()
+    assert state["scientific_core"]["current_phase"] == "final_method_novelty_gate"
+    assert run_state._find_phase(
+        state, "final_method_novelty_gate"
+    )["status"] == "done"
+
+
 def activate_method_refinement_review(controller: ARISController) -> dict:
     """Reopen the Batch 4 fixture at a clean current refinement review."""
 
