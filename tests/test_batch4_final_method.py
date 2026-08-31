@@ -445,8 +445,19 @@ def test_residual_support_requires_a_future_counterfactual_obligation() -> None:
         validate(packet)
 
 
-def test_nonfatal_feasibility_debt_requires_a_reciprocal_claim_restriction() -> None:
+def packet_with_claim_restriction() -> dict:
     packet = final_packet()
+    packet["failure_and_applicability_boundaries"].append(
+        {
+            "boundary_id": "BND-RESTRICT-1",
+            "boundary_type": "CLAIM_RESTRICTION",
+            "boundary": "claim only inside the accepted observable envelope",
+            "source_refs": ["DEBT-1"],
+        }
+    )
+    packet["final_scientific_delta_claim"]["claim_elements"][0]["boundary_refs"].append(
+        "BND-RESTRICT-1"
+    )
     packet["feasibility_closure"].update(
         unresolved_feasibility_debts=[
             {
@@ -466,15 +477,120 @@ def test_nonfatal_feasibility_debt_requires_a_reciprocal_claim_restriction() -> 
                 "restriction_id": "RESTRICT-1",
                 "claim_element_ids": ["CLAIM-1"],
                 "debt_ids": ["DEBT-1"],
-                "boundary": "claim only inside the accepted observable envelope",
+                "boundary_id": "BND-RESTRICT-1",
             }
         ],
     )
+    return packet
+
+
+def test_nonfatal_feasibility_debt_claim_restriction_closes_to_claim_boundary() -> None:
+    packet = packet_with_claim_restriction()
     assert validate(packet)["fatality_disposition"] == "NO_FATAL_DEBT"
+    assert {
+        (item["subject_type"], item["subject_id"])
+        for item in packet["principle_only_closure"]
+    } == {
+        ("CAUSAL_CHAIN", "CHAIN-1"),
+        ("RMC", "RMC-1"),
+        ("CAPABILITY", "CAP-1"),
+        ("OBLIGATION", "OBL-1"),
+        ("ACTIVATION_CONDITION", "activation-A"),
+        ("FAILURE_CONDITION", "failure-A"),
+        ("APPLICABILITY_BOUNDARY", "BND-1"),
+    }
 
     packet["feasibility_closure"]["claim_restrictions"] = []
-    with pytest.raises(ValidationError, match="unknown references"):
+    with pytest.raises(ValidationError, match="without a formal claim restriction"):
         validate(packet)
+
+
+@pytest.mark.parametrize(
+    "mutator,match",
+    [
+        (
+            lambda p: p["feasibility_closure"]["claim_restrictions"][0].update(
+                boundary_id="BND-UNKNOWN"
+            ),
+            "unknown boundary",
+        ),
+        (
+            lambda p: p["feasibility_closure"]["claim_restrictions"][0].update(
+                boundary_id="BND-1"
+            ),
+            "must reference a CLAIM_RESTRICTION boundary",
+        ),
+        (
+            lambda p: p["final_scientific_delta_claim"]["claim_elements"][0][
+                "boundary_refs"
+            ].remove("BND-RESTRICT-1"),
+            "must be referenced by every restricted claim element",
+        ),
+        (
+            lambda p: p["feasibility_closure"]["claim_restrictions"][0].pop(
+                "boundary_id"
+            ),
+            "missing required fields",
+        ),
+        (
+            lambda p: p["feasibility_closure"]["claim_restrictions"][0].update(
+                boundary="legacy duplicate scientific truth"
+            ),
+            "unsupported fields",
+        ),
+    ],
+)
+def test_claim_restriction_reference_contract_rejects_invalid_links(mutator, match: str) -> None:
+    packet = packet_with_claim_restriction()
+    mutator(packet)
+    with pytest.raises(ValidationError, match=match):
+        validate(packet)
+
+
+def test_claim_restriction_boundaries_require_restriction_and_claim_links() -> None:
+    packet = packet_with_claim_restriction()
+    packet["feasibility_closure"]["claim_restrictions"] = []
+    packet["feasibility_closure"]["unresolved_feasibility_debts"] = []
+    with pytest.raises(ValidationError, match="without a formal claim restriction"):
+        validate(packet)
+
+    packet = final_packet()
+    packet["failure_and_applicability_boundaries"].append(
+        {
+            "boundary_id": "BND-ORPHAN",
+            "boundary_type": "CLAIM_RESTRICTION",
+            "boundary": "canonical restriction with no restriction record",
+            "source_refs": ["DEBT-1"],
+        }
+    )
+    with pytest.raises(ValidationError, match="not referenced by a formal claim restriction"):
+        validate(packet)
+
+
+def test_claim_restrictions_may_share_a_canonical_boundary() -> None:
+    packet = packet_with_claim_restriction()
+    packet["feasibility_closure"]["unresolved_feasibility_debts"].append(
+        {
+            "debt_id": "DEBT-2",
+            "dimension": "measurement",
+            "debt": "measurement remains bounded by the accepted observable envelope",
+            "fatal": False,
+            "evidence_refs": ["E1"],
+            "restriction_ids": ["RESTRICT-2"],
+            "repair_disposition": "REPAIR_NOT_REQUIRED_FOR_BOUNDED_CLAIM",
+            "claim_restriction_disposition": "RESTRICT_TO_ACCEPTED_ENVELOPE",
+            "excluded_recovery_evidence_refs": [],
+        }
+    )
+    packet["feasibility_closure"]["claim_restrictions"].append(
+        {
+            "restriction_id": "RESTRICT-2",
+            "claim_element_ids": ["CLAIM-1"],
+            "debt_ids": ["DEBT-2"],
+            "boundary_id": "BND-RESTRICT-1",
+        }
+    )
+    assert validate(packet)["fatality_disposition"] == "NO_FATAL_DEBT"
 
 
 def test_mechanically_legal_but_scientifically_unnecessary_change_stays_validator_pass() -> None:

@@ -3045,6 +3045,7 @@ def validate_final_method_packet(
     boundaries, boundary_ids = items(
         "failure_and_applicability_boundaries", "boundary_fields", "boundary_id", non_empty=True
     )
+    boundary_by_id = {str(item["boundary_id"]): item for item in boundaries}
     for index, boundary in enumerate(boundaries, 1):
         if boundary["boundary_type"] not in set(contract["boundary_type_enum"]):
             raise ValidationError(f"boundary {index}.boundary_type is invalid")
@@ -3125,7 +3126,11 @@ def validate_final_method_packet(
         *(('OBLIGATION', value) for value in obligation_ids),
         *(('ACTIVATION_CONDITION', value) for value in activation_conditions),
         *(('FAILURE_CONDITION', value) for value in failure_conditions),
-        *(('APPLICABILITY_BOUNDARY', value) for value in boundary_ids),
+        *(
+            ('APPLICABILITY_BOUNDARY', boundary_id)
+            for boundary_id, boundary in boundary_by_id.items()
+            if boundary["boundary_type"] == "APPLICABILITY_BOUNDARY"
+        ),
     }
     actual_subjects: set[tuple[str, str]] = set()
     closure_by_id: dict[str, dict[str, Any]] = {}
@@ -3377,9 +3382,39 @@ def validate_final_method_packet(
     for index, raw in enumerate(restrictions, 1):
         restriction = _require_mapping(raw, f"claim restriction {index}")
         _require_fields(restriction, tuple(contract["claim_restriction_fields"]), f"claim restriction {index}")
-        refs(restriction["claim_element_ids"], f"claim restriction {index}.claim_element_ids", claim_element_ids)
-        _required_text(restriction["boundary"], f"claim restriction {index}.boundary")
+        unsupported_fields = set(restriction) - set(contract["claim_restriction_fields"])
+        if unsupported_fields:
+            raise ValidationError(f"claim restriction {index} contains unsupported fields: {sorted(unsupported_fields)}")
+        restricted_claim_ids = refs(
+            restriction["claim_element_ids"],
+            f"claim restriction {index}.claim_element_ids",
+            claim_element_ids,
+        )
+        boundary_id = _required_text(restriction["boundary_id"], f"claim restriction {index}.boundary_id")
+        if boundary_id not in boundary_by_id:
+            raise ValidationError(f"claim restriction {index}.boundary_id references an unknown boundary")
+        if boundary_by_id[boundary_id]["boundary_type"] != "CLAIM_RESTRICTION":
+            raise ValidationError(f"claim restriction {index}.boundary_id must reference a CLAIM_RESTRICTION boundary")
+        for claim_element in claim_elements:
+            if str(claim_element["claim_element_id"]) in restricted_claim_ids and boundary_id not in {
+                str(value) for value in claim_element["boundary_refs"]
+            }:
+                raise ValidationError("claim restriction boundary must be referenced by every restricted claim element")
         restriction_by_id[str(restriction["restriction_id"])] = restriction
+    restriction_boundary_ids = {
+        str(restriction["boundary_id"]) for restriction in restriction_by_id.values()
+    }
+    for claim_element in claim_elements:
+        for boundary_id in claim_element["boundary_refs"]:
+            if boundary_by_id[str(boundary_id)]["boundary_type"] == "CLAIM_RESTRICTION" and str(boundary_id) not in restriction_boundary_ids:
+                raise ValidationError("Claim element references a CLAIM_RESTRICTION boundary without a formal claim restriction")
+    orphan_claim_restriction_boundaries = {
+        boundary_id
+        for boundary_id, boundary in boundary_by_id.items()
+        if boundary["boundary_type"] == "CLAIM_RESTRICTION"
+    } - restriction_boundary_ids
+    if orphan_claim_restriction_boundaries:
+        raise ValidationError("CLAIM_RESTRICTION boundary is not referenced by a formal claim restriction")
     fatal_debt_ids: set[str] = set()
     for index, raw in enumerate(debts, 1):
         debt = _require_mapping(raw, f"feasibility debt {index}")

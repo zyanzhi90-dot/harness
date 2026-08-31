@@ -229,7 +229,7 @@
       "natural_derivation_fields": ["residual_failure_ids", "root_cause_refs", "rmc_ids", "target_constraint_ids", "core_method_change_ids", "derivation", "source_story_removed"],
       "feasibility_closure_fields": ["supported_conditions", "unresolved_feasibility_debts", "claim_restrictions", "fatality_disposition"],
       "feasibility_debt_fields": ["debt_id", "dimension", "debt", "fatal", "evidence_refs", "restriction_ids", "repair_disposition", "claim_restriction_disposition", "excluded_recovery_evidence_refs"],
-      "claim_restriction_fields": ["restriction_id", "claim_element_ids", "debt_ids", "boundary"],
+      "claim_restriction_fields": ["restriction_id", "claim_element_ids", "debt_ids", "boundary_id"],
       "feasibility_fatality_enum": ["NO_FATAL_DEBT", "FATAL_REPAIRABLE_OR_RESTRICTED", "FATAL_UNRECOVERABLE"],
       "counterfactual_obligation_fields": ["counterfactual_obligation_id", "support_id", "removal_condition", "expected_failed_closure_ids", "discriminating_consequence", "evidence_status"],
       "counterfactual_evidence_status_enum": ["FUTURE_OBLIGATION"],

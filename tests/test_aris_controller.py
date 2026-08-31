@@ -7623,6 +7623,18 @@ def test_method_refinement_no_go_requires_unrecoverable_fatal_feasibility(
     packet_path = write_batch4_final_packet(controller)
     packet = json.loads(packet_path.read_text(encoding="utf-8"))
     restriction_ids = [] if terminal_allowed else ["RESTRICT-1"]
+    if not terminal_allowed:
+        packet["failure_and_applicability_boundaries"].append(
+            {
+                "boundary_id": "BND-RESTRICT-1",
+                "boundary_type": "CLAIM_RESTRICTION",
+                "boundary": "restrict the claim to the observable envelope",
+                "source_refs": ["DEBT-1"],
+            }
+        )
+        packet["final_scientific_delta_claim"]["claim_elements"][0][
+            "boundary_refs"
+        ].append("BND-RESTRICT-1")
     packet["feasibility_closure"] = {
         "supported_conditions": ["observable in the accepted envelope"],
         "unresolved_feasibility_debts": [
@@ -7652,7 +7664,7 @@ def test_method_refinement_no_go_requires_unrecoverable_fatal_feasibility(
                     "restriction_id": "RESTRICT-1",
                     "claim_element_ids": ["CLAIM-1"],
                     "debt_ids": ["DEBT-1"],
-                    "boundary": "restrict the claim to the observable envelope",
+                    "boundary_id": "BND-RESTRICT-1",
                 }
             ]
         ),

@@ -82,7 +82,8 @@ Follow R0–R7 in `method-refinement-protocol.md`:
 - adapt the algorithm-independent intervention to the target domain;
 - construct the minimal faithful realization and attempt Principle-only
   closure against every selected RMC, Capability, Obligation, condition, and
-  boundary;
+  pre-existing applicability boundary, never an R4-generated
+  `CLAIM_RESTRICTION` boundary;
 - give every closure subject `CLOSED` or `RESIDUAL_GAP`; only the latter may
   create a stable Residual MUST;
 - retain only the smallest mechanisms needed to close those gaps through real
@@ -91,7 +92,10 @@ Follow R0–R7 in `method-refinement-protocol.md`:
   Root Cause, Target Constraint, or earlier-design incompatibility parents;
 - state the Existing-to-New computational relation, current nearest-prior
   separation, Target-only natural derivation, claim-proportional feasibility,
-  and one future counterfactual necessity obligation per retained support;
+  and one future counterfactual necessity obligation per retained support; for
+  each feasibility claim restriction, bind its `boundary_id` to the canonical
+  `CLAIM_RESTRICTION` boundary and add that ID to every affected claim
+  element's `boundary_refs`, without a `claim_restriction.boundary` text;
 - write a bounded `Final Scientific Delta Claim` and traceable
   claim-validation obligations;
 - write all scientific facts to `refine-logs/FINAL_METHOD_PACKET.json`; never

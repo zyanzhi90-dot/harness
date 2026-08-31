@@ -116,7 +116,8 @@ Construct the smallest concrete realization that faithfully embodies the
 Selected Principle. Distinguish reused implementation machinery from core
 method changes. Then attempt Principle-only closure against every accepted
 primary causal chain, selected RMC, Capability, Obligation, activation/failure
-condition, and applicability boundary.
+condition, and pre-existing `APPLICABILITY_BOUNDARY`. Do not include the
+`CLAIM_RESTRICTION` boundaries generated later by R4 feasibility.
 
 For each closure entry record:
 
@@ -192,9 +193,15 @@ Final Method` must still explain the Method and every core structure.
 
 Feasibility is claim-proportional. Record only dimensions relevant to the field
 and Claim, supported conditions, unresolved debts, restrictions, and fatality.
-A nonfatal debt must restrict the Claim/boundary. A fatal debt is `NO_GO`-eligible
-only when current Evidence excludes repair and claim restriction cannot preserve
-the core seed.
+For every claim restriction, write only `restriction_id`, `claim_element_ids`,
+`debt_ids`, and `boundary_id`; `boundary_id` must resolve to the canonical
+`failure_and_applicability_boundaries` entry with
+`boundary_type: CLAIM_RESTRICTION`, and every listed claim element must include
+that ID in `boundary_refs`. Put the restriction text only in that canonical
+boundary; never generate `claim_restriction.boundary` or another copy of the
+restriction. A nonfatal debt must restrict the Claim through this binding. A
+fatal debt is `NO_GO`-eligible only when current Evidence excludes repair and
+claim restriction cannot preserve the core seed.
 
 Every retained supporting scientific mechanism gets one future
 `counterfactual_necessity_obligation`: removal condition, closure expected to

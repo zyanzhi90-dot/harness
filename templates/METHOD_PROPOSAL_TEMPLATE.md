@@ -21,7 +21,10 @@ Controller-materialized Selected Principle bindings, followed by:
 9. Target RMC ↔ Selected/Source Intervention ↔ Final Computational Change
    alignment
 10. `target_only_natural_derivation` with the Source story removed
-11. claim-proportional `feasibility_closure`, debts, restrictions, and fatality
+11. claim-proportional `feasibility_closure`, debts, restrictions, and fatality;
+    each restriction uses `boundary_id` for its canonical `CLAIM_RESTRICTION`
+    boundary and that boundary is present in every affected claim element's
+    `boundary_refs`
 12. one future `counterfactual_necessity_obligation` per retained support
 13. a bounded `final_scientific_delta_claim` whose status is
     `FINAL_PENDING_VALIDATION`
