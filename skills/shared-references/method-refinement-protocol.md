@@ -322,7 +322,19 @@ The final novelty Gate distinguishes failure layers:
 - `HOLD` remains in the novelty Gate for missing novelty Evidence or
   interpretation.
 
-Final Human acceptance accepts or requests revision of the final Method; it is
+Final Novelty consumes `SELECTED_PRINCIPLE.yaml`, canonical
+`FINAL_METHOD_PACKET.json`, the accepted final method review, and current
+formal novelty Evidence/context. It never consumes `FINAL_PROPOSAL.md` as
+scientific authority. After `NOVEL`, the existing `independent_method_reviewer`
+owns the formal Top-Venue Method Strength Gate and judges the workflow's twelve
+hard dimensions independently. Any FAIL blocks `TOP_VENUE_READY`; no aggregate
+score or implementation complexity can compensate. Its recoveries are fixed at
+`method_refinement`, `method_design`, `root_cause_analysis`,
+`problem_necessity`, and `problem_generation`; only an Evidence-supported fatal
+weakness with all five recoveries excluded may reuse `SCIENTIFIC_NO_GO`.
+
+Final Human acceptance opens only after `NOVEL` and `TOP_VENUE_READY`, accepts
+or requests revision of the final Method, and is
 not a Principle-selection Gate and does not start Full Validation. Only explicit
 user initiation obtains the Controller validation handoff.
 

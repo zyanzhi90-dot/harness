@@ -698,7 +698,11 @@ def test_workflow_binds_formal_review_to_packet_and_declares_no_go() -> None:
             "status": "SCIENTIFIC_NO_GO",
         }
     }
-    assert "top_venue_method_strength_gate" not in WORKFLOW["scientific_core"]["phases"]
+    assert WORKFLOW["scientific_core"]["phases"].index(
+        "final_method_novelty_gate"
+    ) < WORKFLOW["scientific_core"]["phases"].index(
+        "top_venue_method_strength_gate"
+    )
 
 
 def test_refinement_reviewer_owns_the_most_upstream_conflict_layer() -> None:

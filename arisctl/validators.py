@@ -2432,6 +2432,116 @@ def validate_json_review_verdict_artifact(
     return verdict
 
 
+def validate_top_venue_method_strength_verdict(
+    payload: Any,
+    *,
+    contract: dict[str, Any],
+    run_id: str,
+    request_id: str,
+    artifact_bindings: dict[str, str],
+    return_targets: dict[str, str],
+    final_method_id: str,
+    formal_evidence_paths: dict[str, str],
+) -> dict[str, Any]:
+    """Check mechanical closure of the reviewer-owned strength verdict."""
+
+    label = "Top-Venue method strength verdict"
+    verdict = _validate_review_binding(
+        payload,
+        label=label,
+        request_id=request_id,
+        reviewer=None,
+        verdict_id=None,
+        decision=None,
+        artifact_bindings=artifact_bindings,
+    )
+    _require_fields(verdict, tuple(contract["required_fields"]), label)
+    if verdict.get("run_id") != run_id:
+        raise ValidationError(f"{label} run_id is stale")
+    if verdict["decision"] not in set(contract["decision_enum"]):
+        raise ValidationError(f"{label} decision is invalid")
+    if set(contract.get("forbidden_score_fields") or []) & set(verdict):
+        raise ValidationError(f"{label} must not carry aggregate score fields")
+
+    dimensions = _require_mapping(verdict["dimensions"], f"{label}.dimensions")
+    required_dimensions = list(contract["required_dimensions"])
+    if set(dimensions) != set(required_dimensions):
+        raise ValidationError(f"{label} must cover every hard dimension exactly once")
+    failed_dimensions: list[str] = []
+    for dimension in required_dimensions:
+        item = _require_mapping(dimensions[dimension], f"{label}.dimensions.{dimension}")
+        _require_fields(
+            item,
+            tuple(contract["dimension_fields"]),
+            f"{label}.dimensions.{dimension}",
+        )
+        if item["judgment"] not in set(contract["dimension_judgment_enum"]):
+            raise ValidationError(f"{label} dimension {dimension!r} has an invalid judgment")
+        _required_text(item["rationale"], f"{label}.dimensions.{dimension}.rationale")
+        if item["judgment"] == "FAIL":
+            failed_dimensions.append(dimension)
+    _require_list(verdict, "findings", label)
+
+    decision = verdict["decision"]
+    if decision == "TOP_VENUE_READY":
+        if failed_dimensions:
+            raise ValidationError("TOP_VENUE_READY requires PASS on every hard dimension")
+        if verdict.get("return_guidance") not in (None, {}):
+            raise ValidationError("TOP_VENUE_READY must not carry return guidance")
+    else:
+        if not failed_dimensions:
+            raise ValidationError(
+                f"a non-ready {label} requires at least one reviewer-declared hard-dimension FAIL"
+            )
+        if decision in return_targets:
+            guidance = _validate_return_guidance(verdict, label=label, required=True)
+            assert guidance is not None
+            if guidance["decision_target"] != return_targets[decision]:
+                raise ValidationError(f"{label} return guidance does not use the canonical return target")
+        elif verdict.get("return_guidance") not in (None, {}):
+            raise ValidationError("Top-Venue NO_GO must not masquerade as a return")
+
+    no_go = verdict.get("no_go")
+    if decision == "NO_GO":
+        no_go = _require_mapping(no_go, f"{label}.no_go")
+        _require_fields(
+            no_go,
+            ("subject", "reason", "evidence_refs", "excluded_recoveries"),
+            f"{label}.no_go",
+        )
+        subject = _require_mapping(no_go["subject"], f"{label}.no_go.subject")
+        if set(subject) != {"final_method_id", "failed_dimensions"}:
+            raise ValidationError("Top-Venue NO_GO subject is invalid")
+        if subject["final_method_id"] != final_method_id:
+            raise ValidationError("Top-Venue NO_GO subject does not bind the Final Method")
+        declared_failed = _require_string_list(
+            subject["failed_dimensions"],
+            f"{label}.no_go.subject.failed_dimensions",
+            non_empty=True,
+        )
+        if set(declared_failed) != set(failed_dimensions):
+            raise ValidationError(
+                "Top-Venue NO_GO subject must identify exactly the failed hard dimensions"
+            )
+        _required_text(no_go["reason"], f"{label}.no_go.reason")
+        _validate_anchored_evidence_ids(
+            no_go["evidence_refs"],
+            label=f"{label}.no_go.evidence_refs",
+            formal_evidence_paths=formal_evidence_paths,
+            artifact_bindings=artifact_bindings,
+        )
+        excluded = _require_string_list(
+            no_go["excluded_recoveries"],
+            f"{label}.no_go.excluded_recoveries",
+            non_empty=True,
+        )
+        if set(excluded) != set(return_targets):
+            raise ValidationError("Top-Venue NO_GO must exclude every reasonable fixed return")
+    elif no_go is not None:
+        raise ValidationError("non-terminal Top-Venue verdict must not carry a no_go record")
+    return verdict
+
+
 def validate_method_test_result(
     payload: Any,
     *,

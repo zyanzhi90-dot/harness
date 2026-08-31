@@ -35,6 +35,7 @@ research-lit
   -> independent Principle convergence review
   -> research-refine from the Controller-materialized Selected Principle
   -> novelty-check(mode: method-final)
+  -> independent Top-Venue method strength Gate
   -> human final method acceptance
   -> METHOD_CONFIRMED_AWAITING_USER_VALIDATION
 ```
@@ -62,7 +63,10 @@ sequence before method work may resume.
 - No Method adaptation or final implementation commitment before accepted
   Principle convergence and Controller materialization of
   `SELECTED_PRINCIPLE.yaml`.
-- No final method novelty verdict before `refine-logs/FINAL_PROPOSAL.md`.
+- No final method novelty verdict before canonical
+  `refine-logs/FINAL_METHOD_PACKET.json` and its accepted final method review.
+- No final Human method acceptance before both Final Novelty and Top-Venue
+  Method Strength are independently accepted.
 - Final method acceptance does not start validation. It creates a blocked
   validation entry that only the user may initiate after understanding and
   confirming the method.
@@ -312,18 +316,21 @@ It owns iterative refinement; the Controller-issued
 `independent_method_reviewer` performs the one fresh final independent Gate in
 a new context. Its score is a progress signal, never a readiness rule. Require:
 
-- `refine-logs/FINAL_PROPOSAL.md`;
+- canonical `refine-logs/FINAL_METHOD_PACKET.json` plus its deterministic
+  `FINAL_PROPOSAL.md` Human view;
 - `refine-logs/FINAL_BLIND_REVIEW.md`;
 - `refine-logs/REFINE_STATE.json`;
 - separate reviewer provenance and unresolved-issue ledger.
 
-Then invoke the final method novelty gate against the final proposal:
+Then invoke the final method novelty gate against the canonical packet:
 
 ```text
-/novelty-check "mode: method-final | proposal: refine-logs/FINAL_PROPOSAL.md"
+/novelty-check "mode: method-final | packet: refine-logs/FINAL_METHOD_PACKET.json"
 ```
 
-Only after this gate present the final human decision. Compose
+Only after this Gate returns `NOVEL`, run the canonical independent
+`top_venue_method_strength_gate`; only `TOP_VENUE_READY` permits the final
+Human decision. Compose
 `idea-stage/IDEA_REPORT.md` from the compact accepted artifacts, Principle
 convergence, Selected Principle, final proposal, and verdicts by following
 [`idea-output-composition.md`](../shared-references/idea-output-composition.md).

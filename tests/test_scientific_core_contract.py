@@ -462,6 +462,10 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
         assert selected_principle["invalidate_on"] == [
             "RETHINK",
             "RETHINK_PRINCIPLE_DELTA",
+            "RETHINK_PRINCIPLE",
+            "REOPEN_RCA",
+            "REOPEN_NECESSITY",
+            "REDEFINE_PROBLEM",
             "SELECTED_PRINCIPLE_REJECTED",
             "RCA_CONFLICT",
             "NECESSITY_CONFLICT",
@@ -491,16 +495,12 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
                 "status": "SCIENTIFIC_NO_GO",
             }
         }
-        assert "top_venue_method_strength_gate" not in workflow["scientific_core"]["phases"]
-        assert all(
-            item["phase"] != "top_venue_method_strength_gate"
-            for item in workflow["phases"]
-        )
+        assert "top_venue_method_strength_gate" in workflow["scientific_core"]["phases"]
         final_human = next(
             item for item in workflow["phases"]
             if item["phase"] == "final_method_human_acceptance"
         )
-        assert final_human["depends_on"] == ["final_method_novelty_gate"]
+        assert final_human["depends_on"] == ["top_venue_method_strength_gate"]
         assert "@artifact:final_method_packet" in json.dumps(
             {
                 "scientific_core": workflow["scientific_core"],

@@ -22,6 +22,7 @@ The sequence is:
 accepted Selected Principle
   -> /research-refine
   -> final method novelty Gate
+  -> Top-Venue method strength Gate
   -> final Human Method acceptance
   -> stop at METHOD_CONFIRMED_AWAITING_USER_VALIDATION
   -> only on explicit user initiation: validation-handoff -> /experiment-plan
@@ -53,8 +54,8 @@ Selected Principle -> target-domain adaptation -> minimal faithful realization
 
 Require:
 
-- `refine-logs/FINAL_PROPOSAL.md` with every Selected Principle binding and the
-  exact required sections;
+- canonical `refine-logs/FINAL_METHOD_PACKET.json` as the sole scientific
+  authority and its deterministic `FINAL_PROPOSAL.md` Human view;
 - `refine-logs/FINAL_BLIND_REVIEW.md` from the Controller-issued current review
   request;
 - `refine-logs/REFINE_STATE.json`, review summary, and unresolved-issue record.
@@ -63,15 +64,19 @@ The formal outcomes are `METHOD_READY`, `REVISE`, `HOLD`, `RETHINK`, and
 `RCA_CONFLICT` with the Controller-declared targets. Do not proceed after a
 non-accepting verdict.
 
-## Phase 2 — Final novelty and Human acceptance
+## Phase 2 — Final novelty, Top-Venue strength, and Human acceptance
 
 Run `/novelty-check "mode: method-final"` against the accepted Selected
-Principle and `FINAL_PROPOSAL.md`. The Gate distinguishes method embodiment/
+Principle, canonical `FINAL_METHOD_PACKET.json`, accepted final method review,
+and current formal novelty Evidence/context. The Gate distinguishes method embodiment/
 Claim failure (`REVISE_METHOD_DELTA -> method_refinement`), Principle/
 Scientific-Delta failure (`RETHINK_PRINCIPLE_DELTA -> method_design`), and
 missing novelty Evidence/interpretation (`HOLD -> final_method_novelty_gate`).
 
-Only `NOVEL` reaches the final Human checkpoint. Human acceptance accepts or
+Only `NOVEL` opens the independent `top_venue_method_strength_gate`. That Gate
+uses the accepted upstream scientific artifacts and the twelve hard dimensions
+declared by the canonical workflow; only `TOP_VENUE_READY` reaches the final
+Human checkpoint. Human acceptance accepts or
 requests revision of the final Method; it does not select a Principle or start
 Full Validation. After approval, stop at
 `METHOD_CONFIRMED_AWAITING_USER_VALIDATION`.

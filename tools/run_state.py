@@ -1602,6 +1602,14 @@ def _assert_outputs(
             None,
             "final method novelty verdict",
         ),
+        "top_venue_method_strength": (
+            "top_venue",
+            set(spec.get("accepted_verdicts") or [])
+            | set((spec.get("return_targets") or {}).keys())
+            | set((spec.get("terminal_verdicts") or {}).keys()),
+            None,
+            "Top-Venue method strength verdict",
+        ),
     }
 
 
@@ -1620,6 +1628,7 @@ def _assert_outputs(
         from arisctl.validators import (
             validate_candidate_verdict_artifact,
             validate_markdown_review_verdict_artifact,
+            validate_top_venue_method_strength_verdict,
         )
 
         kind, phase_decisions, candidate_decisions, label = contract
@@ -1648,7 +1657,7 @@ def _assert_outputs(
                     formal_evidence_paths=_current_formal_evidence_paths(root, state),
                     formal_evidence_source_ids=_current_decision_grade_evidence_card_source_ids(root, state),
                 )
-            else:
+            elif kind == "markdown":
                 verdict_path = (
                     str(workflow["artifact_manifest"]["final_method_review"])
                     if spec.get("gate_id") == "method_refinement"
@@ -1709,6 +1718,25 @@ def _assert_outputs(
                             raise ValueError("final blind review NO_GO must exclude every reasonable fixed return")
                     elif no_go is not None:
                         raise ValueError("non-terminal final blind review must not carry a no_go record")
+            else:
+                verdict_path = str(
+                    workflow["artifact_manifest"]["top_venue_method_strength_verdict"]
+                )
+                packet, _ = _accepted_json_artifact(root, state, "final_method_packet")
+                verdict = validate_top_venue_method_strength_verdict(
+                    json.loads(
+                        _artifact_path(root, verdict_path).read_text(encoding="utf-8")
+                    ),
+                    contract=(workflow.get("artifact_contracts") or {})[
+                        "top_venue_method_strength_verdict"
+                    ],
+                    run_id=state["run_id"],
+                    request_id=request_id,
+                    artifact_bindings=bindings,
+                    return_targets=dict(spec.get("return_targets") or {}),
+                    final_method_id=str(packet["final_method_id"]),
+                    formal_evidence_paths=_current_formal_evidence_paths(root, state),
+                )
         except ValueError as exc:
             raise ValueError(f"phase {phase!r} has invalid {label}: {exc}") from exc
         return {

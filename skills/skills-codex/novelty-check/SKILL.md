@@ -25,8 +25,11 @@ for method mode. Never collapse problem novelty, Principle/Scientific-Delta
 novelty, and concrete Method embodiment novelty.
 
 `mode: method-final` is an explicit final-method alias. It accepts only
-the active Controller-materialized `SELECTED_PRINCIPLE.yaml` plus
-`refine-logs/FINAL_PROPOSAL.md`, runs after refinement, and must not be treated
+the active Controller-materialized `SELECTED_PRINCIPLE.yaml`, canonical
+`refine-logs/FINAL_METHOD_PACKET.json`, accepted final method review, and the
+current Gate's formal Evidence/context. `FINAL_PROPOSAL.md` is only a
+deterministic Human view and is not a scientific input or compatibility
+authority. This mode runs after refinement and must not be treated
 as the preliminary method-risk screen. A non-final `mode: method` may assess a
 Candidate Principle's Provisional Scientific Delta as an advisory risk screen;
 it cannot emit the formal final-method verdict.
@@ -35,7 +38,10 @@ For the formal final-method Gate, `idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md`
 must contain exactly one fenced JSON metadata block with `schema_version: 1`,
 the live `review_request_id`, `reviewer`, `verdict_id`, a Controller-declared
 `decision: NOVEL | REVISE_METHOD_DELTA | RETHINK_PRINCIPLE_DELTA | HOLD`, and
-the exact `reviewed_artifact_hashes` map for `FINAL_PROPOSAL.md`.
+the exact Controller-issued `reviewed_artifact_hashes` map containing the
+canonical Final Method packet and its accepted scientific inputs.
+Only `NOVEL` opens `top_venue_method_strength_gate`; this skill never opens the
+final Human Gate directly.
 
 Apply
 [`source-admission-policy.md`](../shared-references/source-admission-policy.md)
@@ -55,6 +61,11 @@ before reading or expanding any candidate paper.
    necessary composition; core and reused implementation elements;
    failure/applicability boundaries; Final Scientific Delta Claim;
    claim-validation obligations; and claimed embodiment delta.
+   Make the core comparison explicit as Target intervention + Mechanism Delta
+   + Scientific Delta + closest-prior causal equivalence. A mature or
+   transferred Source primitive, small Target adaptation, or reused algorithm
+   primitive is not by itself a failure; a new name, module, or architecture
+   does not establish novelty over a causal-equivalent Target intervention.
 4. Keep separate claim IDs (`P1...` and `M1...`).
 
 ### Phase B: Controller-Governed Literature Search

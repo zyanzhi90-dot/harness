@@ -1757,6 +1757,14 @@ def attest_current_review(
             encoding="utf-8"
         )
         payload = json.loads(text.split("```json\n", 1)[1].split("\n```", 1)[0])
+    elif current["phase"] == "top_venue_method_strength_gate":
+        payload = json.loads(
+            (
+                controller.root
+                / "idea-stage"
+                / "TOP_VENUE_METHOD_STRENGTH_VERDICT.json"
+            ).read_text(encoding="utf-8")
+        )
     elif request["required_reviewer_role"] in {
         "independent_problem_reviewer", "independent_novelty_reviewer",
     }:
@@ -1909,6 +1917,59 @@ def formal_verdict_artifact(
     return "# Formal review\n\n```json\n" + json.dumps(metadata) + "\n```\n"
 
 
+def top_venue_verdict_artifact(
+    controller: ARISController,
+    *,
+    verdict_id: str,
+    decision: str = "TOP_VENUE_READY",
+    reviewer: str = "claude-sonnet-4",
+    failed_dimension: str = "problem_value",
+    no_go: dict | None = None,
+) -> dict:
+    state = controller.status()
+    request = run_state._find_phase(
+        state, "top_venue_method_strength_gate"
+    )["review_request"]
+    contract = controller.workflow["artifact_contracts"][
+        "top_venue_method_strength_verdict"
+    ]
+    payload = {
+        "schema_version": 1,
+        "run_id": controller.run_id,
+        "review_request_id": request["id"],
+        "reviewer": reviewer,
+        "verdict_id": verdict_id,
+        "decision": decision,
+        "reviewed_artifact_hashes": request["artifact_bindings"],
+        "dimensions": {
+            dimension: {
+                "judgment": (
+                    "FAIL"
+                    if decision != "TOP_VENUE_READY"
+                    and dimension == failed_dimension
+                    else "PASS"
+                ),
+                "rationale": f"Independent scientific judgment for {dimension}.",
+            }
+            for dimension in contract["required_dimensions"]
+        },
+        "findings": [],
+        "return_guidance": None,
+    }
+    target = controller._phase_spec(
+        state, "top_venue_method_strength_gate"
+    ).get("return_targets", {}).get(decision)
+    if target:
+        payload["return_guidance"] = {
+            "missing_evidence": ["The failed scientific dimension requires recovery."],
+            "required_check": ["Repair the failed dimension at its canonical layer."],
+            "decision_target": target,
+        }
+    if no_go is not None:
+        payload["no_go"] = no_go
+    return payload
+
+
 def start_controller(
     root: Path,
     *,
@@ -2028,6 +2089,9 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "refine-logs/FINAL_PROPOSAL.md": proposal,
         "refine-logs/FINAL_BLIND_REVIEW.md": "# Accepted method review\n",
         "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "# Novelty\n",
+        "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json": json.dumps(
+            {"decision": "TOP_VENUE_READY"}
+        ) + "\n",
         "idea-stage/IDEA_REPORT.md": "# Accepted\n",
     }
     for raw_path, content in artifacts.items():
@@ -2067,6 +2131,7 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "principle_evaluation": "accepted",
         "method_refinement": "accepted",
         "final_method_novelty_gate": "accepted",
+        "top_venue_method_strength_gate": "accepted",
         "final_method_human_acceptance": "human_accepted",
     }
     producers = {
@@ -2083,6 +2148,9 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "refine-logs/FINAL_PROPOSAL.md": "method_refinement",
         "refine-logs/FINAL_BLIND_REVIEW.md": "method_refinement",
         "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": "final_method_novelty_gate",
+        "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json": (
+            "top_venue_method_strength_gate"
+        ),
         "idea-stage/IDEA_REPORT.md": "final_method_human_acceptance",
     }
     with controller._store.mutate() as state:
@@ -7470,8 +7538,20 @@ def test_final_method_novelty_uses_layered_return_targets(
     tmp_path: Path, decision: str, target: str, selected_remains: bool
 ) -> None:
     controller = confirmed_validation_controller(tmp_path)
+    packet_path = write_batch4_final_packet(controller)
     with controller._store.mutate() as state:
         core = state["scientific_core"]
+        core["accepted_artifacts"]["refine-logs/FINAL_METHOD_PACKET.json"] = (
+            controller._artifact_record(
+                "refine-logs/FINAL_METHOD_PACKET.json",
+                producer_phase="method_refinement",
+                provenance={
+                    "controller": "ARISController",
+                    "run_id": controller.run_id,
+                },
+                upstream_snapshot={},
+            )
+        )
         core["status"] = "ACTIVE"
         core["current_phase"] = "final_method_novelty_gate"
         core["validation_entry"] = None
@@ -7481,6 +7561,7 @@ def test_final_method_novelty_uses_layered_return_targets(
         phase["status"] = "pending"
         phase["review_request"] = None
         run_state._find_phase(state, "final_method_human_acceptance")["status"] = "pending"
+    assert packet_path.is_file()
 
     controller.start_current_phase()
     verdict_id = f"final-novelty-{decision.lower()}"
@@ -7525,6 +7606,7 @@ def activate_method_refinement_review(controller: ARISController) -> dict:
         for phase_name in (
             "method_refinement",
             "final_method_novelty_gate",
+            "top_venue_method_strength_gate",
             "final_method_human_acceptance",
         ):
             phase = run_state._find_phase(state, phase_name)
@@ -7536,6 +7618,7 @@ def activate_method_refinement_review(controller: ARISController) -> dict:
             "refine-logs/FINAL_BLIND_REVIEW.md",
             "refine-logs/REFINE_STATE.json",
             "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+            "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json",
             "idea-stage/IDEA_REPORT.md",
         ):
             core["accepted_artifacts"].pop(raw_path, None)
@@ -7700,6 +7783,7 @@ def test_current_packet_first_downstream_reaches_existing_final_human_boundary(
         for phase_name in (
             "method_refinement",
             "final_method_novelty_gate",
+            "top_venue_method_strength_gate",
             "final_method_human_acceptance",
         ):
             phase = run_state._find_phase(state, phase_name)
@@ -7709,6 +7793,7 @@ def test_current_packet_first_downstream_reaches_existing_final_human_boundary(
             "refine-logs/FINAL_PROPOSAL.md",
             "refine-logs/FINAL_BLIND_REVIEW.md",
             "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+            "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json",
             "idea-stage/IDEA_REPORT.md",
         ):
             core["accepted_artifacts"].pop(raw_path, None)
@@ -7734,6 +7819,11 @@ def test_current_packet_first_downstream_reaches_existing_final_human_boundary(
     )
 
     controller.start_current_phase()
+    novelty_request = run_state._find_phase(
+        controller.status(), "final_method_novelty_gate"
+    )["review_request"]
+    assert "refine-logs/FINAL_METHOD_PACKET.json" in novelty_request["artifact_bindings"]
+    assert "refine-logs/FINAL_PROPOSAL.md" not in novelty_request["artifact_bindings"]
     novelty_verdict_id = "novel-after-packet"
     (tmp_path / "idea-stage" / "FINAL_METHOD_NOVELTY_VERDICT.md").write_text(
         formal_verdict_artifact(controller, verdict_id=novelty_verdict_id),
@@ -7741,20 +7831,201 @@ def test_current_packet_first_downstream_reaches_existing_final_human_boundary(
     )
     controller.complete_current_phase()
     accept_formal(controller, novelty_verdict_id, "claude-sonnet-4")
+    assert controller.status()["scientific_core"]["current_phase"] == (
+        "top_venue_method_strength_gate"
+    )
+
+    for history_name in ("METHOD_PRINCIPLES.jsonl", "METHOD_TEST_EVIDENCE.jsonl"):
+        (tmp_path / "idea-stage" / history_name).write_text("{}\n", encoding="utf-8")
+    controller.start_current_phase()
+    top_request = run_state._find_phase(
+        controller.status(), "top_venue_method_strength_gate"
+    )["review_request"]
+    assert "idea-stage/METHOD_PRINCIPLES.jsonl" in top_request["artifact_bindings"]
+    assert "idea-stage/METHOD_TEST_EVIDENCE.jsonl" in top_request["artifact_bindings"]
+    top_venue_verdict_id = "top-venue-ready-after-packet"
+    top_venue_path = (
+        tmp_path / "idea-stage" / "TOP_VENUE_METHOD_STRENGTH_VERDICT.json"
+    )
+    top_venue_path.write_text(
+        json.dumps(
+            top_venue_verdict_artifact(
+                controller, verdict_id=top_venue_verdict_id
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, top_venue_verdict_id, "claude-sonnet-4")
     state = controller.status()
     assert state["scientific_core"]["current_phase"] == "final_method_human_acceptance"
-    assert all(
-        phase["phase"] != "top_venue_method_strength_gate"
-        for phase in state["phases"]
-    )
     human_request = controller.validate_human_gate_request("method_acceptance")
-    assert "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json" not in (
+    assert "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json" in (
         human_request["artifact_bindings"]
     )
     approve(controller, "method_acceptance")
     assert controller.status()["scientific_core"]["status"] == (
         "METHOD_CONFIRMED_AWAITING_USER_VALIDATION"
     )
+
+
+def reach_top_venue_gate(controller: ARISController) -> dict:
+    activate_method_refinement_review(controller)
+    method_verdict_id = "method-ready-for-top-venue"
+    (controller.root / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
+        formal_verdict_artifact(controller, verdict_id=method_verdict_id),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, method_verdict_id, "claude-sonnet-4")
+
+    controller.start_current_phase()
+    novelty_verdict_id = "novel-for-top-venue"
+    (
+        controller.root / "idea-stage" / "FINAL_METHOD_NOVELTY_VERDICT.md"
+    ).write_text(
+        formal_verdict_artifact(controller, verdict_id=novelty_verdict_id),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    accept_formal(controller, novelty_verdict_id, "claude-sonnet-4")
+    assert controller.status()["scientific_core"]["current_phase"] == (
+        "top_venue_method_strength_gate"
+    )
+    controller.start_current_phase()
+    return run_state._find_phase(
+        controller.status(), "top_venue_method_strength_gate"
+    )["review_request"]
+
+
+@pytest.mark.parametrize(
+    ("decision", "target", "selected_remains"),
+    [
+        ("REVISE_METHOD", "method_refinement", True),
+        ("RETHINK_PRINCIPLE", "method_design", False),
+        ("REOPEN_RCA", "root_cause_analysis", False),
+        ("REOPEN_NECESSITY", "problem_necessity", False),
+        ("REDEFINE_PROBLEM", "problem_generation", False),
+    ],
+)
+def test_top_venue_returns_reuse_canonical_lifecycle(
+    tmp_path: Path, decision: str, target: str, selected_remains: bool
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    reach_top_venue_gate(controller)
+    verdict_id = f"top-venue-{decision.lower()}"
+    verdict_path = (
+        tmp_path / "idea-stage" / "TOP_VENUE_METHOD_STRENGTH_VERDICT.json"
+    )
+    verdict_path.write_text(
+        json.dumps(
+            top_venue_verdict_artifact(
+                controller, verdict_id=verdict_id, decision=decision
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    attest_current_review(
+        controller, verdict_id, "claude-sonnet-4", decision=decision
+    )
+    returned = controller.return_current_phase(verdict_id, "claude-sonnet-4")
+
+    core = returned["scientific_core"]
+    assert core["current_phase"] == target
+    assert core["return_history"][-1]["return_target"] == target
+    selected_path = tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml"
+    assert selected_path.exists() is selected_remains
+    assert (
+        "idea-stage/SELECTED_PRINCIPLE.yaml" in core["accepted_artifacts"]
+    ) is selected_remains
+
+
+def test_top_venue_ready_cannot_hide_a_hard_dimension_fail(tmp_path: Path) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    reach_top_venue_gate(controller)
+    payload = top_venue_verdict_artifact(
+        controller, verdict_id="invalid-ready-with-fail"
+    )
+    payload["dimensions"]["minimality"]["judgment"] = "FAIL"
+    (
+        tmp_path / "idea-stage" / "TOP_VENUE_METHOD_STRENGTH_VERDICT.json"
+    ).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    with pytest.raises(ControllerError, match="requires PASS on every hard dimension"):
+        controller.complete_current_phase()
+    assert controller.status()["scientific_core"]["current_phase"] == (
+        "top_venue_method_strength_gate"
+    )
+
+
+def test_top_venue_acceptance_consumes_the_reviewer_owned_dimension_payload(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    request = reach_top_venue_gate(controller)
+    verdict_id = "reviewer-owned-top-venue"
+    payload = top_venue_verdict_artifact(controller, verdict_id=verdict_id)
+    path = tmp_path / "idea-stage" / "TOP_VENUE_METHOD_STRENGTH_VERDICT.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    controller.complete_current_phase()
+
+    altered = deepcopy(payload)
+    altered["dimensions"]["minimality"]["rationale"] = "Different rationale."
+    attest(controller, request["required_reviewer_role"], altered)
+    with pytest.raises(
+        ControllerError,
+        match="differs from the reviewer payload",
+    ):
+        controller.accept_current_phase(verdict_id, "claude-sonnet-4")
+
+
+def test_top_venue_no_go_reuses_existing_scientific_terminal(tmp_path: Path) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    request = reach_top_venue_gate(controller)
+    no_go = {
+        "subject": {
+            "final_method_id": "FM-1",
+            "failed_dimensions": ["problem_value"],
+        },
+        "reason": "Current formal Evidence establishes a fatal scientific weakness.",
+        "evidence_refs": ["E1"],
+        "excluded_recoveries": [
+            "REVISE_METHOD",
+            "RETHINK_PRINCIPLE",
+            "REOPEN_RCA",
+            "REOPEN_NECESSITY",
+            "REDEFINE_PROBLEM",
+        ],
+    }
+    verdict_id = "top-venue-no-go"
+    payload = top_venue_verdict_artifact(
+        controller,
+        verdict_id=verdict_id,
+        decision="NO_GO",
+        no_go=no_go,
+    )
+    path = tmp_path / "idea-stage" / "TOP_VENUE_METHOD_STRENGTH_VERDICT.json"
+
+    incomplete = deepcopy(payload)
+    incomplete["no_go"]["excluded_recoveries"].remove("REVISE_METHOD")
+    path.write_text(json.dumps(incomplete) + "\n", encoding="utf-8")
+    with pytest.raises(ControllerError, match="exclude every reasonable fixed return"):
+        controller.complete_current_phase()
+
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    controller.complete_current_phase()
+    attest(controller, request["required_reviewer_role"], payload)
+    state = controller.terminate_scientific_core(
+        verdict_id, "claude-sonnet-4"
+    )
+    core = state["scientific_core"]
+    assert core["status"] == "SCIENTIFIC_NO_GO"
+    assert core["current_phase"] is None
+    assert core["validation_entry"] is None
+    assert core["no_go_record"]["no_go"] == no_go
 
 
 @pytest.mark.parametrize(
@@ -7777,6 +8048,7 @@ def test_method_refinement_no_go_requires_unrecoverable_fatal_feasibility(
         state["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
         for phase_name in (
             "method_refinement", "final_method_novelty_gate",
+            "top_venue_method_strength_gate",
             "final_method_human_acceptance",
         ):
             phase = run_state._find_phase(state, phase_name)
@@ -7786,6 +8058,7 @@ def test_method_refinement_no_go_requires_unrecoverable_fatal_feasibility(
             "refine-logs/FINAL_PROPOSAL.md",
             "refine-logs/FINAL_BLIND_REVIEW.md",
             "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+            "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json",
             "idea-stage/IDEA_REPORT.md",
         ):
             core["accepted_artifacts"].pop(raw_path, None)

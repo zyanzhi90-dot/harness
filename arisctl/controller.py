@@ -2696,6 +2696,35 @@ class ARISController:
 
         role = str(request["required_reviewer_role"])
         phase_name = str(phase["phase"])
+        if phase_name == "top_venue_method_strength_gate":
+            payload = self._attested_reviewer_payload(
+                role=role,
+                request_id=str(request["id"]),
+                reviewer=str(result["reviewer"]),
+                verdict_id=str(result["verdict_id"]),
+                decision=str(result["gate_verdict"]),
+                artifact_bindings=dict(request["artifact_bindings"]),
+            )
+            paths = self._resolved_phase_paths(
+                state, phase_name, "produced_artifacts"
+            )
+            if len(paths) != 1:
+                raise ControllerError(
+                    "Top-Venue Gate must declare exactly one verdict artifact"
+                )
+            try:
+                actual = json.loads(
+                    (self.root / paths[0]).read_text(encoding="utf-8")
+                )
+            except json.JSONDecodeError as exc:
+                raise ControllerError(
+                    "Top-Venue verdict artifact is not valid JSON"
+                ) from exc
+            if actual != payload:
+                raise ControllerError(
+                    "Top-Venue verdict artifact differs from the reviewer payload"
+                )
+            return
         if phase_name not in {"problem_quality_gate", "problem_novelty_gate"}:
             return
         payload = self._attested_reviewer_payload(
@@ -2835,6 +2864,7 @@ class ARISController:
             "principle_evaluation",
             "method_refinement",
             "final_method_novelty_gate",
+            "top_venue_method_strength_gate",
             "final_method_human_acceptance",
         }:
             self._assert_active_problem_version_current(state)
@@ -3114,6 +3144,13 @@ class ARISController:
             if not isinstance(record, dict) or not isinstance(record.get("sha256"), str):
                 raise ControllerError(f"Gate input has no registered hash: {raw_path}")
             bindings[str(raw_path)] = str(record["sha256"])
+        if phase_name == "top_venue_method_strength_gate":
+            for raw_path in self._resolved_phase_paths(
+                state, phase_name, "scientific_history_inputs"
+            ):
+                history_path = self.root / raw_path
+                if history_path.is_file():
+                    bindings[raw_path] = sha256_file(history_path)
         if phase_name == "root_cause_gate":
             analysis_phase = run_state._find_phase(state, "root_cause_analysis")
             for source in analysis_phase.get("diagnostic_pilot_artifacts") or []:
@@ -3138,6 +3175,60 @@ class ARISController:
             bindings.update(self._problem_candidate_evidence_bindings(state, survivor_ids=survivor_ids))
         if phase_name == "problem_novelty_gate":
             bindings.update(self._novelty_coverage_bindings())
+        if phase_name in {
+            "final_method_novelty_gate",
+            "top_venue_method_strength_gate",
+        }:
+            packet_path = str(
+                self.workflow["artifact_manifest"]["final_method_packet"]
+            )
+            try:
+                packet = json.loads((self.root / packet_path).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ControllerError(
+                    "Final Method Evidence bindings require the canonical packet"
+                ) from exc
+            declared_evidence_ids: set[str] = set()
+
+            def collect(value: Any) -> None:
+                if isinstance(value, dict):
+                    for key, nested in value.items():
+                        if key in {"evidence_refs", "excluded_recovery_evidence_refs"}:
+                            if not isinstance(nested, list):
+                                raise ControllerError(
+                                    "Final Method packet Evidence refs are invalid"
+                                )
+                            declared_evidence_ids.update(
+                                item for item in nested if isinstance(item, str) and item
+                            )
+                        else:
+                            collect(nested)
+                elif isinstance(value, list):
+                    for nested in value:
+                        collect(nested)
+
+            collect(packet)
+            formal_paths = run_state._current_formal_evidence_paths(
+                str(self.root), state
+            )
+            # The accepted packet was mechanically closed in method_refinement.
+            # Its cited Evidence therefore retains that accepted phase context
+            # while the packet remains current downstream.
+            current_ids = self._current_phase_evidence_ids(
+                state, "method_refinement"
+            )
+            missing = sorted(declared_evidence_ids - current_ids)
+            if missing:
+                raise ControllerError(
+                    f"Final Method cites Evidence outside the current Gate context: {missing}"
+                )
+            for evidence_id in sorted(declared_evidence_ids):
+                raw_path = formal_paths.get(evidence_id)
+                if raw_path is None:
+                    raise ControllerError(
+                        f"Final Method cites unregistered formal Evidence: {evidence_id}"
+                    )
+                bindings[raw_path] = sha256_file(self.root / raw_path)
         bindings.update(self._incremental_evidence_bindings(state, phase_name))
         if not bindings:
             raise ControllerError(f"formal Gate {phase_name!r} has no bindable reviewed artifact")
@@ -4382,6 +4473,7 @@ class ARISController:
                 "principle_evaluation",
                 "method_refinement",
                 "final_method_novelty_gate",
+                "top_venue_method_strength_gate",
                 "final_method_human_acceptance",
             }:
                 active = self._assert_active_problem_version_current(state)
@@ -4689,7 +4781,12 @@ class ARISController:
                     path: dict(record)
                     for path, record in core["accepted_artifacts"].items()
                     if record.get("producer_phase")
-                    in {"method_refinement", "final_method_novelty_gate", current}
+                    in {
+                        "method_refinement",
+                        "final_method_novelty_gate",
+                        "top_venue_method_strength_gate",
+                        current,
+                    }
                 },
                 "created_at": now(),
             }
@@ -5222,7 +5319,7 @@ class ARISController:
             if decision not in request.get("terminal_verdicts", []):
                 raise ControllerError("review verdict is not terminal for this formal Gate")
             self._assert_candidate_verdict_attested(state, phase, request, result)
-            if phase["phase"] == "method_refinement":
+            if result.get("no_go") is not None:
                 reviewer_payload = self._attested_reviewer_payload(
                     role=str(request["required_reviewer_role"]),
                     request_id=str(request["id"]),
@@ -5256,7 +5353,7 @@ class ARISController:
                 "terminal_status": terminal["status"],
                 "terminated_at": terminated_at,
             }
-            if phase["phase"] == "method_refinement":
+            if result.get("no_go") is not None:
                 record["no_go"] = deepcopy(result["no_go"])
             phase["review_request"] = None
             phase["terminal_decision"] = dict(record)

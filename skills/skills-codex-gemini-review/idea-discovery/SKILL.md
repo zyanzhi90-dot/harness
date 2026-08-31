@@ -23,7 +23,8 @@ independent cross-family challenge; it does not create a second default gate.
 -> independent Principle test-plan review -> Human test-set approval
 -> /method-test -> /idea-creator "mode: method"
 -> independent Principle convergence review -> /research-refine
--> /novelty-check "mode: method-final" -> human final method acceptance
+-> /novelty-check "mode: method-final" -> independent Top-Venue strength Gate
+-> human final method acceptance
 -> METHOD_CONFIRMED_AWAITING_USER_VALIDATION
 ```
 
@@ -66,5 +67,7 @@ second Human approval; `/method-test` only executes that approved
 discriminating-test set and never interprets Evidence or convergence.
 Method adaptation starts only from the Controller-materialized Selected
 Principle. Preliminary novelty is advisory; final method novelty requires
-`FINAL_PROPOSAL.md`. `research-review` is optional. Full Validation remains a
+canonical `FINAL_METHOD_PACKET.json` and its accepted final review;
+`FINAL_PROPOSAL.md` remains a Human view. Final Human acceptance also requires
+`TOP_VENUE_READY`. `research-review` is optional. Full Validation remains a
 separate, explicitly user-initiated continuation.

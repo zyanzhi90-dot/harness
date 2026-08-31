@@ -25,7 +25,9 @@ for problem mode and
 for method mode. Never collapse problem novelty, Principle/Scientific-Delta
 novelty, and concrete Method embodiment novelty. `mode: method-final` is the
 formal final-method alias and accepts only the Controller-bound Selected
-Principle, `FINAL_PROPOSAL.md`, and final independent review. Non-final
+Principle, canonical `FINAL_METHOD_PACKET.json`, accepted final method review,
+and current formal Evidence/context. `FINAL_PROPOSAL.md` is only a
+deterministic Human view, not scientific or compatibility authority. Non-final
 `mode: method` is only an advisory risk screen.
 
 For the formal final-method Gate,
@@ -33,7 +35,10 @@ For the formal final-method Gate,
 metadata block with `schema_version: 1`, the live `review_request_id`,
 `reviewer`, `verdict_id`, a Controller-declared `decision: NOVEL |
 REVISE_METHOD_DELTA | RETHINK_PRINCIPLE_DELTA | HOLD`, and the exact
-`reviewed_artifact_hashes` map for `FINAL_PROPOSAL.md`.
+Controller-issued `reviewed_artifact_hashes` map containing the canonical
+packet and accepted scientific inputs.
+Only `NOVEL` opens `top_venue_method_strength_gate`; this skill never opens the
+final Human Gate directly.
 
 Apply
 [`source-admission-policy.md`](../shared-references/source-admission-policy.md)
@@ -49,6 +54,10 @@ before reading or expanding any candidate paper.
    minimal faithful realization, Principle-only closure, residual gaps, minimal
    necessary composition, failure/applicability boundaries, Final Scientific
    Delta Claim, claim-validation obligations, and embodiment delta as `M1...`.
+   Compare Target intervention + Mechanism Delta + Scientific Delta against
+   closest-prior causal equivalence. Do not reject mature Source primitives,
+   transfer, small Target adaptation, or reused algorithms by themselves, and
+   do not accept names, modules, or architecture differences as separation.
 
 ### Phase B: Controller-Governed Literature Search
 For each applicable claim:
