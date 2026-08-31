@@ -356,10 +356,22 @@ def main() -> int:
                     "result_to_claim_reviewer must return the complete canonical validation verdict payload: "
                     + ", ".join(missing)
                 )
-            if payload.get("decision") == "VALIDATED" and "mechanism_evidence_closure" not in payload:
-                raise ValueError(
-                    "result_to_claim_reviewer VALIDATED payload requires mechanism_evidence_closure"
-                )
+            if payload.get("decision") == "VALIDATED":
+                required_validation_fields = {
+                    "mechanism_evidence_closure", "coverage_assessments",
+                    "supported_claim_elements", "applicability_boundaries",
+                    "retained_limitations", "remaining_uncertainties",
+                }
+                missing = sorted(required_validation_fields - set(payload))
+                if missing:
+                    raise ValueError(
+                        "result_to_claim_reviewer VALIDATED payload is incomplete: "
+                        + ", ".join(missing)
+                    )
+                if "established_scientific_delta" in payload:
+                    raise ValueError(
+                        "result_to_claim_reviewer cannot author Established Scientific Delta"
+                    )
         target = review_attestation_path(root, run_id, role, correlation_id)
     else:
         target = root / ".aris" / "agent-attestations" / role / f"{correlation_id}.json"

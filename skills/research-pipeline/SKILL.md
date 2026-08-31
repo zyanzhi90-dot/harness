@@ -26,14 +26,13 @@ python -m arisctl --root . validation-handoff <run_id>
 
 Proceed only when this command succeeds. It is the sole formal entry to this
 pipeline: it records the user's validation start and verifies that the run is in
-`METHOD_CONFIRMED_AWAITING_USER_VALIDATION`, with the accepted problem,
-root-cause analysis and verdict, Controller-materialized Selected Principle,
-final method proposal, novelty verdict, human method acceptance, provenance,
-and current artifact hashes. Consume the returned `validation_obligations`:
-causal chains, Required Mechanism Changes, Required Capabilities/Design
-Obligations, selected Principle intervention, core method changes, predicted
-mechanism changes, failure/applicability boundaries, Final Scientific Delta
-Claim, and claim-validation obligations.
+`METHOD_CONFIRMED_AWAITING_USER_VALIDATION`, with the accepted Necessity,
+RCA, Method Design requirements, Principle Evidence/convergence closure,
+Controller-materialized Selected Principle, canonical Final Method Packet,
+accepted Final Method review, Final Novelty verdict, Top-Venue verdict, and
+Final Human acceptance. Consume the returned exact `validation_obligations`
+coverage set and packet claim-validation obligations. `FINAL_PROPOSAL.md` is
+only a Human view and is never reconstructed or consumed as machine truth.
 
 Record and pass forward only the returned run ID, workflow hash, **handoff
 hash**, artifact hash map, and artifact paths. Do not recreate, infer, replace, or supplement
@@ -82,7 +81,9 @@ ad-hoc/legacy path inside `/research-pipeline`.
    Principle remains valid, but its concrete Method/Claim requires revision),
    `SELECTED_PRINCIPLE_REJECTED` (return to Principle formation),
    `ROOT_CAUSE_REJECTED` (return to root-cause analysis), and
-   `PROBLEM_PREMISE_REJECTED` (reopen problem generation). The
+   `NECESSITY_PREMISE_REJECTED` (reopen Problem Necessity when Simple Repair or
+   the residual envelope premise fails), and `PROBLEM_PREMISE_REJECTED`
+   (reopen problem generation only when the Problem premise/identity fails). The
    Controller archives and invalidates the affected downstream canonical
    artifacts; this skill never chooses a target itself.
 

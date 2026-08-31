@@ -471,6 +471,7 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
             "NECESSITY_CONFLICT",
             "PROBLEM_CONFLICT",
             "ROOT_CAUSE_REJECTED",
+            "NECESSITY_PREMISE_REJECTED",
             "PROBLEM_PREMISE_REJECTED",
         ]
         refinement = next(item for item in workflow["phases"] if item["phase"] == "method_refinement")
@@ -624,8 +625,22 @@ def test_formal_test_and_validation_contracts_separate_execution_from_interpreta
     assert validation["decision_enum"] == [
         "VALIDATED", "METHOD_REFINEMENT_REQUIRED",
         "SELECTED_PRINCIPLE_REJECTED", "ROOT_CAUSE_REJECTED",
+        "NECESSITY_PREMISE_REJECTED",
         "PROBLEM_PREMISE_REJECTED",
     ]
+
+
+def test_full_validation_reviewer_owns_science_and_packet_is_only_method_authority() -> None:
+    reviewer = read(REPO_ROOT / ".codex" / "agents" / "result_to_claim_reviewer.toml")
+    assert "canonical `FINAL_METHOD_PACKET.json`" in reviewer
+    assert "`FINAL_PROPOSAL.md` is not an input or machine authority" in reviewer
+    assert "predicted mechanism change -> observed mechanism change" in reviewer
+    assert "Performance improvement alone is insufficient" in reviewer
+    assert "exact `coverage_requirements`" in reviewer
+    assert "Do not use field presence, keywords, counts, or a score" in reviewer
+    assert "`NECESSITY_PREMISE_REJECTED`" in reviewer
+    assert "`PROBLEM_PREMISE_REJECTED` only" in reviewer
+    assert "Do not author `established_scientific_delta`" in reviewer
 
 def test_method_test_and_validation_skills_fail_closed_for_formal_inputs() -> None:
     for root in (MAIN, CODEX):

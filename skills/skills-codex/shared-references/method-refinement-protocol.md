@@ -336,7 +336,12 @@ weakness with all five recoveries excluded may reuse `SCIENTIFIC_NO_GO`.
 Final Human acceptance opens only after `NOVEL` and `TOP_VENUE_READY`, accepts
 or requests revision of the final Method, and is
 not a Principle-selection Gate and does not start Full Validation. Only explicit
-user initiation obtains the Controller validation handoff.
+user initiation obtains the Controller validation handoff. That handoff binds
+the canonical `FINAL_METHOD_PACKET.json` and accepted scientific closures; it
+never parses `FINAL_PROPOSAL.md`. Full Validation must exact-cover every active
+packet obligation, causal edge, claim element, restriction, and boundary, and
+only the Controller may materialize Established Scientific Delta from the
+packet claim elements actually supported by accepted causal validation.
 
 Use stage language exactly:
 

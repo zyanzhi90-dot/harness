@@ -17,7 +17,7 @@ This skill bridges Workflow 1 (idea discovery + method refinement) and Workflow 
 Workflow 1 output:                    This skill:                                    Workflow 2 input:
 refine-logs/EXPERIMENT_PLAN.md   →   implement → GPT-5.6-Sol review → deploy → collect → initial results ready
 refine-logs/EXPERIMENT_TRACKER.md     code        (cross-model)    /run-experiment     for /auto-review-loop
-refine-logs/FINAL_PROPOSAL.md
+refine-logs/FINAL_METHOD_PACKET.json
 ```
 
 ## Constants
@@ -45,8 +45,9 @@ python -m arisctl --root . validation-handoff <run_id>
 ```
 
 Proceed only when it succeeds and the formal `EXPERIMENT_PLAN.md` records the
-same run ID, workflow hash, and artifact-hash map. Consume only the returned
-canonical artifacts and the bound plan. If the preflight fails or the plan's
+same run ID, workflow hash, handoff hash, artifact-hash map, and exact validation
+coverage set. Consume the Final Method machine facts only from the bound
+`refine-logs/FINAL_METHOD_PACKET.json`; `FINAL_PROPOSAL.md` is a Human view. If the preflight fails or the plan's
 bindings differ, stop and report the missing, changed, or non-canonical
 artifact. Do not create `FINAL_PROPOSAL`, `RESEARCH_CONTRACT`, or any other
 upstream artifact from the prompt, an old report, `IDEA_REPORT`, a compatibility
@@ -65,7 +66,7 @@ or more of:
 
 1. **`refine-logs/EXPERIMENT_PLAN.md`** (best) — claim-driven experiment roadmap from `/experiment-plan`
 2. **`refine-logs/EXPERIMENT_TRACKER.md`** — run-by-run execution table
-3. **`refine-logs/FINAL_PROPOSAL.md`** — method description for implementation context
+3. **`refine-logs/FINAL_METHOD_PACKET.json`** — sole structured method authority for a formal run; for non-canonical ad-hoc work a proposal may remain a declared source
 4. **`idea-stage/IDEA_CANDIDATES.md`** — compact idea summary (preferred when `COMPACT: true`) *(fall back to `./IDEA_CANDIDATES.md` if not found)*
 5. **`idea-stage/IDEA_REPORT.md`** — full brainstorm output *(fall back to `./IDEA_REPORT.md` if not found)*
 
@@ -88,7 +89,7 @@ Read `EXPERIMENT_PLAN.md` and extract:
    - Success criterion
    - Priority (MUST-RUN vs NICE-TO-HAVE)
 3. **Compute budget** — total estimated GPU-hours
-4. **Method details** from `FINAL_PROPOSAL.md` — what exactly to implement
+4. **Method details** from the bound `FINAL_METHOD_PACKET.json` — what exactly to implement
 
 Present a brief summary:
 
@@ -138,7 +139,7 @@ For each milestone (in order), write the experiment scripts:
    - Are all hyperparameters from EXPERIMENT_PLAN.md reflected in argparse?
    - Is the random seed fixed and controllable?
    - Are results saved in a parseable format (JSON/CSV)?
-   - Does the code match FINAL_PROPOSAL.md's method description?
+   - Does the code match `FINAL_METHOD_PACKET.json` core changes and real computational relation?
 
 ### Phase 2.5: Cross-Model Code Review (when CODE_REVIEW = true)
 
@@ -157,7 +158,7 @@ mcp__codex__codex:
     [paste key sections from EXPERIMENT_PLAN.md]
 
     ## Method Description:
-    [paste from FINAL_PROPOSAL.md]
+    [paste structured facts from FINAL_METHOD_PACKET.json]
 
     ## Implementation:
     [paste the experiment scripts]

@@ -90,11 +90,13 @@ python -m arisctl --root . validation-handoff <run_id>
 ```
 
 If it fails, stop. If it succeeds, invoke `/experiment-plan` with the live run
-ID, workflow hash, handoff hash, artifact bindings, Selected Principle
-obligations, and Final Proposal obligations. The plan must cover causal chains,
-RMCs, Capabilities/Obligations, core Method changes, predicted mechanism
-changes, failure/boundary conditions, the Final Scientific Delta Claim, and
-claim-validation obligations.
+ID, workflow hash, handoff hash, artifact bindings, and the exact packet-derived
+coverage requirements. The plan must cover every active assumption, condition,
+prediction, feasibility obligation, causal chain, RMC, Capability/Obligation,
+core Method change, Mechanism Delta, DAG edge, counterfactual, claim element,
+and claim/applicability boundary. It must consume
+`FINAL_METHOD_PACKET.json`; the deterministic Final Proposal is not a machine
+input.
 
 Do not call Principle-discrimination tests from the completed pre-convergence
 cycle a substitute for Full Validation. They may be cited only through current

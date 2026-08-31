@@ -197,7 +197,7 @@
       "required_fields": ["schema_version", "principle_id", "principle_version", "principle", "intervention", "changed_structure", "problem_binding", "root_cause_binding", "causal_chain_ids", "mechanism_change_ids", "capability_ids", "obligation_ids", "origin_binding", "origin_closure", "intervention_alignment", "target_intervention_novelty", "accepted_assumptions", "accepted_predictions", "provisional_scientific_delta", "evidence_closure", "activation_conditions", "failure_conditions", "applicability_boundaries", "remaining_uncertainty"],
       "origin_binding_fields": ["origin_type", "origin_ref_id", "alignment_ref_id"],
       "preserve_on": ["REVISE", "HOLD", "REVISE_METHOD_DELTA", "REVISE_METHOD", "final_human_request_revision", "METHOD_REFINEMENT_REQUIRED"],
-      "invalidate_on": ["RETHINK", "RETHINK_PRINCIPLE_DELTA", "RETHINK_PRINCIPLE", "REOPEN_RCA", "REOPEN_NECESSITY", "REDEFINE_PROBLEM", "SELECTED_PRINCIPLE_REJECTED", "RCA_CONFLICT", "NECESSITY_CONFLICT", "PROBLEM_CONFLICT", "ROOT_CAUSE_REJECTED", "PROBLEM_PREMISE_REJECTED"]
+      "invalidate_on": ["RETHINK", "RETHINK_PRINCIPLE_DELTA", "RETHINK_PRINCIPLE", "REOPEN_RCA", "REOPEN_NECESSITY", "REDEFINE_PROBLEM", "SELECTED_PRINCIPLE_REJECTED", "RCA_CONFLICT", "NECESSITY_CONFLICT", "PROBLEM_CONFLICT", "ROOT_CAUSE_REJECTED", "NECESSITY_PREMISE_REJECTED", "PROBLEM_PREMISE_REJECTED"]
     },
     "final_method_packet": {
       "format": "json",
@@ -258,9 +258,10 @@
     "validation_result": {
       "format": "json",
       "schema_version": 1,
-      "decision_enum": ["VALIDATED", "METHOD_REFINEMENT_REQUIRED", "SELECTED_PRINCIPLE_REJECTED", "ROOT_CAUSE_REJECTED", "PROBLEM_PREMISE_REJECTED"],
+      "decision_enum": ["VALIDATED", "METHOD_REFINEMENT_REQUIRED", "SELECTED_PRINCIPLE_REJECTED", "ROOT_CAUSE_REJECTED", "NECESSITY_PREMISE_REJECTED", "PROBLEM_PREMISE_REJECTED"],
       "required_fields": ["schema_version", "validation_result_id", "decision", "evidence_refs", "findings", "return_guidance"],
-      "validated_required_fields": ["supported_claim_elements", "applicability_boundaries", "retained_limitations", "remaining_uncertainties", "established_scientific_delta"]
+      "validated_required_fields": ["mechanism_evidence_closure", "coverage_assessments", "supported_claim_elements", "applicability_boundaries", "retained_limitations", "remaining_uncertainties"],
+      "controller_materialized_fields": ["established_scientific_delta"]
     }
   },
   "research_effort_budget": {
@@ -328,12 +329,13 @@
     },
     "completion_state": "METHOD_CONFIRMED_AWAITING_USER_VALIDATION",
     "validation_entry_policy": "human_initiated_only_after_method_confirmation",
-    "validation_required_inputs": ["idea-stage/RESEARCH_CONTRACT.md", "@artifact:necessity_closure", "@artifact:necessity_verdict", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict", "@artifact:selected_principle", "@artifact:final_proposal", "@artifact:final_method_novelty_verdict", "@artifact:final_human_report"],
+    "validation_required_inputs": ["idea-stage/RESEARCH_CONTRACT.md", "@artifact:necessity_closure", "@artifact:necessity_verdict", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict", "@artifact:method_design_packet", "@artifact:method_design_review", "@artifact:principle_evaluation", "@artifact:principle_evaluation_verdict", "@artifact:selected_principle", "@artifact:final_method_packet", "@artifact:final_method_review", "@artifact:final_method_novelty_verdict", "@artifact:top_venue_method_strength_verdict", "@artifact:final_human_report"],
     "validation_accepted_decisions": ["VALIDATED"],
     "validation_return_targets": {
       "METHOD_REFINEMENT_REQUIRED": "method_refinement",
       "SELECTED_PRINCIPLE_REJECTED": "method_design",
       "ROOT_CAUSE_REJECTED": "root_cause_analysis",
+      "NECESSITY_PREMISE_REJECTED": "problem_necessity",
       "PROBLEM_PREMISE_REJECTED": "problem_generation"
     },
     "validation_success_contract": "predicted_mechanism_change_to_observed_mechanism_change_to_discriminating_evidence_to_performance_consequence"

@@ -22,7 +22,8 @@ the Principle packet and test cycle have completed, convergence has been
 accepted, and the final Method is ready for the Human checkpoint. Composition
 folds unique findings or links to `METHOD_DESIGN_PACKET.json`,
 `PRINCIPLE_EVALUATION.json`, Controller-materialized
-`SELECTED_PRINCIPLE.yaml`, `FINAL_PROPOSAL.md`, and their verdicts; it does not
+`SELECTED_PRINCIPLE.yaml`, canonical `FINAL_METHOD_PACKET.json`, its
+deterministic `FINAL_PROPOSAL.md` Human view, and their verdicts; it does not
 paste registries, ledgers, raw results, transcripts, or duplicate verdict tables
 into the report.
 
@@ -50,7 +51,8 @@ reviewer provenance, and human decision paths.
 Before writing a composed report, verify: one canonical path; all included
 sections have source artifact links; problem acceptance, the root-cause
 analysis/verdict IDs and hashes, the Evidence Update/convergence verdict, the
-Selected Principle, final proposal, and final verdicts are present; no section
+Selected Principle, canonical Final Method Packet, its Final Proposal Human view, and final
+verdicts are present; no section
 claims a Method was accepted before its final Gate, no Final Scientific Delta
 Claim is labeled established before `VALIDATED`, and no
 intermediate report has been treated as active context. On failure, keep the

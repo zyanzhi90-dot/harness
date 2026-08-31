@@ -31,6 +31,7 @@ from arisctl.gateways import (
 from arisctl.validators import (
     ValidationError,
     render_field_map,
+    render_final_method_view,
     sha256_file,
     validate_candidate_verdict_artifact,
     validate_coverage_review,
@@ -2053,6 +2054,19 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "mechanism_change_ids": ["RMC-1"],
         "capability_ids": ["CAP-1"],
         "obligation_ids": ["OBL-1"],
+        "accepted_assumptions": [
+            {
+                "assumption_id": "ASM-1",
+                "assumption": "assumption A",
+                "failure_consequence": "the mechanism prediction fails",
+            }
+        ],
+        "accepted_predictions": [
+            {
+                "prediction_id": "PRED-1",
+                "observable": "the causal relation changes",
+            }
+        ],
         "evidence_closure": {"evidence_refs": ["results/principle.json"]},
         "activation_conditions": ["declared condition"],
         "failure_conditions": ["declared boundary"],
@@ -2082,6 +2096,23 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         }) + "\n",
         "idea-stage/ROOT_CAUSE_VERDICT.json": json.dumps({
             "decision": "DIAGNOSIS_READY", "verdict_id": "RCA-V-1"
+        }) + "\n",
+        "idea-stage/METHOD_DESIGN_PACKET.json": json.dumps({
+            "required_mechanism_changes": [{
+                "mechanism_change_id": "RMC-1",
+                "required_mechanism_change": "make the failed relation state-conditioned",
+            }],
+            "required_capabilities": [{
+                "capability_id": "CAP-1",
+                "required_capability": "condition the relation on causal state",
+            }],
+            "design_obligations": [{
+                "obligation_id": "OBL-1",
+                "design_obligation": "realize and observe the changed relation",
+            }],
+        }) + "\n",
+        "idea-stage/METHOD_DESIGN_REVIEW.json": json.dumps({
+            "decision": "PRINCIPLE_PACKET_READY"
         }) + "\n",
         "idea-stage/PRINCIPLE_EVALUATION.json": json.dumps({"cycle_id": "CYCLE-1"}) + "\n",
         "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": json.dumps({"decision": "PRINCIPLE_CONVERGED"}) + "\n",
@@ -2142,6 +2173,8 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         "idea-stage/NECESSITY_VERDICT.json": "problem_necessity",
         "idea-stage/ROOT_CAUSE_ANALYSIS.json": "root_cause_analysis",
         "idea-stage/ROOT_CAUSE_VERDICT.json": "root_cause_gate",
+        "idea-stage/METHOD_DESIGN_PACKET.json": "method_design",
+        "idea-stage/METHOD_DESIGN_REVIEW.json": "method_design",
         "idea-stage/PRINCIPLE_EVALUATION.json": "principle_evaluation",
         "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": "principle_evaluation",
         "idea-stage/SELECTED_PRINCIPLE.yaml": "principle_evaluation",
@@ -2187,7 +2220,6 @@ def confirmed_validation_controller(root: Path) -> ARISController:
             provenance={"controller": "ARISController", "run_id": controller.run_id},
             upstream_snapshot={},
         )
-        accepted["refine-logs/FINAL_PROPOSAL.md"]["problem_version_binding"] = dict(problem_binding)
         core["accepted_artifacts"] = accepted
         run_state._find_phase(state, "principle_evaluation")["validated_artifacts"] = {
             raw_path: accepted[raw_path]["sha256"]
@@ -2229,14 +2261,50 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         core["validation_entry"] = {
             "status": "AWAITING_USER_INITIATION",
             "entry_policy": "human_initiated_only",
+            "method_confirmation": {
+                "request_id": "final-human-request-1",
+                "decision": "approve",
+                "approved_at": "2026-01-01T00:00:00Z",
+            },
             "accepted_method_artifacts": {
                 raw_path: dict(accepted[raw_path])
                 for raw_path in (
                     "refine-logs/FINAL_PROPOSAL.md",
+                    "refine-logs/FINAL_BLIND_REVIEW.md",
                     "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+                    "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json",
                     "idea-stage/IDEA_REPORT.md",
                 )
             },
+        }
+    packet_path = write_batch4_final_packet(controller)
+    packet = json.loads(packet_path.read_text(encoding="utf-8"))
+    proposal_path = root / "refine-logs" / "FINAL_PROPOSAL.md"
+    proposal_path.write_text(render_final_method_view(packet), encoding="utf-8")
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        for raw_path in (
+            "refine-logs/FINAL_METHOD_PACKET.json",
+            "refine-logs/FINAL_PROPOSAL.md",
+        ):
+            record = controller._artifact_record(
+                raw_path,
+                producer_phase="method_refinement",
+                provenance={"controller": "ARISController", "run_id": controller.run_id},
+                upstream_snapshot={},
+            )
+            record["problem_version_binding"] = dict(problem_binding)
+            core["accepted_artifacts"][raw_path] = record
+        core["validation_entry"]["accepted_method_artifacts"] = {
+            raw_path: dict(core["accepted_artifacts"][raw_path])
+            for raw_path in (
+                "refine-logs/FINAL_METHOD_PACKET.json",
+                "refine-logs/FINAL_PROPOSAL.md",
+                "refine-logs/FINAL_BLIND_REVIEW.md",
+                "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+                "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json",
+                "idea-stage/IDEA_REPORT.md",
+            )
         }
     return controller
 
@@ -2369,26 +2437,48 @@ def validation_result(
         },
     }
     if decision == "VALIDATED":
-        result["mechanism_evidence_closure"] = [{
-            "causal_chain_id": "CHAIN-1",
-            "mechanism_change_ids": ["RMC-1"],
-            "obligation_ids": ["OBL-1"],
-            "predicted_mechanism_change": "The targeted mechanism changes.",
-            "observed_mechanism_change": "The mechanism changed as predicted.",
-            "explanation_status": "EXPLANATION_SUPPORTED",
-            "mechanism_match": "MATCHES_PREDICTION",
-            "discriminating_evidence": {
-                "method": "controlled_intervention",
-                "artifact_paths": ["results/validation.json"],
-            },
-            "performance_consequence": "The original failure improves under intervention.",
-        }]
+        obligations = handoff["validation_obligations"]
+        validation_specs = obligations["claim_validation_obligations"]
+        result["mechanism_evidence_closure"] = [
+            {
+                "validation_obligation_id": spec["validation_obligation_id"],
+                "claim_element_id": spec["claim_element_id"],
+                "predicted_mechanism_change": spec["predicted_mechanism_change"],
+                "observed_mechanism_change": "The mechanism changed as predicted.",
+                "explanation_status": "EXPLANATION_SUPPORTED",
+                "mechanism_match": "MATCHES_PREDICTION",
+                "discriminating_evidence": {
+                    "method": "controlled_intervention",
+                    "artifact_paths": ["results/validation.json"],
+                },
+                "performance_consequence": "The original failure improves under intervention.",
+            }
+            for spec in validation_specs
+        ]
+        result["coverage_assessments"] = [
+            {
+                "subject_type": requirement["subject_type"],
+                "subject_id": requirement["subject_id"],
+                "disposition": requirement["required_disposition"],
+                "validation_obligation_ids": [
+                    validation_specs[0]["validation_obligation_id"]
+                ],
+                "evidence_artifact_paths": ["results/validation.json"],
+                "finding_refs": ["VAL-F-1"],
+            }
+            for requirement in obligations["coverage_requirements"]
+        ]
         result.update(
-            supported_claim_elements=["mechanism and consequence"],
-            applicability_boundaries=["declared scope"],
+            supported_claim_elements=[
+                item["claim_element_id"]
+                for item in obligations["final_scientific_delta_claim"]["claim_elements"]
+            ],
+            applicability_boundaries=[
+                item["boundary_id"]
+                for item in obligations["failure_and_applicability_boundaries"]
+            ],
             retained_limitations=["external validity"],
             remaining_uncertainties=["transfer scale"],
-            established_scientific_delta="Bound mechanism-to-outcome delta.",
         )
     return result
 
@@ -7437,9 +7527,16 @@ def test_validation_result_closes_a_bound_canonical_handoff(tmp_path: Path) -> N
     proposal = tmp_path / "refine-logs" / "FINAL_PROPOSAL.md"
     original_proposal = proposal.read_text(encoding="utf-8")
     proposal.write_text("# changed after handoff\n", encoding="utf-8")
+    rebuilt = controller._build_validation_handoff(controller.status())
+    assert rebuilt["handoff_sha256"] == handoff["handoff_sha256"]
+    assert "refine-logs/FINAL_PROPOSAL.md" not in rebuilt["artifacts"]
+    proposal.write_text(original_proposal, encoding="utf-8")
+    packet_path = tmp_path / "refine-logs" / "FINAL_METHOD_PACKET.json"
+    original_packet = packet_path.read_text(encoding="utf-8")
+    packet_path.write_text(original_packet + "\n", encoding="utf-8")
     with pytest.raises(ControllerError, match="missing or changed"):
         controller.submit_validation_result(stale)
-    proposal.write_text(original_proposal, encoding="utf-8")
+    packet_path.write_text(original_packet, encoding="utf-8")
 
     completed = controller.submit_validation_result(reviewer_owned)
     core = completed["scientific_core"]
@@ -7448,22 +7545,26 @@ def test_validation_result_closes_a_bound_canonical_handoff(tmp_path: Path) -> N
     assert core["validation_entry"]["handoff_sha256"] == handoff["handoff_sha256"]
     result = core["validation_results"][-1]
     assert result["decision"] == "VALIDATED"
+    assert [
+        item["claim_element_id"]
+        for item in core["established_scientific_delta"]["claim_elements"]
+    ] == ["CLAIM-1"]
     assert (tmp_path / result["path"]).is_file()
     with pytest.raises(ControllerError, match="METHOD_CONFIRMED_AWAITING_USER_VALIDATION"):
         controller.validation_handoff()
 
 
-@pytest.mark.parametrize("invalid_obligation_id", ["OBL-MISSING", "OBL-OTHER-SET"])
+@pytest.mark.parametrize("invalid_obligation_id", ["VAL-MISSING", "VAL-OTHER-SET"])
 def test_validated_rejects_obligation_ids_outside_selected_principle(
     tmp_path: Path, invalid_obligation_id: str
 ) -> None:
     controller = confirmed_validation_controller(tmp_path)
     controller.validation_handoff()
     result = validation_result(controller, decision="VALIDATED")
-    result["mechanism_evidence_closure"][0]["obligation_ids"] = [invalid_obligation_id]
+    result["mechanism_evidence_closure"][0]["validation_obligation_id"] = invalid_obligation_id
     attest_validation_verdict(controller, result)
 
-    with pytest.raises(ControllerError, match="obligation IDs are invalid"):
+    with pytest.raises(ControllerError, match="unknown validation obligation"):
         controller.submit_validation_result(result)
 
 
@@ -7481,12 +7582,194 @@ def test_validated_rejects_a_performance_only_mechanism_closure(tmp_path: Path) 
         controller.submit_validation_result(result)
 
 
+def test_validation_handoff_is_packet_only_and_covers_every_active_subject(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    handoff = controller.validation_handoff()
+
+    assert "refine-logs/FINAL_METHOD_PACKET.json" in handoff["artifacts"]
+    assert "refine-logs/FINAL_PROPOSAL.md" not in handoff["artifacts"]
+    assert "idea-stage/NECESSITY_CLOSURE.json" in handoff["artifacts"]
+    assert "idea-stage/NECESSITY_VERDICT.json" in handoff["artifacts"]
+    assert "idea-stage/PRINCIPLE_EVALUATION.json" in handoff["artifacts"]
+    assert "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json" in handoff["artifacts"]
+    assert "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json" in handoff["artifacts"]
+    assert handoff["final_human_acceptance"]["decision"] == "approve"
+    subject_types = {
+        item["subject_type"]
+        for item in handoff["validation_obligations"]["coverage_requirements"]
+    }
+    assert {
+        "FATAL_ASSUMPTION",
+        "ACTIVATION_CONDITION",
+        "FAILURE_CONDITION",
+        "DISCRIMINATING_PREDICTION",
+        "CAUSAL_CHAIN",
+        "RMC",
+        "REQUIRED_CAPABILITY",
+        "DESIGN_OBLIGATION",
+        "CORE_METHOD_CHANGE",
+        "MECHANISM_DELTA",
+        "CAUSAL_REPAIR_DAG_EDGE",
+        "CLAIM_ELEMENT",
+        "CLAIM_VALIDATION_OBLIGATION",
+        "CLAIM_OR_APPLICABILITY_BOUNDARY",
+    } <= subject_types
+
+
+def test_validated_rejects_missing_active_causal_edge_coverage(tmp_path: Path) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    controller.validation_handoff()
+    result = validation_result(controller, decision="VALIDATED")
+    result["coverage_assessments"] = [
+        item
+        for item in result["coverage_assessments"]
+        if item["subject_type"] != "CAUSAL_REPAIR_DAG_EDGE"
+    ]
+    attest_validation_verdict(controller, result)
+
+    with pytest.raises(ControllerError, match="exact coverage"):
+        controller.submit_validation_result(result)
+
+
+def test_validated_rejects_mechanism_mismatch_even_with_complete_performance(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    controller.validation_handoff()
+    result = validation_result(controller, decision="VALIDATED")
+    result["mechanism_evidence_closure"][0]["mechanism_match"] = (
+        "DOES_NOT_MATCH_PREDICTION"
+    )
+    attest_validation_verdict(controller, result)
+
+    with pytest.raises(ControllerError, match="match its prediction"):
+        controller.submit_validation_result(result)
+
+
+def test_validated_rejects_claim_outside_packet_or_boundary(tmp_path: Path) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    controller.validation_handoff()
+    result = validation_result(controller, decision="VALIDATED")
+    result["supported_claim_elements"].append("CLAIM-OUTSIDE-PACKET")
+    attest_validation_verdict(controller, result)
+
+    with pytest.raises(ControllerError, match="exactly match the active packet claim"):
+        controller.submit_validation_result(result)
+
+
+def test_schema_valid_scientifically_insufficient_evidence_is_reviewer_rejected(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    result = validation_result(controller, decision="METHOD_REFINEMENT_REQUIRED")
+    result["rationale"] = (
+        "The files are bound and structurally valid, but the evidence is not "
+        "scientifically discriminating for the packet mechanism."
+    )
+    attest_validation_verdict(controller, result)
+
+    returned = controller.submit_validation_result(result)
+    assert returned["scientific_core"]["current_phase"] == "method_refinement"
+    assert returned["scientific_core"]["validation_results"][-1]["decision"] == (
+        "METHOD_REFINEMENT_REQUIRED"
+    )
+
+
+def test_claim_restricted_feasibility_debt_closes_only_when_boundary_is_observed(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    packet_path = tmp_path / "refine-logs" / "FINAL_METHOD_PACKET.json"
+    packet = json.loads(packet_path.read_text(encoding="utf-8"))
+    packet["feasibility_closure"]["unresolved_feasibility_debts"] = [{
+        "debt_id": "DEBT-1",
+        "dimension": "scale",
+        "debt": "support outside the bounded scale is unresolved",
+        "fatal": False,
+        "evidence_refs": ["E1"],
+        "restriction_ids": ["REST-1"],
+        "repair_disposition": "NOT_REQUIRED_INSIDE_BOUNDARY",
+        "claim_restriction_disposition": "PRESERVES_BOUNDED_CORE_SEED",
+        "excluded_recovery_evidence_refs": [],
+    }]
+    packet["feasibility_closure"]["claim_restrictions"] = [{
+        "restriction_id": "REST-1",
+        "claim_element_ids": ["CLAIM-1"],
+        "debt_ids": ["DEBT-1"],
+        "boundary_id": "BND-REST",
+    }]
+    packet["failure_and_applicability_boundaries"].append({
+        "boundary_id": "BND-REST",
+        "boundary_type": "CLAIM_RESTRICTION",
+        "boundary": "claim only within the supported scale",
+        "source_refs": ["DEBT-1"],
+    })
+    packet["final_scientific_delta_claim"]["claim_elements"][0][
+        "boundary_refs"
+    ].append("BND-REST")
+    packet_path.write_text(
+        json.dumps(packet, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    with controller._store.mutate() as state:
+        record = controller._artifact_record(
+            "refine-logs/FINAL_METHOD_PACKET.json",
+            producer_phase="method_refinement",
+            provenance={"controller": "ARISController", "run_id": controller.run_id},
+            upstream_snapshot={},
+        )
+        record["problem_version_binding"] = {
+            key: state["scientific_core"]["active_problem_version"][key]
+            for key in (
+                "problem_id", "version", "contract_sha256", "evidence_capsule_sha256"
+            )
+        }
+        state["scientific_core"]["accepted_artifacts"][
+            "refine-logs/FINAL_METHOD_PACKET.json"
+        ] = record
+        state["scientific_core"]["validation_entry"]["accepted_method_artifacts"][
+            "refine-logs/FINAL_METHOD_PACKET.json"
+        ] = dict(record)
+
+    handoff = controller.validation_handoff()
+    dispositions = {
+        (item["subject_type"], item["subject_id"]): item["required_disposition"]
+        for item in handoff["validation_obligations"]["coverage_requirements"]
+    }
+    assert dispositions[("FEASIBILITY_DEBT", "DEBT-1")] == "BOUNDARY_OBSERVED"
+    assert dispositions[("CLAIM_RESTRICTION", "REST-1")] == "BOUNDARY_OBSERVED"
+    result = validation_result(controller, decision="VALIDATED")
+    attest_validation_verdict(controller, result)
+    completed = controller.submit_validation_result(result)
+    assert completed["scientific_core"]["status"] == "VALIDATION_CONFIRMED"
+    assert [
+        item["claim_element_id"]
+        for item in completed["scientific_core"]["established_scientific_delta"][
+            "claim_elements"
+        ]
+    ] == ["CLAIM-1"]
+
+
+def test_validation_has_no_terminal_no_go_and_delta_is_controller_owned(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    handoff = controller.validation_handoff()
+    assert "NO_GO" not in handoff["validation_review_request"]["allowed_verdicts"]
+    result = validation_result(controller, decision="VALIDATED")
+    result["established_scientific_delta"] = "reviewer-authored delta"
+    with pytest.raises(ControllerError, match="Controller-materialized"):
+        controller._normalize_validation_result(result, handoff)
+
+
 @pytest.mark.parametrize(
     ("decision", "target"),
     [
         ("METHOD_REFINEMENT_REQUIRED", "method_refinement"),
         ("SELECTED_PRINCIPLE_REJECTED", "method_design"),
         ("ROOT_CAUSE_REJECTED", "root_cause_analysis"),
+        ("NECESSITY_PREMISE_REJECTED", "problem_necessity"),
         ("PROBLEM_PREMISE_REJECTED", "problem_generation"),
     ],
 )
@@ -7494,12 +7777,17 @@ def test_validation_result_uses_fixed_canonical_return_targets(
     tmp_path: Path, decision: str, target: str
 ) -> None:
     controller = confirmed_validation_controller(tmp_path)
+    with controller._store.mutate() as state:
+        state["scientific_core"]["established_scientific_delta"] = {
+            "stale": True
+        }
     verdict = validation_result(controller, decision=decision)
     attest_validation_verdict(controller, verdict)
     returned = controller.submit_validation_result(verdict)
     core = returned["scientific_core"]
     assert core["status"] == "ACTIVE"
     assert core["current_phase"] == target
+    assert core["established_scientific_delta"] is None
     assert controller.current_stage() == target.upper()
     return_record = core["return_history"][-1]
     assert return_record["decision"] == decision
@@ -7824,7 +8112,8 @@ def test_current_packet_first_downstream_reaches_existing_final_human_boundary(
 ) -> None:
     controller = confirmed_validation_controller(tmp_path)
     packet_path = tmp_path / "refine-logs" / "FINAL_METHOD_PACKET.json"
-    assert not packet_path.exists()
+    assert packet_path.exists()
+    packet_path.unlink()
     with controller._store.mutate() as state:
         core = state["scientific_core"]
         core["status"] = "ACTIVE"
@@ -7842,6 +8131,7 @@ def test_current_packet_first_downstream_reaches_existing_final_human_boundary(
             phase["status"] = "pending"
             phase["review_request"] = None
         for raw_path in (
+            "refine-logs/FINAL_METHOD_PACKET.json",
             "refine-logs/FINAL_PROPOSAL.md",
             "refine-logs/FINAL_BLIND_REVIEW.md",
             "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",

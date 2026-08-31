@@ -37,13 +37,15 @@ current formal handoff and use **only** the paths and hashes it returns:
 python -m arisctl --root . validation-handoff <run_id>
 ```
 
-The command verifies the current run, accepted problem contract, root-cause
-analysis and verdict, Controller-materialized Selected Principle, final
-proposal, final novelty verdict, human method confirmation, producer phases,
-provenance, and hashes. Consume its `validation_obligations`, including causal
-chains, RMCs, Capabilities/Design Obligations, selected Principle intervention,
-core Method changes, predicted mechanism changes, failure/applicability
-boundaries, Final Scientific Delta Claim, and claim-validation obligations. If
+The command verifies the current run and directly binds the accepted Necessity,
+RCA, Method Design requirements, Principle Evidence/convergence closure,
+Controller-materialized Selected Principle, canonical
+`FINAL_METHOD_PACKET.json`, Final Method review, Final Novelty verdict,
+Top-Venue verdict, and Final Human acceptance. Consume its
+`validation_obligations`, including the exact coverage set for assumptions,
+conditions, predictions, feasibility debt, causal chains, RMCs,
+Capabilities/Design Obligations, core Method changes, Mechanism Delta, DAG
+edges, counterfactuals, claim elements, and boundaries/restrictions. If
 it fails, stop and
 report its missing or invalid formal artifact. Do not derive `FINAL_PROPOSAL`,
 create a research contract, or substitute a prompt, old report, compatibility
@@ -75,7 +77,9 @@ completed `problem → root cause → method` route.
 
 ### Phase 0: Load the Proposal Context
 
-For a successful formal handoff, read only its returned artifacts. Otherwise,
+For a successful formal handoff, read the structured Final Method only from
+its bound `refine-logs/FINAL_METHOD_PACKET.json`; `FINAL_PROPOSAL.md` is a Human
+view and is not a formal planning input. Otherwise,
 for a non-canonical ad-hoc request, read the most relevant existing files first
 if they exist:
 

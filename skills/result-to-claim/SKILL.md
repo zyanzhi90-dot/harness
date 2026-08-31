@@ -43,16 +43,15 @@ result, write `VALIDATION_RESULT.json` with this minimum contract:
   "reviewed_artifact_hashes": {"<accepted artifact path>": "<handoff-bound sha256>"},
   "reviewer": "<exact Codex judgment model>",
   "verdict_id": "<reviewer-generated verdict ID>",
-  "decision": "VALIDATED | METHOD_REFINEMENT_REQUIRED | SELECTED_PRINCIPLE_REJECTED | ROOT_CAUSE_REJECTED | PROBLEM_PREMISE_REJECTED",
+  "decision": "VALIDATED | METHOD_REFINEMENT_REQUIRED | SELECTED_PRINCIPLE_REJECTED | ROOT_CAUSE_REJECTED | NECESSITY_PREMISE_REJECTED | PROBLEM_PREMISE_REJECTED",
   "rationale": "evidence-grounded conclusion",
   "evidence_artifacts": [{"path": "project-relative-result-path", "sha256": "<sha256>"}],
   "evidence_refs": ["<formal evidence or result reference>"],
-  "findings": [{"claim_or_binding": "<ID>", "assessment": "<finding>"}],
+  "findings": [{"finding_id": "<unique ID>", "claim_or_binding": "<ID>", "assessment": "<finding>"}],
   "return_guidance": {},
   "mechanism_evidence_closure": [{
-    "causal_chain_id": "<Selected Principle chain ID>",
-    "mechanism_change_ids": ["<covered RMC IDs>"],
-    "obligation_ids": ["<covered Design Obligation IDs>"],
+    "validation_obligation_id": "<packet validation obligation ID>",
+    "claim_element_id": "<packet claim element ID>",
     "predicted_mechanism_change": "<pre-registered prediction>",
     "observed_mechanism_change": "<actual observation>",
     "explanation_status": "EXPLANATION_SUPPORTED",
@@ -60,11 +59,18 @@ result, write `VALIDATION_RESULT.json` with this minimum contract:
     "discriminating_evidence": {"method": "controlled_intervention | ablation | counterfactual | mechanism_measurement | joint_mechanism_experiment | theory", "artifact_paths": ["project-relative-result-path"]},
     "performance_consequence": "<effect on the original failure>"
   }],
-  "supported_claim_elements": ["<actually supported claim element>"],
-  "applicability_boundaries": ["<validated boundary>"],
+  "coverage_assessments": [{
+    "subject_type": "<handoff coverage subject type>",
+    "subject_id": "<handoff coverage subject ID>",
+    "disposition": "SUPPORTED | BOUNDARY_OBSERVED",
+    "validation_obligation_ids": ["<linked packet validation obligation ID>"],
+    "evidence_artifact_paths": ["project-relative-result-path"],
+    "finding_refs": ["<finding_id>"]
+  }],
+  "supported_claim_elements": ["<packet claim element ID>"],
+  "applicability_boundaries": ["<packet boundary ID>"],
   "retained_limitations": ["<limitation>"],
-  "remaining_uncertainties": ["<uncertainty>"],
-  "established_scientific_delta": "<only for VALIDATED>"
+  "remaining_uncertainties": ["<uncertainty>"]
 }
 ```
 
@@ -81,19 +87,28 @@ The Hook stores that reviewer-owned payload outside the project and Controller
 accepts only its exact hash-attested copy. Main must not parse, revise, or
 complete the scientific verdict.
 
-Choose `VALIDATED` only when every Selected Principle causal chain, Required
-Mechanism Change, and Design Obligation is covered by an
-`EXPLANATION_SUPPORTED` closure whose observed mechanism
-`MATCHES_PREDICTION`, with discriminating Evidence and its performance
-consequence. A performance-only result, untested mechanism, or contradicted
-prediction must use the applicable return decision. Use
+Choose `VALIDATED` only when every handoff `coverage_requirements` subject is
+covered exactly with its required disposition and every packet
+claim-validation obligation has an `EXPLANATION_SUPPORTED` four-part closure
+whose observed mechanism `MATCHES_PREDICTION`, with discriminating Evidence
+and its performance consequence. This includes active assumptions,
+conditions, predictions, feasibility debt, causal chains, RMCs, Capabilities,
+Design Obligations, core changes, Mechanism Delta, DAG edges,
+counterfactuals, claim elements, and boundaries/restrictions. A
+performance-only result, untested mechanism, contradicted prediction, missing
+active subject, implementation/Mechanism mismatch, or claim outside the
+packet/boundary must use the applicable return decision. The Reviewer never
+authors Established Scientific Delta; after accepting `VALIDATED`, the
+Controller materializes only the supported packet claim elements. Use
 `METHOD_REFINEMENT_REQUIRED` only when the Selected Principle remains supported
 and the concrete adaptation, realization, Claim, or boundary needs revision.
 Use `SELECTED_PRINCIPLE_REJECTED` when Full Validation falsifies the selected
 Principle and method design must consume that rejection and Evidence. Use
 `ROOT_CAUSE_REJECTED` when the result falsifies the accepted causal diagnosis;
-use `PROBLEM_PREMISE_REJECTED` only when it falsifies the accepted problem
-premise. Do not choose a rollback target or edit canonical artifacts. The user
+use `NECESSITY_PREMISE_REJECTED` when the Problem remains real but Simple
+Repair proves sufficient, the residual envelope fails, or another Necessity
+premise is overturned; use `PROBLEM_PREMISE_REJECTED` only when the accepted
+Problem premise or identity itself fails. Do not choose a rollback target or edit canonical artifacts. The user
 submits this reviewer-attested result through `arisctl submit-validation-result`;
 unbound, stale, Main-rewritten, or ordinary findings files are not canonical feedback.
 

@@ -153,12 +153,23 @@ def _merge_discovery_metadata(
 # than reconstructing one from free text or historical files.
 FORMAL_VALIDATION_HANDOFF_ARTIFACTS = {
     "idea-stage/RESEARCH_CONTRACT.md": ("problem_human_acceptance", "human_accepted"),
+    "idea-stage/NECESSITY_CLOSURE.json": ("problem_necessity", "accepted"),
+    "idea-stage/NECESSITY_VERDICT.json": ("problem_necessity", "accepted"),
     "idea-stage/ROOT_CAUSE_ANALYSIS.json": ("root_cause_analysis", "done"),
     "idea-stage/ROOT_CAUSE_VERDICT.json": ("root_cause_gate", "accepted"),
+    "idea-stage/METHOD_DESIGN_PACKET.json": ("method_design", "accepted"),
+    "idea-stage/METHOD_DESIGN_REVIEW.json": ("method_design", "accepted"),
+    "idea-stage/PRINCIPLE_EVALUATION.json": ("principle_evaluation", "accepted"),
+    "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": ("principle_evaluation", "accepted"),
     "idea-stage/SELECTED_PRINCIPLE.yaml": ("principle_evaluation", "accepted"),
-    "refine-logs/FINAL_PROPOSAL.md": ("method_refinement", "accepted"),
+    "refine-logs/FINAL_METHOD_PACKET.json": ("method_refinement", "accepted"),
+    "refine-logs/FINAL_BLIND_REVIEW.md": ("method_refinement", "accepted"),
     "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md": (
         "final_method_novelty_gate",
+        "accepted",
+    ),
+    "idea-stage/TOP_VENUE_METHOD_STRENGTH_VERDICT.json": (
+        "top_venue_method_strength_gate",
         "accepted",
     ),
     "idea-stage/IDEA_REPORT.md": ("final_method_human_acceptance", "human_accepted"),
@@ -173,6 +184,7 @@ VALIDATION_RESULT_RETURN_TARGETS = {
     "METHOD_REFINEMENT_REQUIRED": "method_refinement",
     "SELECTED_PRINCIPLE_REJECTED": "method_design",
     "ROOT_CAUSE_REJECTED": "root_cause_analysis",
+    "NECESSITY_PREMISE_REJECTED": "problem_necessity",
     "PROBLEM_PREMISE_REJECTED": "problem_generation",
 }
 VALIDATION_RESULT_DECISIONS = {"VALIDATED", *VALIDATION_RESULT_RETURN_TARGETS}
@@ -354,6 +366,7 @@ class ARISController:
                 "selected_for_testing": None,
                 "method_test_cycle": None,
                 "no_go_record": None,
+                "established_scientific_delta": None,
                 "validation_entry": {
                     "status": "BLOCKED_UNTIL_METHOD_CONFIRMATION",
                     "entry_policy": "human_initiated_only",
@@ -846,6 +859,7 @@ class ARISController:
             if producer_phase in {
                 "method_refinement",
                 "final_method_novelty_gate",
+                "top_venue_method_strength_gate",
                 "final_method_human_acceptance",
             } and (
                 not isinstance(entry_record, dict)
@@ -856,16 +870,16 @@ class ARISController:
                 )
             handoff[raw_path] = {"sha256": digest, "producer_phase": producer_phase}
 
-        final_proposal = accepted.get("refine-logs/FINAL_PROPOSAL.md")
         expected_binding = {
             "problem_id": active_problem["problem_id"],
             "version": active_problem["version"],
             "contract_sha256": active_problem["contract_sha256"],
             "evidence_capsule_sha256": active_problem["evidence_capsule_sha256"],
         }
+        final_packet_record = accepted.get("refine-logs/FINAL_METHOD_PACKET.json")
         if (
-            not isinstance(final_proposal, dict)
-            or final_proposal.get("problem_version_binding") != expected_binding
+            not isinstance(final_packet_record, dict)
+            or final_packet_record.get("problem_version_binding") != expected_binding
         ):
             raise ControllerError(
                 "formal validation handoff final method is not bound to the active accepted problem version"
@@ -874,55 +888,226 @@ class ARISController:
         selected_path = self.root / str(
             self.workflow["artifact_manifest"]["selected_principle"]
         )
-        proposal_path = self.root / str(
-            self.workflow["artifact_manifest"]["final_proposal"]
+        method_design_path = self.root / str(
+            self.workflow["artifact_manifest"]["method_design_packet"]
+        )
+        final_packet_path = self.root / str(
+            self.workflow["artifact_manifest"]["final_method_packet"]
         )
         try:
             selected = yaml.safe_load(selected_path.read_text(encoding="utf-8"))
-            proposal_text = proposal_path.read_text(encoding="utf-8")
-        except (OSError, yaml.YAMLError) as exc:
+            method_design = json.loads(method_design_path.read_text(encoding="utf-8"))
+            final_packet = json.loads(final_packet_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError, json.JSONDecodeError) as exc:
             raise ControllerError("formal validation obligations cannot be recovered") from exc
-        if not isinstance(selected, dict):
-            raise ControllerError("formal validation Selected Principle is invalid")
-        required_sections = list(
-            self.workflow["artifact_contracts"]["final_proposal"]["required_sections"]
+        if not all(isinstance(value, dict) for value in (selected, method_design, final_packet)):
+            raise ControllerError("formal validation structured scientific authority is invalid")
+
+        def active_definitions(
+            field: str, id_field: str, active_ids: list[Any]
+        ) -> list[dict[str, Any]]:
+            raw = method_design.get(field)
+            if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
+                raise ControllerError(f"formal validation {field} definitions are invalid")
+            active = [str(value) for value in active_ids]
+            by_id = {
+                str(item.get(id_field)): item
+                for item in raw
+                if isinstance(item.get(id_field), str) and item.get(id_field)
+            }
+            if len(active) != len(set(active)) or set(active) - set(by_id):
+                raise ControllerError(f"formal validation cannot resolve the active {field} set")
+            return [deepcopy(by_id[value]) for value in active]
+
+        rmc_definitions = active_definitions(
+            "required_mechanism_changes",
+            "mechanism_change_id",
+            list(selected.get("mechanism_change_ids") or []),
         )
-        section_matches = list(
-            re.finditer(r"(?m)^#{1,6}\s+(.+?)\s*$", proposal_text)
+        capability_definitions = active_definitions(
+            "required_capabilities",
+            "capability_id",
+            list(selected.get("capability_ids") or []),
         )
-        canonical_sections = {title.casefold(): title for title in required_sections}
-        sections: dict[str, str] = {}
-        for index, match in enumerate(section_matches):
-            title = match.group(1).strip()
-            end = (
-                section_matches[index + 1].start()
-                if index + 1 < len(section_matches)
-                else len(proposal_text)
-            )
-            body = proposal_text[match.end():end].strip()
-            canonical_title = canonical_sections.get(title.casefold())
-            if canonical_title is not None:
-                if not body:
-                    raise ControllerError(
-                        f"formal validation proposal section is empty: {title}"
-                    )
-                sections[canonical_title] = body
-        if set(sections) != set(required_sections):
-            raise ControllerError("formal validation proposal sections are incomplete")
-        validation_obligations = {
-            "selected_principle": {
-                key: deepcopy(selected.get(key))
-                for key in (
-                    "principle_id", "principle_version", "principle", "intervention",
-                    "changed_structure", "activation_conditions", "failure_conditions",
-                    "applicability_boundaries",
+        obligation_definitions = active_definitions(
+            "design_obligations",
+            "obligation_id",
+            list(selected.get("obligation_ids") or []),
+        )
+
+        coverage_requirements: list[dict[str, Any]] = []
+
+        def require_coverage(
+            subject_type: str,
+            subject_id: Any,
+            *,
+            required_disposition: str = "SUPPORTED",
+            context: dict[str, Any] | None = None,
+        ) -> None:
+            if not isinstance(subject_id, str) or not subject_id:
+                raise ControllerError(
+                    f"formal validation {subject_type} coverage has an invalid subject ID"
                 )
-            },
-            "causal_chain_ids": list(selected.get("causal_chain_ids") or []),
-            "mechanism_change_ids": list(selected.get("mechanism_change_ids") or []),
-            "capability_ids": list(selected.get("capability_ids") or []),
-            "obligation_ids": list(selected.get("obligation_ids") or []),
-            "final_proposal_sections": sections,
+            item: dict[str, Any] = {
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "required_disposition": required_disposition,
+            }
+            if context is not None:
+                item["context"] = deepcopy(context)
+            coverage_requirements.append(item)
+
+        for item in selected.get("accepted_assumptions") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation fatal assumptions are invalid")
+            require_coverage("FATAL_ASSUMPTION", item.get("assumption_id"), context=item)
+        for condition in selected.get("activation_conditions") or []:
+            require_coverage("ACTIVATION_CONDITION", condition)
+        for condition in selected.get("failure_conditions") or []:
+            require_coverage(
+                "FAILURE_CONDITION",
+                condition,
+                required_disposition="BOUNDARY_OBSERVED",
+            )
+        for item in selected.get("accepted_predictions") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation discriminating predictions are invalid")
+            require_coverage(
+                "DISCRIMINATING_PREDICTION", item.get("prediction_id"), context=item
+            )
+        for chain_id in selected.get("causal_chain_ids") or []:
+            require_coverage("CAUSAL_CHAIN", chain_id)
+        for item in rmc_definitions:
+            require_coverage("RMC", item["mechanism_change_id"], context=item)
+        for item in capability_definitions:
+            require_coverage("REQUIRED_CAPABILITY", item["capability_id"], context=item)
+        for item in obligation_definitions:
+            require_coverage("DESIGN_OBLIGATION", item["obligation_id"], context=item)
+        for item in final_packet.get("residual_musts") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation Residual MUST set is invalid")
+            require_coverage("RESIDUAL_MUST", item.get("residual_must_id"), context=item)
+        existing_activation_conditions = {
+            item["subject_id"]
+            for item in coverage_requirements
+            if item["subject_type"] == "ACTIVATION_CONDITION"
+        }
+        for support in final_packet.get("minimal_necessary_composition") or []:
+            if not isinstance(support, dict):
+                raise ControllerError("formal validation support composition is invalid")
+            for condition in support.get("activation_conditions") or []:
+                if not isinstance(condition, str) or not condition:
+                    raise ControllerError(
+                        "formal validation support activation condition is invalid"
+                    )
+                if condition not in existing_activation_conditions:
+                    require_coverage("ACTIVATION_CONDITION", condition)
+                    existing_activation_conditions.add(condition)
+        feasibility = final_packet.get("feasibility_closure")
+        if not isinstance(feasibility, dict):
+            raise ControllerError("formal validation feasibility closure is invalid")
+        for item in feasibility.get("unresolved_feasibility_debts") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation feasibility debt set is invalid")
+            disposition = (
+                "BOUNDARY_OBSERVED" if item.get("restriction_ids") else "SUPPORTED"
+            )
+            require_coverage(
+                "FEASIBILITY_DEBT",
+                item.get("debt_id"),
+                required_disposition=disposition,
+                context=item,
+            )
+        for item in feasibility.get("claim_restrictions") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation claim restriction set is invalid")
+            require_coverage(
+                "CLAIM_RESTRICTION",
+                item.get("restriction_id"),
+                required_disposition="BOUNDARY_OBSERVED",
+                context=item,
+            )
+        for item in final_packet.get("core_method_changes") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation core method change set is invalid")
+            require_coverage(
+                "CORE_METHOD_CHANGE", item.get("core_method_change_id"), context=item
+            )
+        require_coverage(
+            "MECHANISM_DELTA",
+            final_packet.get("final_method_id"),
+            context=final_packet.get("mechanism_delta"),
+        )
+        dag = final_packet.get("causal_repair_dag")
+        if not isinstance(dag, dict):
+            raise ControllerError("formal validation causal repair DAG is invalid")
+        for item in dag.get("edges") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation causal repair DAG edge set is invalid")
+            require_coverage("CAUSAL_REPAIR_DAG_EDGE", item.get("edge_id"), context=item)
+        for item in final_packet.get("counterfactual_necessity_obligations") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation counterfactual obligation set is invalid")
+            require_coverage(
+                "COUNTERFACTUAL_OBLIGATION",
+                item.get("counterfactual_obligation_id"),
+                context=item,
+            )
+        claim = final_packet.get("final_scientific_delta_claim")
+        if not isinstance(claim, dict) or not isinstance(claim.get("claim_elements"), list):
+            raise ControllerError("formal validation Final Scientific Delta Claim is invalid")
+        for item in claim["claim_elements"]:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation claim element set is invalid")
+            require_coverage("CLAIM_ELEMENT", item.get("claim_element_id"), context=item)
+        for item in final_packet.get("claim_validation_obligations") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation claim-validation obligation set is invalid")
+            require_coverage(
+                "CLAIM_VALIDATION_OBLIGATION",
+                item.get("validation_obligation_id"),
+                context=item,
+            )
+        for item in final_packet.get("failure_and_applicability_boundaries") or []:
+            if not isinstance(item, dict):
+                raise ControllerError("formal validation boundary set is invalid")
+            require_coverage(
+                "CLAIM_OR_APPLICABILITY_BOUNDARY",
+                item.get("boundary_id"),
+                required_disposition="BOUNDARY_OBSERVED",
+                context=item,
+            )
+        coverage_keys = [
+            (item["subject_type"], item["subject_id"])
+            for item in coverage_requirements
+        ]
+        if len(coverage_keys) != len(set(coverage_keys)):
+            raise ControllerError("formal validation exact coverage set contains duplicates")
+
+        human_acceptance = entry.get("method_confirmation")
+        if not isinstance(human_acceptance, dict) or not human_acceptance:
+            raise ControllerError("formal validation handoff lacks Final Human acceptance")
+        validation_obligations = {
+            "selected_principle": deepcopy(selected),
+            "required_mechanism_changes": rmc_definitions,
+            "required_capabilities": capability_definitions,
+            "design_obligations": obligation_definitions,
+            "final_method_id": final_packet["final_method_id"],
+            "core_method_changes": deepcopy(final_packet.get("core_method_changes") or []),
+            "mechanism_delta": deepcopy(final_packet.get("mechanism_delta")),
+            "causal_repair_dag": deepcopy(dag),
+            "feasibility_closure": deepcopy(feasibility),
+            "counterfactual_necessity_obligations": deepcopy(
+                final_packet.get("counterfactual_necessity_obligations") or []
+            ),
+            "final_scientific_delta_claim": deepcopy(claim),
+            "claim_validation_obligations": deepcopy(
+                final_packet.get("claim_validation_obligations") or []
+            ),
+            "failure_and_applicability_boundaries": deepcopy(
+                final_packet.get("failure_and_applicability_boundaries") or []
+            ),
+            "coverage_requirements": coverage_requirements,
         }
 
         handoff = {
@@ -930,6 +1115,7 @@ class ARISController:
             "run_id": self.run_id,
             "workflow_sha256": self.workflow_sha256,
             "problem_version": expected_binding,
+            "final_human_acceptance": deepcopy(human_acceptance),
             "artifacts": handoff,
             "validation_obligations": validation_obligations,
         }
@@ -1135,26 +1321,56 @@ class ARISController:
         normalized["findings"] = deepcopy(findings)
         normalized["return_guidance"] = deepcopy(return_guidance)
         if decision == "VALIDATED":
+            if "established_scientific_delta" in result:
+                raise ControllerError(
+                    "Established Scientific Delta is Controller-materialized from supported packet claim elements"
+                )
+            obligations = handoff.get("validation_obligations")
+            if not isinstance(obligations, dict):
+                raise ControllerError("VALIDATED cannot resolve the bound validation obligations")
+            requirements = obligations.get("coverage_requirements")
+            if not isinstance(requirements, list) or not requirements:
+                raise ControllerError("VALIDATED requires a non-empty exact coverage target set")
+            required_coverage = {
+                (str(item.get("subject_type")), str(item.get("subject_id"))): str(
+                    item.get("required_disposition")
+                )
+                for item in requirements
+                if isinstance(item, dict)
+            }
+            if len(required_coverage) != len(requirements):
+                raise ControllerError("VALIDATED handoff exact coverage targets are invalid")
+
+            finding_ids: set[str] = set()
+            for item in findings:
+                if not isinstance(item, dict):
+                    raise ControllerError("validation result findings must be objects")
+                finding_id = item.get("finding_id")
+                if not isinstance(finding_id, str) or not finding_id:
+                    raise ControllerError("validation result findings require finding_id")
+                if finding_id in finding_ids:
+                    raise ControllerError("validation result finding IDs must be unique")
+                finding_ids.add(finding_id)
+
+            validation_specs = obligations.get("claim_validation_obligations")
+            if not isinstance(validation_specs, list) or not validation_specs:
+                raise ControllerError("VALIDATED requires bound claim-validation obligations")
+            specs_by_id = {
+                str(item.get("validation_obligation_id")): item
+                for item in validation_specs
+                if isinstance(item, dict)
+                and isinstance(item.get("validation_obligation_id"), str)
+                and item.get("validation_obligation_id")
+            }
+            if len(specs_by_id) != len(validation_specs):
+                raise ControllerError("bound claim-validation obligation IDs are invalid")
+
             closure = result.get("mechanism_evidence_closure")
             if not isinstance(closure, list) or not closure:
                 raise ControllerError(
                     "VALIDATED requires non-empty mechanism_evidence_closure; performance alone is insufficient"
                 )
-            selected_path = self.root / str(
-                self.workflow["artifact_manifest"]["selected_principle"]
-            )
-            try:
-                selected = yaml.safe_load(selected_path.read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError) as exc:
-                raise ControllerError("VALIDATED cannot resolve the Controller-accepted Selected Principle") from exc
-            if not isinstance(selected, dict):
-                raise ControllerError("VALIDATED Selected Principle is invalid")
-            required_chains = set(selected.get("causal_chain_ids") or [])
-            required_mechanisms = set(selected.get("mechanism_change_ids") or [])
-            required_obligations = set(selected.get("obligation_ids") or [])
-            closure_chains: set[str] = set()
-            closure_mechanisms: set[str] = set()
-            closure_obligations: set[str] = set()
+            closure_ids: set[str] = set()
             normalized_closure: list[dict[str, Any]] = []
             evidence_paths = {item["path"] for item in normalized_evidence}
             allowed_methods = {
@@ -1165,30 +1381,31 @@ class ARISController:
                 if not isinstance(item, dict):
                     raise ControllerError("mechanism_evidence_closure entries must be objects")
                 required_fields = (
-                    "causal_chain_id", "mechanism_change_ids", "obligation_ids",
+                    "validation_obligation_id", "claim_element_id",
                     "predicted_mechanism_change",
                     "observed_mechanism_change", "explanation_status", "mechanism_match",
                     "discriminating_evidence", "performance_consequence",
                 )
                 if any(field not in item for field in required_fields):
                     raise ControllerError("mechanism_evidence_closure entry is missing a required causal link")
-                chain_id = item["causal_chain_id"]
-                if not isinstance(chain_id, str) or chain_id not in required_chains:
-                    raise ControllerError("mechanism_evidence_closure references an unknown causal chain")
-                mechanism_ids = item["mechanism_change_ids"]
-                obligation_ids = item["obligation_ids"]
-                if not isinstance(mechanism_ids, list) or any(
-                    not isinstance(value, str) or value not in required_mechanisms
-                    for value in mechanism_ids
-                ):
-                    raise ControllerError("mechanism_evidence_closure mechanism-change IDs are invalid")
-                if not isinstance(obligation_ids, list) or any(
-                    not isinstance(value, str) or value not in required_obligations
-                    for value in obligation_ids
-                ):
-                    raise ControllerError("mechanism_evidence_closure obligation IDs are invalid")
-                if len(mechanism_ids) != len(set(mechanism_ids)) or len(obligation_ids) != len(set(obligation_ids)):
+                obligation_id = item["validation_obligation_id"]
+                if not isinstance(obligation_id, str) or obligation_id not in specs_by_id:
+                    raise ControllerError(
+                        "mechanism_evidence_closure references an unknown validation obligation"
+                    )
+                if obligation_id in closure_ids:
                     raise ControllerError("mechanism_evidence_closure IDs must be unique")
+                spec = specs_by_id[obligation_id]
+                if item["claim_element_id"] != spec.get("claim_element_id"):
+                    raise ControllerError(
+                        "mechanism_evidence_closure claim element does not match its obligation"
+                    )
+                if item["predicted_mechanism_change"] != spec.get(
+                    "predicted_mechanism_change"
+                ):
+                    raise ControllerError(
+                        "mechanism_evidence_closure prediction is not the packet-bound prediction"
+                    )
                 for field in ("predicted_mechanism_change", "observed_mechanism_change", "performance_consequence"):
                     if not isinstance(item[field], str) or not item[field].strip():
                         raise ControllerError(f"mechanism_evidence_closure.{field} must be non-empty")
@@ -1209,41 +1426,129 @@ class ARISController:
                     raise ControllerError("discriminating evidence must name an allowed identifiable-mechanism method and artifact")
                 if any(not isinstance(path, str) or path not in evidence_paths for path in paths):
                     raise ControllerError("discriminating evidence artifacts must be declared validation evidence")
-                closure_chains.add(chain_id)
-                closure_mechanisms.update(mechanism_ids)
-                closure_obligations.update(obligation_ids)
+                closure_ids.add(obligation_id)
                 normalized_closure.append({
-                    "causal_chain_id": chain_id,
-                    "mechanism_change_ids": mechanism_ids,
-                    "obligation_ids": obligation_ids,
-                    "predicted_mechanism_change": item["predicted_mechanism_change"].strip(),
+                    "validation_obligation_id": obligation_id,
+                    "claim_element_id": item["claim_element_id"],
+                    "predicted_mechanism_change": item["predicted_mechanism_change"],
                     "observed_mechanism_change": item["observed_mechanism_change"].strip(),
                     "explanation_status": "EXPLANATION_SUPPORTED",
                     "mechanism_match": "MATCHES_PREDICTION",
                     "discriminating_evidence": {"method": method, "artifact_paths": paths},
                     "performance_consequence": item["performance_consequence"].strip(),
                 })
-            if (
-                closure_chains != required_chains
-                or closure_mechanisms != required_mechanisms
-                or closure_obligations != required_obligations
-            ):
+            if closure_ids != set(specs_by_id):
                 raise ControllerError(
-                    "VALIDATED requires evidence closure for every Selected Principle causal chain, mechanism change, and obligation"
+                    "VALIDATED requires a four-part causal closure for every claim-validation obligation"
                 )
             normalized["mechanism_evidence_closure"] = normalized_closure
-            for field in (
-                "supported_claim_elements", "applicability_boundaries",
-                "established_scientific_delta",
-            ):
-                value = result.get(field)
-                if value in (None, "", [], {}):
-                    raise ControllerError(f"VALIDATED requires non-empty {field}")
-                normalized[field] = deepcopy(value)
+
+            assessments = result.get("coverage_assessments")
+            if not isinstance(assessments, list) or not assessments:
+                raise ControllerError("VALIDATED requires non-empty exact coverage assessments")
+            actual_coverage: dict[tuple[str, str], dict[str, Any]] = {}
+            normalized_assessments: list[dict[str, Any]] = []
+            for item in assessments:
+                if not isinstance(item, dict):
+                    raise ControllerError("coverage assessments must be objects")
+                key = (str(item.get("subject_type")), str(item.get("subject_id")))
+                if key not in required_coverage or key in actual_coverage:
+                    raise ControllerError(
+                        "coverage assessments contain an unknown or duplicate active obligation"
+                    )
+                disposition = item.get("disposition")
+                if disposition != required_coverage[key]:
+                    raise ControllerError(
+                        "VALIDATED coverage disposition does not close the active obligation or boundary"
+                    )
+                obligation_ids = item.get("validation_obligation_ids")
+                artifact_paths = item.get("evidence_artifact_paths")
+                finding_refs = item.get("finding_refs")
+                if (
+                    not isinstance(obligation_ids, list)
+                    or not obligation_ids
+                    or any(
+                        not isinstance(value, str) or value not in specs_by_id
+                        for value in obligation_ids
+                    )
+                    or len(obligation_ids) != len(set(obligation_ids))
+                ):
+                    raise ControllerError(
+                        "coverage assessment must bind current claim-validation obligations"
+                    )
+                if (
+                    not isinstance(artifact_paths, list)
+                    or not artifact_paths
+                    or any(
+                        not isinstance(value, str) or value not in evidence_paths
+                        for value in artifact_paths
+                    )
+                    or len(artifact_paths) != len(set(artifact_paths))
+                ):
+                    raise ControllerError(
+                        "coverage assessment must bind declared validation Evidence"
+                    )
+                if (
+                    not isinstance(finding_refs, list)
+                    or not finding_refs
+                    or any(
+                        not isinstance(value, str) or value not in finding_ids
+                        for value in finding_refs
+                    )
+                    or len(finding_refs) != len(set(finding_refs))
+                ):
+                    raise ControllerError("coverage assessment finding refs are invalid")
+                normalized_item = {
+                    "subject_type": key[0],
+                    "subject_id": key[1],
+                    "disposition": disposition,
+                    "validation_obligation_ids": list(obligation_ids),
+                    "evidence_artifact_paths": list(artifact_paths),
+                    "finding_refs": list(finding_refs),
+                }
+                actual_coverage[key] = normalized_item
+                normalized_assessments.append(normalized_item)
+            if set(actual_coverage) != set(required_coverage):
+                raise ControllerError(
+                    "VALIDATED requires exact coverage of every active Final Method obligation, causal edge, claim element, and boundary"
+                )
+            normalized["coverage_assessments"] = normalized_assessments
+
+            claim = obligations.get("final_scientific_delta_claim")
+            boundaries = obligations.get("failure_and_applicability_boundaries")
+            if not isinstance(claim, dict) or not isinstance(claim.get("claim_elements"), list):
+                raise ControllerError("VALIDATED cannot resolve the packet-bound claim elements")
+            if not isinstance(boundaries, list):
+                raise ControllerError("VALIDATED cannot resolve packet-bound boundaries")
+            required_claim_ids = [str(item["claim_element_id"]) for item in claim["claim_elements"]]
+            required_boundary_ids = [str(item["boundary_id"]) for item in boundaries]
+            supported_claim_ids = result.get("supported_claim_elements")
+            applicability_boundaries = result.get("applicability_boundaries")
+            if supported_claim_ids != required_claim_ids:
+                raise ControllerError(
+                    "VALIDATED claim support must exactly match the active packet claim elements"
+                )
+            if applicability_boundaries != required_boundary_ids:
+                raise ControllerError(
+                    "VALIDATED applicability boundaries must exactly match the packet boundaries"
+                )
+            normalized["supported_claim_elements"] = list(supported_claim_ids)
+            normalized["applicability_boundaries"] = list(applicability_boundaries)
             for field in ("retained_limitations", "remaining_uncertainties"):
                 if field not in result or result[field] is None:
                     raise ControllerError(f"VALIDATED requires {field}")
                 normalized[field] = deepcopy(result[field])
+            supported = set(supported_claim_ids)
+            normalized["established_scientific_delta"] = {
+                "claim_status": "ESTABLISHED_BY_FULL_CAUSAL_VALIDATION",
+                "source_final_method_id": obligations["final_method_id"],
+                "claim_elements": [
+                    deepcopy(item)
+                    for item in claim["claim_elements"]
+                    if str(item["claim_element_id"]) in supported
+                ],
+                "validation_result_id": validation_result_id.strip(),
+            }
         return normalized
 
     def submit_validation_result(self, result: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1283,11 +1588,17 @@ class ARISController:
             core.setdefault("validation_results", []).append(record)
             if normalized["decision"] == "VALIDATED":
                 core["status"] = "VALIDATION_CONFIRMED"
+                core["established_scientific_delta"] = deepcopy(
+                    normalized["established_scientific_delta"]
+                )
                 core["validation_entry"] = {
                     "status": "VALIDATED",
                     "entry_policy": "human_initiated_only",
                     "handoff_sha256": handoff["handoff_sha256"],
                     "validation_result_id": result_id,
+                    "established_scientific_delta": deepcopy(
+                        normalized["established_scientific_delta"]
+                    ),
                     "validated_at": record["registered_at"],
                 }
                 core["transition_log"].append(
@@ -5151,6 +5462,7 @@ class ARISController:
         core["current_phase"] = target
         core["approval_request"] = None
         core["problem_revision_request"] = None
+        core["established_scientific_delta"] = None
         if "method_design" in reset_names:
             prior_cycle = core.get("method_test_cycle")
             if isinstance(prior_cycle, dict) and prior_cycle.get("cycle_id"):
@@ -5397,6 +5709,7 @@ class ARISController:
             core["approval_request"] = None
             core["problem_revision_request"] = None
             core["validation_entry"] = None
+            core["established_scientific_delta"] = None
             core["no_go_record"] = dict(record)
             core["transition_log"].append(
                 {

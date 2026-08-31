@@ -60,7 +60,7 @@ Consume the latest feedback before revision. `REVISE`, `HOLD`,
 `METHOD_REFINEMENT_REQUIRED` preserve the same Selected Principle. `RETHINK`,
 `RETHINK_PRINCIPLE_DELTA`, `SELECTED_PRINCIPLE_REJECTED`, `RCA_CONFLICT`,
 `NECESSITY_CONFLICT`, `PROBLEM_CONFLICT`, `ROOT_CAUSE_REJECTED`, and
-`PROBLEM_PREMISE_REJECTED` reopen upstream science; stop if the Selected
+`NECESSITY_PREMISE_REJECTED`, `PROBLEM_PREMISE_REJECTED` reopen upstream science; stop if the Selected
 Principle is no longer active. Never rewrite an accepted RCA, Necessity, or
 Problem in place to consume conflicting Evidence.
 
