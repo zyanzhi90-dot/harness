@@ -22,9 +22,9 @@ Execute the post-convergence scientific sequence:
 
 ```text
 Selected Principle -> target-domain adaptation -> minimal faithful realization
-  -> Principle-only closure attempt -> residual mechanism/adaptation gaps
-  -> minimal necessary composition -> Final Scientific Delta Claim
-  -> claim-validation obligations -> independent final method review
+  -> Principle-only closure -> Residual MUSTs -> minimal necessary composition
+  -> FINAL_METHOD_PACKET.json -> deterministic FINAL_PROPOSAL.md
+  -> independent final method review
 ```
 
 Do not enter from a rough Method, prose selection, test-only realization, or
@@ -47,7 +47,8 @@ Read these once, then execute rather than restating them:
    — preserve formal review independence.
 
 Use [`templates/METHOD_PROPOSAL_TEMPLATE.md`](../../templates/METHOD_PROPOSAL_TEMPLATE.md)
-for `ACTIVE_PROPOSAL.md` and `FINAL_PROPOSAL.md`.
+as the Packet/view guide. Main writes `FINAL_METHOD_PACKET.json`; the Controller
+alone renders `FINAL_PROPOSAL.md`.
 
 ## Input preflight
 
@@ -81,16 +82,19 @@ Allow explicit overrides. Do not hard-code domain doctrine.
 
 ## Execution
 
-Follow R0–R6 in `method-refinement-protocol.md`:
+Follow R0–R7 in `method-refinement-protocol.md`:
 
 - bind the active Problem, RCA, and Selected Principle without drift;
 - adapt the algorithm-independent intervention to the target domain;
 - construct the minimal faithful realization and attempt Principle-only
   closure against every selected RMC, Capability, Obligation, condition, and
   boundary;
-- declare stable residual-gap IDs before adding support;
+- create Residual MUSTs only from real `RESIDUAL_GAP` closure;
 - retain only the smallest mechanisms needed to close those gaps through real
   interfaces;
+- persist the causal repair DAG, Existing-to-New Mechanism Delta, nearest-prior
+  separation, Target-only natural derivation, feasibility/restrictions, and
+  future counterfactual necessity obligations;
 - write a bounded `Final Scientific Delta Claim` and traceable
   claim-validation obligations;
 - keep `Established Scientific Delta` unavailable until Full Validation returns
@@ -113,7 +117,7 @@ call. Record the iterative thread separately from the Controller review
 request. Continuity cannot accept the phase.
 
 The Controller-issued `independent_method_reviewer` is the sole formal final
-reviewer. When `FINAL_PROPOSAL.md` is final and all Evidence work is complete,
+reviewer. When `FINAL_METHOD_PACKET.json` is final and all Evidence work is complete,
 invoke:
 
 ```text
@@ -130,6 +134,7 @@ METHOD_READY -> final_method_novelty_gate
 REVISE/HOLD  -> method_refinement
 RETHINK      -> method_design
 RCA_CONFLICT -> root_cause_analysis
+NO_GO        -> SCIENTIFIC_NO_GO only for fatal Evidence-proven unrecoverable feasibility
 ```
 
 ## Recovery
@@ -141,8 +146,8 @@ and the latest return feedback. Older rounds remain audit history.
 ## Completion rules
 
 - Preserve every selected Principle/RCA/RMC/Capability/Obligation binding.
-- Use the exact required `FINAL_PROPOSAL.md` sections from the refinement
-  protocol.
+- Treat `FINAL_METHOD_PACKET.json` as the sole Final Method machine authority;
+  the Proposal is only the Controller-rendered view.
 - Keep evidence, inference, proposal, and unvalidated Claim distinct.
 - Do not add support without a demonstrated residual adaptation/mechanism gap.
 - Do not manufacture Evidence, results, novelty, convergence, or readiness.

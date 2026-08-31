@@ -1,100 +1,46 @@
-# Method Proposal: [Proposal Name]
+# Final Method Packet and View Guide
 
-- **Proposal status**: [refining / final]
-- **Problem ID**: [active accepted problem ID]
-- **Problem version**: [active accepted problem version]
-- **Problem-contract SHA-256**: [Controller-registered hash]
-- **Problem-evidence-capsule SHA-256**: [Controller-registered hash]
-- **Root-cause analysis ID**: [accepted analysis ID]
-- **Root-cause analysis SHA-256**: [Controller-registered hash]
+Main does not author `FINAL_PROPOSAL.md`. Main authors
+`refine-logs/FINAL_METHOD_PACKET.json`; after mechanical validation, the
+Controller deterministically renders the Markdown view. The Packet is the only
+Final Method machine authority.
 
-> This is a post-convergence Method artifact. It adapts the active
-> Controller-materialized Selected Principle and must not redefine the accepted
-> Problem, RCA, Principle version, or their bindings. A test-only concrete
-> realization from Principle evaluation is not a Method commitment.
+The Packet must contain the exact accepted Problem, Necessity, RCA, and
+Controller-materialized Selected Principle bindings, followed by:
 
-## Selected Principle binding
+1. `target_constraints`
+2. `assumption_constraint_collisions` with a disposition for every collision
+3. `minimal_faithful_realization`, separating reused implementation machinery
+   from core scientific changes
+4. exact `principle_only_closure` coverage with `CLOSED | RESIDUAL_GAP`
+5. `residual_musts` derived only from `RESIDUAL_GAP`
+6. `minimal_necessary_composition` (legally empty when no residual exists)
+7. `core_method_changes` and an acyclic `causal_repair_dag`
+8. an Existing-to-New `mechanism_delta` and Evidence-bound nearest-prior
+   separation
+9. Target RMC ↔ Selected/Source Intervention ↔ Final Computational Change
+   alignment
+10. `target_only_natural_derivation` with the Source story removed
+11. claim-proportional `feasibility_closure`, debts, restrictions, and fatality
+12. one future `counterfactual_necessity_obligation` per retained support
+13. a bounded `final_scientific_delta_claim` whose status is
+    `FINAL_PENDING_VALIDATION`
+14. claim-validation obligations that require predicted mechanism change,
+    observed mechanism change, discriminating evidence, and performance
+    consequence
+15. failure, applicability, and claim-restriction boundaries
 
-- **Selected Principle ID**: [exact `SELECTED_PRINCIPLE.yaml` value]
-- **Selected Principle version**: [exact value]
-- **Selected Principle statement**: [algorithm-independent intervention]
-- **Causal-chain IDs**: [all bound IDs]
-- **Required Mechanism Change IDs**: [all bound IDs]
-- **Required Capability IDs**: [all bound IDs]
-- **Design Obligation IDs**: [all bound IDs]
-- **Evidence closure**: [accepted convergence Evidence]
-- **Activation conditions**: [...]
-- **Remaining uncertainty**: [...]
+Every support must bind a Residual MUST and every scientific DAG edge must bind
+a claim-validation obligation. An unexecuted counterfactual remains
+`FUTURE_OBLIGATION` and is not Evidence. `Established Scientific Delta` is
+reserved for a later Controller-accepted Full Validation result.
 
-## Target-domain adaptation
-
-Map the selected intervention to the target entities, relations, states or
-information structures, operating conditions, and every bound RMC/Capability/
-Obligation. Distinguish Evidence, inference, and proposed adaptation.
-
-## Minimal faithful realization
-
-Specify the smallest concrete realization that faithfully instantiates the
-Selected Principle. Identify reused implementation machinery separately from
-core Method changes. Do not inherit a pre-convergence test realization without
-independent post-convergence justification.
-
-## Principle-only closure attempt
-
-For every bound causal chain, RMC, Capability, Obligation, activation condition,
-failure condition, and boundary, record the selected intervention, concrete
-realization, predicted mechanism change, and `CLOSED` or `RESIDUAL_GAP` status.
-
-## Residual mechanism and adaptation gaps
-
-Give each real residual gap a stable ID, failed closure link, target condition,
-consequence, and acceptance condition. Use `none` when Principle-only closure is
-complete; do not invent gaps to justify composition.
-
-## Minimal necessary composition
-
-For each retained support, bind residual gap IDs, mechanism, activation
-conditions, actual integration interface, assumption compatibility, and the
-removal/counterfactual failure prediction. Use `none` when no support is needed.
-
-## Core method changes
-
-List the concrete changes that implement the Selected Principle or close a
-declared residual gap. For each, identify its binding IDs and distinguish core
-scientific change from ordinary implementation prerequisites.
-
-## Predicted mechanism changes
-
-For each causal chain/RMC/core change, state the predicted observable mechanism
-or failure-pattern change, activation conditions, discriminating observation,
-and expected performance consequence.
-
-## Failure conditions and applicability boundaries
-
-Carry forward the Selected Principle's failure conditions and boundaries, then
-state any target-adaptation-specific limits. Do not broaden scope beyond current
-Evidence.
-
-## Final Scientific Delta Claim
-
-State the bounded Claim that Full Validation will test. It is not an established
-fact. Identify its new mechanism, representation, boundary, or important
-capability and distinguish it from concrete embodiment novelty.
-
-## Claim-validation obligations
-
-For every Claim element record: claim-element ID; causal-chain, RMC, Capability,
-Obligation, and core-change IDs; predicted mechanism change; discriminating
-Evidence required; performance consequence required; falsifying pattern;
-failure conditions; and applicability boundary.
-
-Full causal closure requires:
+The rendered view is produced only by:
 
 ```text
-predicted mechanism change -> observed mechanism change
-  -> discriminating evidence -> performance consequence
+render_final_method_view(FINAL_METHOD_PACKET.json)
+  -> Controller writes FINAL_PROPOSAL.md
 ```
 
-Performance improvement alone cannot establish the Final Scientific Delta
-Claim. `Established Scientific Delta` is reserved for a Controller-accepted
-`VALIDATED` result.
+Manual changes to `FINAL_PROPOSAL.md` make the view invalid; never recover or
+infer Packet facts from Markdown.

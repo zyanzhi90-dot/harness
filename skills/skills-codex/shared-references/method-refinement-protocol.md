@@ -15,11 +15,11 @@ Preserve this order:
 Selected Principle
   -> target-domain adaptation
   -> minimal faithful realization
-  -> Principle-only closure attempt
-  -> residual mechanism/adaptation gaps
-  -> minimal necessary supporting mechanisms
-  -> Final Scientific Delta Claim
-  -> claim-validation obligations
+  -> Principle-only closure
+  -> Residual MUSTs
+  -> minimal necessary composition
+  -> FINAL_METHOD_PACKET.json
+  -> deterministic FINAL_PROPOSAL.md
   -> independent final method review
 ```
 
@@ -72,14 +72,18 @@ refine-logs/
   UNRESOLVED_ISSUES.md
   round-N-review.md
   round-N-decision.md
+  FINAL_METHOD_PACKET.json
   FINAL_BLIND_REVIEW.md
   FINAL_PROPOSAL.md
   REVIEW_SUMMARY.md
   REFINEMENT_REPORT.md
 ```
 
-`REFINE_STATE.json` records refinement/review progress only; it is not a second
-scientific-core lifecycle. `ACTIVE_PROPOSAL.md` is the one mutable proposal.
+`FINAL_METHOD_PACKET.json` is the sole canonical Final Method machine
+authority. `FINAL_PROPOSAL.md` is only its deterministic Controller-rendered
+human view. `REFINE_STATE.json` records refinement/review progress only;
+`ACTIVE_PROPOSAL.md` is optional working prose and neither may supply or recover
+Final Method facts.
 Create `MANIFEST.md` only when the shared artifact threshold is crossed.
 
 ## R0 — Freeze accepted upstream bindings
@@ -110,8 +114,9 @@ requires it.
 
 Construct the smallest concrete realization that faithfully embodies the
 Selected Principle. Distinguish reused implementation machinery from core
-method changes. Then attempt Principle-only closure against every selected RMC,
-Capability, Obligation, failure condition, and applicability boundary.
+method changes. Then attempt Principle-only closure against every accepted
+primary causal chain, selected RMC, Capability, Obligation, activation/failure
+condition, and applicability boundary.
 
 For each closure entry record:
 
@@ -128,11 +133,13 @@ Do not use pre-convergence test-only realizations as an implicit backbone or
 Method commitment. Reuse one only if the post-convergence adaptation reasoning
 independently selects it as the minimal faithful realization.
 
-## R3 — Residual gaps and minimal necessary composition
+## R3 — Residual MUSTs, minimal necessary composition, and causal repair DAG
 
-Only a genuine `RESIDUAL_GAP` may justify a supporting mechanism. Give each gap
-a stable ID and record the failed closure link, target condition, consequence,
-and acceptance condition.
+Only a genuine `RESIDUAL_GAP` may create a `residual_must`. Give every MUST a
+stable ID and record the failed closure link, gap, and acceptance condition.
+Engineering preference, implementation convenience, and generic optimization
+are not MUSTs. If every closure is `CLOSED`, both `residual_musts` and
+`minimal_necessary_composition` are empty.
 
 First use the accepted Field Map and current Evidence. If a residual adaptation
 gap still lacks a justified solution, the running `method_refinement` phase may
@@ -161,9 +168,40 @@ prerequisites as implementation constraints rather than scientific novelty.
 
 If adaptation-gap search or Evidence re-adoption occurs while the phase is
 running, finish that session before final review and refresh the review request
-after the final proposal is written.
+after the final Packet is written.
 
-## R4 — Final Scientific Delta Claim and validation obligations
+Persist an acyclic `causal_repair_dag`. A core Method node may have only an
+accepted Primary Root Cause, a real Target Constraint, or an incompatibility
+explicitly introduced by an earlier retained design as causal parent. For the
+third case preserve `later repair <- incompatibility <- earlier design <-
+original causal requirement`. Every edge names a claim-validation obligation;
+every node participates; every core change is represented exactly once.
+
+## R4 — Mechanism, natural derivation, feasibility, counterfactual, and Claim
+
+Persist `mechanism_delta` as a specific Existing causal/computational relation
+to New relation change. Record the nearest relevant prior or causal-equivalent
+baseline, formal Evidence/provenance, and separation in the intervention,
+mechanism, or computational relation. Algorithm names and module counts are not
+mechanism separation.
+
+Persist Target RMC ↔ Selected/Source Intervention ↔ Final Computational Change
+alignment. Then write `target_only_natural_derivation`: after removing every
+Source-domain story, `Target Failure -> RCA -> RMC -> Target Constraints ->
+Final Method` must still explain the Method and every core structure.
+
+Feasibility is claim-proportional. Record only dimensions relevant to the field
+and Claim, supported conditions, unresolved debts, restrictions, and fatality.
+A nonfatal debt must restrict the Claim/boundary. A fatal debt is `NO_GO`-eligible
+only when current Evidence excludes repair and claim restriction cannot preserve
+the core seed.
+
+Every retained supporting scientific mechanism gets one future
+`counterfactual_necessity_obligation`: removal condition, closure expected to
+fail, and discriminating consequence. An unexecuted removal/ablation is not
+Evidence and remains `FUTURE_OBLIGATION`.
+
+### Final Scientific Delta Claim and validation obligations
 
 State the `Final Scientific Delta Claim` that Full Validation will test. It may
 claim a new mechanism, representation, boundary, or important capability only
@@ -196,26 +234,22 @@ predicted mechanism change
   -> performance consequence
 ```
 
-## R5 — Write the final proposal
+## R5 — Write the canonical Final Method Packet
 
-Use `templates/METHOD_PROPOSAL_TEMPLATE.md`. `FINAL_PROPOSAL.md` must contain
-these exact non-empty sections and include every Selected Principle binding ID:
+Use `templates/METHOD_PROPOSAL_TEMPLATE.md` as the Packet/view authoring guide.
+Main writes `refine-logs/FINAL_METHOD_PACKET.json` with exact current Problem,
+Necessity, RCA, and Selected Principle hashes and every structure from R1–R4.
+Keep evidence, inference, proposed method, and unvalidated Claim distinct.
+Never write or parse `FINAL_PROPOSAL.md` as a second scientific authority.
 
-1. `Selected Principle binding`
-2. `Target-domain adaptation`
-3. `Minimal faithful realization`
-4. `Principle-only closure attempt`
-5. `Residual mechanism and adaptation gaps`
-6. `Minimal necessary composition`
-7. `Core method changes`
-8. `Predicted mechanism changes`
-9. `Failure conditions and applicability boundaries`
-10. `Final Scientific Delta Claim`
-11. `Claim-validation obligations`
+## R6 — Deterministic human view
 
-Keep evidence, inference, proposal, and unvalidated Claim distinct.
+Invoke `refresh-review-request` after the Packet and legal Evidence work are
+complete. The Controller validates the Packet, computes
+`render_final_method_view(packet)`, and writes `FINAL_PROPOSAL.md`. Validation
+requires byte equality with that render. Manual edits to the view are invalid.
 
-## R6 — Review and revise
+## R7 — Review and revise
 
 Iterative review may identify issue IDs for problem/RCA/Principle fidelity,
 adaptation correctness, realization faithfulness, residual-gap necessity,
@@ -224,10 +258,9 @@ Resolve issue IDs against Evidence and revise only the active proposal. Scores
 are progress signals, never acceptance rules.
 
 The Controller-issued `independent_method_reviewer` is the sole formal final
-method reviewer. After all legal Evidence work is complete and
-`FINAL_PROPOSAL.md` is final, invoke `refresh-review-request`; dispatch the
-reviewer only against that current binding. Write its unchanged verdict to
-`FINAL_BLIND_REVIEW.md` with the live request and reviewed-artifact hashes.
+method reviewer. Dispatch it only against the current
+`FINAL_METHOD_PACKET.json` binding. Write its unchanged verdict to
+`FINAL_BLIND_REVIEW.md` with the live request and Packet hash.
 
 Formal outcomes are:
 
@@ -238,8 +271,12 @@ Formal outcomes are:
 | `HOLD` | obtain or explain missing method-level Evidence in `method_refinement` |
 | `RETHINK` | return to `method_design` because the selected Principle or its scientific delta must be reconsidered |
 | `RCA_CONFLICT` | return linked Evidence and mechanism conflict to `root_cause_analysis` |
+| `NO_GO` | enter existing `SCIENTIFIC_NO_GO` only for a fatal feasibility debt after Evidence excludes repair, claim restriction, and every fixed return |
 
 The formal reviewer does not select a new Principle or rewrite the RCA.
+`NO_GO` must include the Final Method/debt subject, current Evidence, reason,
+and excluded `REVISE`, `HOLD`, `RETHINK`, and `RCA_CONFLICT` recoveries. A
+repairable/restrictable debt uses the normal fixed return.
 
 ## Downstream boundaries
 

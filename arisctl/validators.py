@@ -2881,39 +2881,585 @@ def validate_selected_principle(
     return selected
 
 
-def validate_final_proposal_for_principle(
-    text: Any,
-    *,
-    selected_principle: dict[str, Any],
-    required_sections: list[str],
-) -> str:
-    if not isinstance(text, str) or not text.strip():
-        raise ValidationError("final proposal must be non-empty Markdown")
-    matches = list(re.finditer(r"(?m)^#{1,6}\s+(.+?)\s*$", text))
-    headings = {match.group(1).strip().casefold() for match in matches}
-    missing = [section for section in required_sections if section.casefold() not in headings]
-    if missing:
-        raise ValidationError(f"final proposal is missing required sections: {missing}")
-    required = {section.casefold() for section in required_sections}
-    for index, match in enumerate(matches):
-        if match.group(1).strip().casefold() not in required:
-            continue
-        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        if not text[match.end():end].strip():
-            raise ValidationError(
-                f"final proposal section {match.group(1).strip()!r} must be non-empty"
-            )
-    for value in (
-        str(selected_principle["principle_id"]),
-        str(selected_principle["principle_version"]),
-        *[str(item) for item in selected_principle["causal_chain_ids"]],
-        *[str(item) for item in selected_principle["mechanism_change_ids"]],
-        *[str(item) for item in selected_principle["capability_ids"]],
-        *[str(item) for item in selected_principle["obligation_ids"]],
+def render_final_method_view(packet: dict[str, Any]) -> str:
+    """Render the sole deterministic human view of the Final Method packet."""
+
+    def section(title: str, value: Any) -> list[str]:
+        return [
+            f"## {title}",
+            "",
+            "```json",
+            json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True),
+            "```",
+            "",
+        ]
+
+    lines = [
+        "# Final Method",
+        "",
+        f"Final Method ID: `{packet['final_method_id']}`",
+        "",
+        "This document is a deterministic human view of "
+        "`refine-logs/FINAL_METHOD_PACKET.json`; the JSON packet is the only "
+        "canonical machine authority. The Final Scientific Delta Claim remains "
+        "pending Full Validation.",
+        "",
+    ]
+    for title, field in (
+        ("Selected Principle binding", None),
+        ("Target-domain adaptation", "target_constraints"),
+        ("Minimal faithful realization", "minimal_faithful_realization"),
+        ("Principle-only closure attempt", "principle_only_closure"),
+        ("Residual mechanism and adaptation gaps", "residual_musts"),
+        ("Minimal necessary composition", "minimal_necessary_composition"),
+        ("Core method changes", "core_method_changes"),
+        ("Predicted mechanism changes", "mechanism_delta"),
+        ("Failure conditions and applicability boundaries", "failure_and_applicability_boundaries"),
+        ("Final Scientific Delta Claim", "final_scientific_delta_claim"),
+        ("Claim-validation obligations", "claim_validation_obligations"),
+        ("Assumption-constraint collisions", "assumption_constraint_collisions"),
+        ("Causal repair DAG", "causal_repair_dag"),
+        ("Target RMC and final intervention alignment", "intervention_alignment"),
+        ("Target-only natural derivation", "target_only_natural_derivation"),
+        ("Feasibility closure", "feasibility_closure"),
+        ("Counterfactual necessity obligations", "counterfactual_necessity_obligations"),
     ):
-        if value not in text:
-            raise ValidationError(f"final proposal omits Selected Principle binding {value!r}")
+        value = (
+            {
+                "problem_binding": packet["problem_binding"],
+                "necessity_binding": packet["necessity_binding"],
+                "root_cause_binding": packet["root_cause_binding"],
+                "selected_principle_binding": packet["selected_principle_binding"],
+            }
+            if field is None
+            else packet[field]
+        )
+        lines.extend(section(title, value))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def validate_final_method_view(text: Any, packet: dict[str, Any]) -> str:
+    expected = render_final_method_view(packet)
+    if text != expected:
+        raise ValidationError(
+            "final proposal must exactly match the deterministic Final Method packet rendering"
+        )
     return text
+
+
+def validate_final_method_packet(
+    payload: Any,
+    *,
+    contract: dict[str, Any],
+    problem_binding: dict[str, Any],
+    necessity_binding: dict[str, Any],
+    root_cause_binding: dict[str, Any],
+    selected_principle: dict[str, Any],
+    selected_principle_sha256: str,
+    current_evidence_ids: set[str] | None = None,
+    final_proposal_text: str | None = None,
+) -> dict[str, Any]:
+    """Validate Final Method identity, closure, references, and graph facts.
+
+    Necessity, minimality, causal truth, and novelty strength remain reviewer
+    judgments. This function checks only mechanically decidable structure and
+    current bindings.
+    """
+
+    packet = _require_mapping(payload, "Final Method packet")
+    _require_fields(packet, tuple(contract["required_fields"]), "Final Method packet")
+    if packet["schema_version"] != contract.get("schema_version", 1):
+        raise ValidationError("Final Method packet schema_version is invalid")
+    _required_text(packet["final_method_id"], "Final Method packet.final_method_id")
+
+    def exact_binding(field: str, fields_key: str, expected: dict[str, Any]) -> None:
+        binding = _require_mapping(packet[field], f"Final Method packet.{field}")
+        _require_fields(binding, tuple(contract[fields_key]), f"Final Method packet.{field}")
+        if binding != expected:
+            raise ValidationError(f"Final Method packet.{field} is stale or does not match accepted upstream state")
+
+    exact_binding("problem_binding", "problem_binding_fields", problem_binding)
+    exact_binding("necessity_binding", "necessity_binding_fields", necessity_binding)
+    exact_binding("root_cause_binding", "root_cause_binding_fields", root_cause_binding)
+    exact_binding(
+        "selected_principle_binding",
+        "selected_principle_binding_fields",
+        {
+            "principle_id": selected_principle["principle_id"],
+            "principle_version": selected_principle["principle_version"],
+            "selected_principle_sha256": selected_principle_sha256,
+        },
+    )
+
+    causal_ids = set(_unique_string_values(selected_principle["causal_chain_ids"], "Selected Principle.causal_chain_ids"))
+    rmc_ids = set(_unique_string_values(selected_principle["mechanism_change_ids"], "Selected Principle.mechanism_change_ids"))
+    capability_ids = set(_unique_string_values(selected_principle["capability_ids"], "Selected Principle.capability_ids"))
+    obligation_ids = set(_unique_string_values(selected_principle["obligation_ids"], "Selected Principle.obligation_ids"))
+    activation_conditions = set(_unique_string_values(selected_principle["activation_conditions"], "Selected Principle.activation_conditions"))
+    failure_conditions = set(_unique_string_values(selected_principle["failure_conditions"], "Selected Principle.failure_conditions"))
+    assumption_ids = {
+        str(item["assumption_id"])
+        for item in _require_list(selected_principle, "accepted_assumptions", "Selected Principle", non_empty=False)
+        if isinstance(item, dict) and isinstance(item.get("assumption_id"), str) and item["assumption_id"]
+    }
+
+    def items(field: str, fields_key: str, id_field: str, *, non_empty: bool) -> tuple[list[dict[str, Any]], set[str]]:
+        raw_items = _require_list(packet, field, "Final Method packet", non_empty=non_empty)
+        ids = _unique_ids(raw_items, id_field, f"Final Method packet.{field}")
+        mapped: list[dict[str, Any]] = []
+        for index, raw in enumerate(raw_items, 1):
+            item = _require_mapping(raw, f"Final Method packet.{field} item {index}")
+            _require_fields(item, tuple(contract[fields_key]), f"Final Method packet.{field} item {index}")
+            mapped.append(item)
+        return mapped, ids
+
+    def refs(value: Any, label: str, known: set[str], *, non_empty: bool = True) -> set[str]:
+        values = set(_unique_string_values(value, label, non_empty=non_empty))
+        if not values <= known:
+            raise ValidationError(f"{label} contains unknown references: {sorted(values - known)}")
+        return values
+
+    def evidence_refs(value: Any, label: str, *, non_empty: bool = True) -> set[str]:
+        values = set(_unique_string_values(value, label, non_empty=non_empty))
+        if current_evidence_ids is not None and not values <= current_evidence_ids:
+            raise ValidationError(f"{label} cites Evidence outside the current formal context")
+        return values
+
+    constraints, constraint_ids = items(
+        "target_constraints", "target_constraint_fields", "constraint_id", non_empty=True
+    )
+    target_source_ids = (
+        {str(value) for value in necessity_binding["residual_failure_ids"]}
+        | causal_ids | rmc_ids | capability_ids | obligation_ids
+        | activation_conditions | failure_conditions
+    )
+    for index, constraint in enumerate(constraints, 1):
+        _required_text(constraint["constraint"], f"target constraint {index}.constraint")
+        refs(
+            constraint["source_ref_ids"],
+            f"target constraint {index}.source_ref_ids",
+            target_source_ids,
+        )
+        evidence_refs(constraint["evidence_refs"], f"target constraint {index}.evidence_refs", non_empty=False)
+
+    boundaries, boundary_ids = items(
+        "failure_and_applicability_boundaries", "boundary_fields", "boundary_id", non_empty=True
+    )
+    for index, boundary in enumerate(boundaries, 1):
+        if boundary["boundary_type"] not in set(contract["boundary_type_enum"]):
+            raise ValidationError(f"boundary {index}.boundary_type is invalid")
+        _required_text(boundary["boundary"], f"boundary {index}.boundary")
+        _unique_string_values(boundary["source_refs"], f"boundary {index}.source_refs")
+
+    claim = _require_mapping(packet["final_scientific_delta_claim"], "Final Scientific Delta Claim")
+    _require_fields(claim, tuple(contract["final_scientific_delta_claim_fields"]), "Final Scientific Delta Claim")
+    if claim["claim_status"] not in set(contract["final_scientific_delta_claim_status_enum"]):
+        raise ValidationError("Final Scientific Delta Claim must remain pending Full Validation")
+    claim_elements = _require_list(claim, "claim_elements", "Final Scientific Delta Claim", non_empty=True)
+    claim_element_ids = _unique_ids(claim_elements, "claim_element_id", "Final Scientific Delta Claim.claim_elements")
+    for index, raw in enumerate(claim_elements, 1):
+        element = _require_mapping(raw, f"claim element {index}")
+        _require_fields(element, tuple(contract["claim_element_fields"]), f"claim element {index}")
+        _required_text(element["claim"], f"claim element {index}.claim")
+        refs(element["causal_chain_ids"], f"claim element {index}.causal_chain_ids", causal_ids)
+        refs(element["mechanism_change_ids"], f"claim element {index}.mechanism_change_ids", rmc_ids)
+        refs(element["capability_ids"], f"claim element {index}.capability_ids", capability_ids)
+        refs(element["obligation_ids"], f"claim element {index}.obligation_ids", obligation_ids)
+        refs(element["boundary_refs"], f"claim element {index}.boundary_refs", boundary_ids)
+
+    changes, change_ids = items(
+        "core_method_changes", "core_method_change_fields", "core_method_change_id", non_empty=True
+    )
+    change_by_id = {str(item["core_method_change_id"]): item for item in changes}
+    change_types = set(contract["core_method_change_type_enum"])
+    for index, change in enumerate(changes, 1):
+        _required_text(change["change"], f"core method change {index}.change")
+        if change["change_type"] not in change_types:
+            raise ValidationError(f"core method change {index}.change_type is invalid")
+        _unique_string_values(change["causal_parent_refs"], f"core method change {index}.causal_parent_refs")
+        refs(change["served_rmc_ids"], f"core method change {index}.served_rmc_ids", rmc_ids)
+        refs(change["served_capability_ids"], f"core method change {index}.served_capability_ids", capability_ids)
+        refs(change["served_obligation_ids"], f"core method change {index}.served_obligation_ids", obligation_ids)
+    for index, element in enumerate(claim_elements, 1):
+        refs(element["core_method_change_ids"], f"claim element {index}.core_method_change_ids", change_ids)
+
+    for field, known in (
+        ("causal_chain_ids", causal_ids),
+        ("mechanism_change_ids", rmc_ids),
+        ("capability_ids", capability_ids),
+        ("obligation_ids", obligation_ids),
+        ("core_method_change_ids", change_ids),
+    ):
+        covered = {
+            str(value)
+            for element in claim_elements
+            for value in element[field]
+        }
+        if covered != known:
+            raise ValidationError(
+                f"Final Scientific Delta Claim does not exactly cover current {field}"
+            )
+
+    realization = _require_mapping(packet["minimal_faithful_realization"], "minimal faithful realization")
+    _require_fields(realization, tuple(contract["minimal_faithful_realization_fields"]), "minimal faithful realization")
+    if realization["selected_intervention"] != selected_principle["intervention"]:
+        raise ValidationError("minimal faithful realization drifts from the Selected Principle intervention")
+    for field in ("target_realization", "fidelity_rationale"):
+        _required_text(realization[field], f"minimal faithful realization.{field}")
+    _unique_string_values(realization["reused_implementation_machinery"], "minimal faithful realization.reused_implementation_machinery", non_empty=False)
+    realization_change_ids = refs(realization["core_method_change_ids"], "minimal faithful realization.core_method_change_ids", change_ids)
+    expected_realization_changes = {
+        change_id for change_id, change in change_by_id.items()
+        if change["change_type"] == "PRINCIPLE_REALIZATION"
+    }
+    if realization_change_ids != expected_realization_changes or not realization_change_ids:
+        raise ValidationError("minimal faithful realization must identify every and only Principle-realization core change")
+
+    closures, closure_ids = items(
+        "principle_only_closure", "principle_only_closure_fields", "closure_id", non_empty=True
+    )
+    expected_subjects = {
+        *(('CAUSAL_CHAIN', value) for value in causal_ids),
+        *(('RMC', value) for value in rmc_ids),
+        *(('CAPABILITY', value) for value in capability_ids),
+        *(('OBLIGATION', value) for value in obligation_ids),
+        *(('ACTIVATION_CONDITION', value) for value in activation_conditions),
+        *(('FAILURE_CONDITION', value) for value in failure_conditions),
+        *(('APPLICABILITY_BOUNDARY', value) for value in boundary_ids),
+    }
+    actual_subjects: set[tuple[str, str]] = set()
+    closure_by_id: dict[str, dict[str, Any]] = {}
+    for index, closure in enumerate(closures, 1):
+        subject_type = closure["subject_type"]
+        subject_id = _required_text(closure["subject_id"], f"closure {index}.subject_id")
+        if subject_type not in set(contract["principle_only_closure_subject_enum"]):
+            raise ValidationError(f"closure {index}.subject_type is invalid")
+        if closure["status"] not in set(contract["principle_only_closure_status_enum"]):
+            raise ValidationError(f"closure {index}.status is invalid")
+        _required_text(closure["predicted_mechanism_change"], f"closure {index}.predicted_mechanism_change")
+        _required_text(closure["rationale"], f"closure {index}.rationale")
+        residual_refs = set(_unique_string_values(closure["residual_must_ids"], f"closure {index}.residual_must_ids", non_empty=False))
+        if (closure["status"] == "RESIDUAL_GAP") != bool(residual_refs):
+            raise ValidationError("closure residual status and Residual MUST references are inconsistent")
+        key = (str(subject_type), subject_id)
+        if key in actual_subjects:
+            raise ValidationError("principle-only closure contains duplicate subject coverage")
+        actual_subjects.add(key)
+        closure_by_id[str(closure["closure_id"])] = closure
+    if actual_subjects != expected_subjects:
+        raise ValidationError("principle-only closure does not exactly cover the current causal/RMC/capability/obligation/condition/boundary set")
+
+    residual_musts, residual_must_ids = items(
+        "residual_musts", "residual_must_fields", "residual_must_id", non_empty=False
+    )
+    residual_by_id = {str(item["residual_must_id"]): item for item in residual_musts}
+    for index, must in enumerate(residual_musts, 1):
+        closure_id = str(must["closure_id"])
+        if closure_id not in closure_by_id or closure_by_id[closure_id]["status"] != "RESIDUAL_GAP":
+            raise ValidationError(f"Residual MUST {index} does not originate from a RESIDUAL_GAP closure")
+        _required_text(must["gap"], f"Residual MUST {index}.gap")
+        _required_text(must["acceptance_condition"], f"Residual MUST {index}.acceptance_condition")
+    for closure in closures:
+        refs(closure["residual_must_ids"], f"closure {closure['closure_id']}.residual_must_ids", residual_must_ids, non_empty=False)
+        for must_id in closure["residual_must_ids"]:
+            if str(residual_by_id[str(must_id)]["closure_id"]) != str(closure["closure_id"]):
+                raise ValidationError("Residual MUST and closure references are not reciprocal")
+
+    collisions, _ = items(
+        "assumption_constraint_collisions", "collision_fields", "collision_id", non_empty=False
+    )
+    for index, collision in enumerate(collisions, 1):
+        if str(collision["assumption_id"]) not in assumption_ids:
+            raise ValidationError(f"collision {index} references an unknown Selected Principle assumption")
+        if str(collision["target_constraint_id"]) not in constraint_ids:
+            raise ValidationError(f"collision {index} references an unknown Target Constraint")
+        if collision["disposition"] not in set(contract["collision_disposition_enum"]):
+            raise ValidationError(f"collision {index} has no valid disposition")
+        _required_text(collision["rationale"], f"collision {index}.rationale")
+        collision_musts = refs(collision["residual_must_ids"], f"collision {index}.residual_must_ids", residual_must_ids, non_empty=False)
+        if (collision["disposition"] == "RESIDUAL_GAP") != bool(collision_musts):
+            raise ValidationError("collision disposition and Residual MUST references are inconsistent")
+
+    composition, support_ids = items(
+        "minimal_necessary_composition", "composition_fields", "support_id", non_empty=False
+    )
+    support_change_ids: set[str] = set()
+    served_residual_must_ids: set[str] = set()
+    support_by_id: dict[str, dict[str, Any]] = {}
+    for index, support in enumerate(composition, 1):
+        served_residual_must_ids.update(
+            refs(
+                support["residual_must_ids"],
+                f"support {index}.residual_must_ids",
+                residual_must_ids,
+            )
+        )
+        for field in ("mechanism", "integration_interface", "assumption_compatibility"):
+            _required_text(support[field], f"support {index}.{field}")
+        _unique_string_values(support["activation_conditions"], f"support {index}.activation_conditions")
+        linked_changes = refs(support["core_method_change_ids"], f"support {index}.core_method_change_ids", change_ids)
+        if any(change_by_id[change_id]["change_type"] != "RESIDUAL_SUPPORT" for change_id in linked_changes):
+            raise ValidationError("support composition may reference only RESIDUAL_SUPPORT core changes")
+        support_change_ids.update(linked_changes)
+        support_by_id[str(support["support_id"])] = support
+    expected_support_changes = {
+        change_id for change_id, change in change_by_id.items()
+        if change["change_type"] == "RESIDUAL_SUPPORT"
+    }
+    if support_change_ids != expected_support_changes:
+        raise ValidationError("every Residual-support core change must belong to minimal necessary composition")
+    if served_residual_must_ids != residual_must_ids:
+        raise ValidationError("minimal necessary composition must cover every Residual MUST")
+    if not residual_must_ids and (composition or expected_support_changes):
+        raise ValidationError("zero Residual MUST closure requires empty composition and no support changes")
+
+    validation_obligations, validation_obligation_ids = items(
+        "claim_validation_obligations", "claim_validation_obligation_fields", "validation_obligation_id", non_empty=True
+    )
+    obligation_claim_ids: list[str] = []
+    for index, obligation in enumerate(validation_obligations, 1):
+        claim_id = str(obligation["claim_element_id"])
+        if claim_id not in claim_element_ids:
+            raise ValidationError(f"claim-validation obligation {index} references an unknown claim element")
+        obligation_claim_ids.append(claim_id)
+        for field in (
+            "predicted_mechanism_change", "observed_mechanism_change_required",
+            "discriminating_evidence_required", "performance_consequence_required",
+            "falsifying_pattern",
+        ):
+            _required_text(obligation[field], f"claim-validation obligation {index}.{field}")
+    if set(obligation_claim_ids) != claim_element_ids:
+        raise ValidationError("every Final Scientific Delta claim element requires a claim-validation obligation")
+
+    dag = _require_mapping(packet["causal_repair_dag"], "causal repair DAG")
+    _require_fields(dag, ("nodes", "edges"), "causal repair DAG")
+    nodes = _require_list(dag, "nodes", "causal repair DAG", non_empty=True)
+    node_ids = _unique_ids(nodes, "node_id", "causal repair DAG.nodes")
+    node_by_id: dict[str, dict[str, Any]] = {}
+    core_node_by_change: dict[str, str] = {}
+    for index, raw in enumerate(nodes, 1):
+        node = _require_mapping(raw, f"DAG node {index}")
+        _require_fields(node, tuple(contract["causal_dag_node_fields"]), f"DAG node {index}")
+        node_type = node["node_type"]
+        ref_id = _required_text(node["ref_id"], f"DAG node {index}.ref_id")
+        if node_type not in set(contract["causal_dag_node_type_enum"]):
+            raise ValidationError(f"DAG node {index}.node_type is invalid")
+        if node_type == "PRIMARY_ROOT_CAUSE" and ref_id not in causal_ids:
+            raise ValidationError("DAG Primary Root Cause node references an unknown accepted primary chain")
+        if node_type == "TARGET_CONSTRAINT" and ref_id not in constraint_ids:
+            raise ValidationError("DAG Target Constraint node references an unknown constraint")
+        if node_type == "CORE_METHOD_CHANGE":
+            if ref_id not in change_ids or ref_id in core_node_by_change:
+                raise ValidationError("DAG core node does not uniquely resolve a core method change")
+            core_node_by_change[ref_id] = str(node["node_id"])
+        if node_type == "INCOMPATIBILITY":
+            _require_fields(node, ("introduced_by_core_method_change_id", "original_causal_requirement_ref"), f"DAG incompatibility node {index}")
+            if str(node["introduced_by_core_method_change_id"]) not in change_ids:
+                raise ValidationError("DAG incompatibility has an unknown earlier retained design")
+            if str(node["original_causal_requirement_ref"]) not in causal_ids | constraint_ids | rmc_ids:
+                raise ValidationError("DAG incompatibility has an unknown original causal requirement")
+        node_by_id[str(node["node_id"])] = node
+    if set(core_node_by_change) != change_ids:
+        raise ValidationError("causal repair DAG must contain exactly one node for every core method change")
+
+    edges = _require_list(dag, "edges", "causal repair DAG", non_empty=True)
+    _unique_ids(edges, "edge_id", "causal repair DAG.edges")
+    outgoing: dict[str, set[str]] = {node_id: set() for node_id in node_ids}
+    incoming: dict[str, set[str]] = {node_id: set() for node_id in node_ids}
+    for index, raw in enumerate(edges, 1):
+        edge = _require_mapping(raw, f"DAG edge {index}")
+        _require_fields(edge, tuple(contract["causal_dag_edge_fields"]), f"DAG edge {index}")
+        source = str(edge["from_node_id"])
+        target = str(edge["to_node_id"])
+        if source not in node_ids or target not in node_ids or source == target:
+            raise ValidationError("DAG edge references a missing node or self-loop")
+        if str(edge["validation_obligation_id"]) not in validation_obligation_ids:
+            raise ValidationError("every scientific DAG edge requires a claim-validation obligation")
+        outgoing[source].add(target)
+        incoming[target].add(source)
+    indegree = {node_id: len(parents) for node_id, parents in incoming.items()}
+    queue = [node_id for node_id, degree in indegree.items() if degree == 0]
+    visited: list[str] = []
+    while queue:
+        node_id = queue.pop()
+        visited.append(node_id)
+        for child in outgoing[node_id]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                queue.append(child)
+    if len(visited) != len(node_ids):
+        raise ValidationError("causal repair DAG must be acyclic")
+    if any(not incoming[node_id] and not outgoing[node_id] for node_id in node_ids):
+        raise ValidationError("causal repair DAG contains a structural orphan")
+    for change_id, node_id in core_node_by_change.items():
+        parent_nodes = [node_by_id[parent_id] for parent_id in incoming[node_id]]
+        if not parent_nodes or any(parent["node_type"] not in {"PRIMARY_ROOT_CAUSE", "TARGET_CONSTRAINT", "INCOMPATIBILITY"} for parent in parent_nodes):
+            raise ValidationError("every core method node requires only legal causal parents")
+        parent_refs = {str(parent["ref_id"]) for parent in parent_nodes}
+        if parent_refs != set(change_by_id[change_id]["causal_parent_refs"]):
+            raise ValidationError("core method change causal_parent_refs do not match the DAG")
+    for node_id, node in node_by_id.items():
+        if node["node_type"] != "INCOMPATIBILITY":
+            continue
+        earlier_change = str(node["introduced_by_core_method_change_id"])
+        if core_node_by_change[earlier_change] not in incoming[node_id]:
+            raise ValidationError("DAG incompatibility is not caused by its declared earlier retained design")
+
+    delta = _require_mapping(packet["mechanism_delta"], "mechanism delta")
+    _require_fields(delta, tuple(contract["mechanism_delta_fields"]), "mechanism delta")
+    for field in ("existing_causal_or_computational_relation", "new_causal_or_computational_relation", "intervention_change"):
+        _required_text(delta[field], f"mechanism delta.{field}")
+    if (
+        delta["existing_causal_or_computational_relation"].strip()
+        == delta["new_causal_or_computational_relation"].strip()
+    ):
+        raise ValidationError("mechanism delta Existing and New relations must differ")
+    priors = _require_list(delta, "nearest_prior_separation", "mechanism delta", non_empty=True)
+    _unique_ids(priors, "prior_id", "mechanism delta.nearest_prior_separation")
+    for index, raw in enumerate(priors, 1):
+        prior = _require_mapping(raw, f"nearest prior {index}")
+        _require_fields(prior, tuple(contract["nearest_prior_separation_fields"]), f"nearest prior {index}")
+        evidence_refs(prior["evidence_refs"], f"nearest prior {index}.evidence_refs")
+        for field in ("existing_intervention", "existing_mechanism_or_relation", "final_separation"):
+            _required_text(prior[field], f"nearest prior {index}.{field}")
+
+    alignments, _ = items(
+        "intervention_alignment", "intervention_alignment_fields", "alignment_id", non_empty=True
+    )
+    aligned_rmcs: set[str] = set()
+    aligned_change_ids: set[str] = set()
+    for index, alignment in enumerate(alignments, 1):
+        rmc_id = str(alignment["rmc_id"])
+        if rmc_id not in rmc_ids or rmc_id in aligned_rmcs:
+            raise ValidationError("Final intervention alignment has an unknown or duplicate RMC")
+        aligned_rmcs.add(rmc_id)
+        if alignment["selected_intervention"] != selected_principle["intervention"]:
+            raise ValidationError("Final intervention alignment drifts from the Selected Principle")
+        if alignment.get("source_intervention") is not None and not isinstance(alignment["source_intervention"], str):
+            raise ValidationError("Final intervention alignment source_intervention is invalid")
+        aligned_change_ids.update(
+            refs(
+                alignment["final_computational_change_ids"],
+                f"alignment {index}.final_computational_change_ids",
+                change_ids,
+            )
+        )
+        _required_text(alignment["rationale"], f"alignment {index}.rationale")
+    if aligned_rmcs != rmc_ids:
+        raise ValidationError("Final intervention alignment must cover every Selected Principle RMC")
+    if aligned_change_ids != change_ids:
+        raise ValidationError("Final intervention alignment must cover every core method change")
+
+    derivation = _require_mapping(packet["target_only_natural_derivation"], "target-only natural derivation")
+    _require_fields(derivation, tuple(contract["natural_derivation_fields"]), "target-only natural derivation")
+    if derivation["source_story_removed"] is not True:
+        raise ValidationError("target-only natural derivation must explicitly remove the Source story")
+    if set(_unique_string_values(derivation["residual_failure_ids"], "natural derivation.residual_failure_ids")) != set(necessity_binding["residual_failure_ids"]):
+        raise ValidationError("target-only natural derivation has stale Residual Failure bindings")
+    if refs(derivation["root_cause_refs"], "natural derivation.root_cause_refs", causal_ids) != causal_ids:
+        raise ValidationError("target-only natural derivation must cover every primary Root Cause")
+    if refs(derivation["rmc_ids"], "natural derivation.rmc_ids", rmc_ids) != rmc_ids:
+        raise ValidationError("target-only natural derivation must cover every RMC")
+    if refs(derivation["target_constraint_ids"], "natural derivation.target_constraint_ids", constraint_ids) != constraint_ids:
+        raise ValidationError("target-only natural derivation must cover every Target Constraint")
+    if refs(derivation["core_method_change_ids"], "natural derivation.core_method_change_ids", change_ids) != change_ids:
+        raise ValidationError("target-only natural derivation must cover every core method change")
+    _required_text(derivation["derivation"], "target-only natural derivation.derivation")
+
+    feasibility = _require_mapping(packet["feasibility_closure"], "feasibility closure")
+    _require_fields(feasibility, tuple(contract["feasibility_closure_fields"]), "feasibility closure")
+    _unique_string_values(feasibility["supported_conditions"], "feasibility closure.supported_conditions")
+    debts = _require_list(feasibility, "unresolved_feasibility_debts", "feasibility closure", non_empty=False)
+    debt_ids = _unique_ids(debts, "debt_id", "feasibility closure.unresolved_feasibility_debts")
+    restrictions = _require_list(feasibility, "claim_restrictions", "feasibility closure", non_empty=False)
+    restriction_ids = _unique_ids(restrictions, "restriction_id", "feasibility closure.claim_restrictions")
+    restriction_by_id: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(restrictions, 1):
+        restriction = _require_mapping(raw, f"claim restriction {index}")
+        _require_fields(restriction, tuple(contract["claim_restriction_fields"]), f"claim restriction {index}")
+        refs(restriction["claim_element_ids"], f"claim restriction {index}.claim_element_ids", claim_element_ids)
+        _required_text(restriction["boundary"], f"claim restriction {index}.boundary")
+        restriction_by_id[str(restriction["restriction_id"])] = restriction
+    fatal_debt_ids: set[str] = set()
+    for index, raw in enumerate(debts, 1):
+        debt = _require_mapping(raw, f"feasibility debt {index}")
+        _require_fields(debt, tuple(contract["feasibility_debt_fields"]), f"feasibility debt {index}")
+        for field in ("dimension", "debt", "repair_disposition", "claim_restriction_disposition"):
+            _required_text(debt[field], f"feasibility debt {index}.{field}")
+        if not isinstance(debt["fatal"], bool):
+            raise ValidationError(f"feasibility debt {index}.fatal must be boolean")
+        evidence_refs(debt["evidence_refs"], f"feasibility debt {index}.evidence_refs")
+        restriction_refs = refs(debt["restriction_ids"], f"feasibility debt {index}.restriction_ids", restriction_ids, non_empty=False)
+        evidence_refs(debt["excluded_recovery_evidence_refs"], f"feasibility debt {index}.excluded_recovery_evidence_refs", non_empty=False)
+        if not debt["fatal"] and not restriction_refs:
+            raise ValidationError("every nonfatal unresolved feasibility debt requires an explicit claim restriction")
+        if debt["fatal"]:
+            fatal_debt_ids.add(str(debt["debt_id"]))
+        for restriction_id in restriction_refs:
+            if str(debt["debt_id"]) not in {
+                str(value) for value in restriction_by_id[restriction_id]["debt_ids"]
+            }:
+                raise ValidationError(
+                    "feasibility debt and claim restriction references are not reciprocal"
+                )
+    for restriction_id, restriction in restriction_by_id.items():
+        linked_debts = refs(restriction["debt_ids"], f"claim restriction {restriction_id}.debt_ids", debt_ids)
+        if any(restriction_id not in set(debt["restriction_ids"]) for debt in debts if str(debt["debt_id"]) in linked_debts):
+            raise ValidationError("feasibility debt and claim restriction references are not reciprocal")
+    fatality = feasibility["fatality_disposition"]
+    if fatality not in set(contract["feasibility_fatality_enum"]):
+        raise ValidationError("feasibility closure.fatality_disposition is invalid")
+    if (fatality == "NO_FATAL_DEBT") != (not fatal_debt_ids):
+        raise ValidationError("feasibility fatality disposition conflicts with unresolved fatal debts")
+    if fatality == "FATAL_UNRECOVERABLE":
+        for debt in debts:
+            if not debt["fatal"]:
+                continue
+            if (
+                debt["repair_disposition"] != "EVIDENCE_EXCLUDED"
+                or debt["claim_restriction_disposition"] != "CANNOT_PRESERVE_CORE_SEED"
+                or not debt["excluded_recovery_evidence_refs"]
+            ):
+                raise ValidationError("fatal-unrecoverable debt lacks Evidence-excluded repair/restriction closure")
+
+    counterfactuals, _ = items(
+        "counterfactual_necessity_obligations", "counterfactual_obligation_fields", "counterfactual_obligation_id", non_empty=bool(composition)
+    )
+    counterfactual_support_ids: set[str] = set()
+    for index, obligation in enumerate(counterfactuals, 1):
+        support_id = str(obligation["support_id"])
+        if support_id not in support_ids or support_id in counterfactual_support_ids:
+            raise ValidationError("counterfactual obligation has an unknown or duplicate support")
+        counterfactual_support_ids.add(support_id)
+        _required_text(obligation["removal_condition"], f"counterfactual obligation {index}.removal_condition")
+        failed_closure_ids = refs(
+            obligation["expected_failed_closure_ids"],
+            f"counterfactual obligation {index}.expected_failed_closure_ids",
+            closure_ids,
+        )
+        expected_failed_closure_ids = {
+            str(residual_by_id[str(must_id)]["closure_id"])
+            for must_id in support_by_id[support_id]["residual_must_ids"]
+        }
+        if failed_closure_ids != expected_failed_closure_ids:
+            raise ValidationError(
+                "counterfactual obligation must target the closure served by its support"
+            )
+        _required_text(obligation["discriminating_consequence"], f"counterfactual obligation {index}.discriminating_consequence")
+        if obligation["evidence_status"] not in set(contract["counterfactual_evidence_status_enum"]):
+            raise ValidationError("unexecuted counterfactual must remain a future obligation, not Evidence")
+    if counterfactual_support_ids != support_ids:
+        raise ValidationError("every retained support requires exactly one counterfactual necessity obligation")
+
+    if final_proposal_text is not None:
+        validate_final_method_view(final_proposal_text, packet)
+    return {
+        "packet": packet,
+        "final_method_id": str(packet["final_method_id"]),
+        "fatality_disposition": str(fatality),
+        "fatal_debt_ids": sorted(fatal_debt_ids),
+        "current_evidence_ids": sorted(current_evidence_ids or set()),
+    }
 
 
 def validate_necessity_closure(

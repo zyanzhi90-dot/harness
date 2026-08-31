@@ -36,7 +36,6 @@ from arisctl.validators import (
     validate_coverage_review,
     validate_evidence_card,
     validate_field_map,
-    validate_final_proposal_for_principle,
     validate_method_design_packet,
     validate_method_test_result,
     validate_principle_test_plan,
@@ -50,6 +49,7 @@ from arisctl.validators import (
 from arisctl.workflow import load_workflow
 from tools.literature_coverage_audit import audit_landscape
 from tools import run_state
+from tests.test_batch4_final_method import final_packet as batch4_final_packet
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -1091,7 +1091,7 @@ def test_terminal_result_identity_and_no_result_do_not_mechanically_reject_a_pri
     assert "NO_RESULT` cannot support or reject" in reviewer
 
 
-def test_selected_principle_and_final_proposal_recover_reviewed_obligations() -> None:
+def test_selected_principle_recovers_reviewed_obligations() -> None:
     workflow = json.loads(WORKFLOW.read_text(encoding="utf-8"))
     packet = method_design_packet()
     candidate = packet["candidate_principles"][0]
@@ -1156,24 +1156,6 @@ def test_selected_principle_and_final_proposal_recover_reviewed_obligations() ->
         evaluation=evaluation,
         accepted_boundary_update_ids={"UPDATE-BOUNDARY"},
     )
-    required_sections = workflow["artifact_contracts"]["final_proposal"]["required_sections"]
-    proposal = "\n\n".join(
-        f"## {section}\nPR-A v1; CHAIN-1; RMC-1; CAP-1; OBL-1."
-        for section in required_sections
-    )
-    validate_final_proposal_for_principle(
-        proposal,
-        selected_principle=selected,
-        required_sections=required_sections,
-    )
-    with pytest.raises(ValidationError, match="OBL-1"):
-        validate_final_proposal_for_principle(
-            proposal.replace("OBL-1", "OBL-MISSING"),
-            selected_principle=selected,
-            required_sections=required_sections,
-        )
-
-
 def test_diagnosis_ready_requires_every_root_cause_rubric_to_pass() -> None:
     verdict = {
         "schema_version": 1, "run_id": "run-1", "verdict_id": "RCA-V-1",
@@ -1827,12 +1809,10 @@ def formal_verdict_artifact(
     phase = run_state._find_phase(controller.status(), core["current_phase"])
     request = phase["review_request"]
     bindings = dict(request["artifact_bindings"])
-    if phase["phase"] == "method_refinement":
-        proposal = controller.root / "refine-logs" / "FINAL_PROPOSAL.md"
-        bindings["refine-logs/FINAL_PROPOSAL.md"] = sha256_file(proposal)
     decision = decision or request["accepted_verdicts"][0]
     metadata = {
         "schema_version": 1,
+        "run_id": controller.run_id,
         "review_request_id": request["id"],
         "reviewer": reviewer,
         "verdict_id": verdict_id,
@@ -2037,7 +2017,9 @@ def confirmed_validation_controller(root: Path) -> ARISController:
             "analysis_id": "RCA-1", "necessity_binding": necessity_binding,
             "primary_causal_chain_ids": ["CHAIN-1"],
         }) + "\n",
-        "idea-stage/ROOT_CAUSE_VERDICT.json": json.dumps({"decision": "DIAGNOSIS_READY"}) + "\n",
+        "idea-stage/ROOT_CAUSE_VERDICT.json": json.dumps({
+            "decision": "DIAGNOSIS_READY", "verdict_id": "RCA-V-1"
+        }) + "\n",
         "idea-stage/PRINCIPLE_EVALUATION.json": json.dumps({"cycle_id": "CYCLE-1"}) + "\n",
         "idea-stage/PRINCIPLE_EVALUATION_VERDICT.json": json.dumps({"decision": "PRINCIPLE_CONVERGED"}) + "\n",
         "idea-stage/SELECTED_PRINCIPLE.yaml": yaml.safe_dump(selected, sort_keys=False),
@@ -2050,6 +2032,27 @@ def confirmed_validation_controller(root: Path) -> ARISController:
         path = root / raw_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+    necessity_path = root / "idea-stage" / "NECESSITY_CLOSURE.json"
+    necessity_verdict_path = root / "idea-stage" / "NECESSITY_VERDICT.json"
+    necessity_verdict_payload = json.loads(
+        necessity_verdict_path.read_text(encoding="utf-8")
+    )
+    necessity_verdict_payload["reviewed_closure_sha256"] = sha256_file(
+        necessity_path
+    )
+    necessity_verdict_path.write_text(
+        json.dumps(necessity_verdict_payload) + "\n", encoding="utf-8"
+    )
+    necessity_binding.update(
+        closure_sha256=sha256_file(necessity_path),
+        verdict_sha256=sha256_file(necessity_verdict_path),
+    )
+    root_payload_path = root / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json"
+    root_payload = json.loads(root_payload_path.read_text(encoding="utf-8"))
+    root_payload["necessity_binding"] = deepcopy(necessity_binding)
+    root_payload_path.write_text(
+        json.dumps(root_payload) + "\n", encoding="utf-8"
+    )
     phase_statuses = {
         "problem_human_acceptance": "human_accepted",
         "problem_necessity": "accepted",
@@ -2166,6 +2169,95 @@ def confirmed_validation_controller(root: Path) -> ARISController:
             },
         }
     return controller
+
+
+def write_batch4_final_packet(controller: ARISController) -> Path:
+    """Materialize a current zero-residual Packet for refinement integration tests."""
+
+    packet = batch4_final_packet()
+    selected_path = controller.root / "idea-stage" / "SELECTED_PRINCIPLE.yaml"
+    selected = yaml.safe_load(selected_path.read_text(encoding="utf-8"))
+    selected_changed = "accepted_assumptions" not in selected
+    if selected_changed:
+        selected["accepted_assumptions"] = [
+            {"assumption_id": "ASM-1", "assumption": "assumption A"}
+        ]
+        selected_path.write_text(
+            yaml.safe_dump(selected, sort_keys=False), encoding="utf-8"
+        )
+
+    necessity_path = controller.root / "idea-stage" / "NECESSITY_CLOSURE.json"
+    necessity_verdict_path = controller.root / "idea-stage" / "NECESSITY_VERDICT.json"
+    root_path = controller.root / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json"
+    root_verdict_path = controller.root / "idea-stage" / "ROOT_CAUSE_VERDICT.json"
+    necessity = json.loads(necessity_path.read_text(encoding="utf-8"))
+    necessity_verdict = json.loads(necessity_verdict_path.read_text(encoding="utf-8"))
+    root = json.loads(root_path.read_text(encoding="utf-8"))
+    root_verdict = json.loads(root_verdict_path.read_text(encoding="utf-8"))
+
+    packet["problem_binding"] = deepcopy(selected["problem_binding"])
+    packet["necessity_binding"] = {
+        "necessity_id": necessity["necessity_id"],
+        "closure_sha256": sha256_file(necessity_path),
+        "verdict_id": necessity_verdict["verdict_id"],
+        "verdict_sha256": sha256_file(necessity_verdict_path),
+        "residual_failure_ids": [
+            item["residual_failure_id"]
+            for item in necessity["residual_failure_envelope"]
+        ],
+    }
+    packet["root_cause_binding"] = {
+        "analysis_id": root["analysis_id"],
+        "analysis_sha256": sha256_file(root_path),
+        "verdict_id": root_verdict["verdict_id"],
+        "verdict_sha256": sha256_file(root_verdict_path),
+        "primary_causal_chain_ids": root["primary_causal_chain_ids"],
+    }
+    packet["selected_principle_binding"] = {
+        "principle_id": selected["principle_id"],
+        "principle_version": selected["principle_version"],
+        "selected_principle_sha256": sha256_file(selected_path),
+    }
+    packet["minimal_faithful_realization"]["selected_intervention"] = selected[
+        "intervention"
+    ]
+    packet["intervention_alignment"][0]["selected_intervention"] = selected[
+        "intervention"
+    ]
+    for closure in packet["principle_only_closure"]:
+        if closure["subject_type"] == "ACTIVATION_CONDITION":
+            closure["subject_id"] = selected["activation_conditions"][0]
+        elif closure["subject_type"] == "FAILURE_CONDITION":
+            closure["subject_id"] = selected["failure_conditions"][0]
+
+    evidence_path = controller.root / "idea-stage" / "batch4-evidence.json"
+    evidence_path.write_text('{"source_id":"E1"}\n', encoding="utf-8")
+    with controller._store.mutate() as state:
+        if selected_changed:
+            state["scientific_core"]["accepted_artifacts"][
+                "idea-stage/SELECTED_PRINCIPLE.yaml"
+            ] = controller._artifact_record(
+                "idea-stage/SELECTED_PRINCIPLE.yaml",
+                producer_phase="principle_evaluation",
+                provenance={"controller": "ARISController", "run_id": controller.run_id},
+                upstream_snapshot={},
+            )
+        state["research_lit"]["accepted_artifacts"]["evidence:E1"] = {
+            "path": "idea-stage/batch4-evidence.json",
+            "sha256": sha256_file(evidence_path),
+            "validator_result": "PASS",
+        }
+        state["research_lit"]["landscape_evidence_ids"] = [
+            *state["research_lit"].get("landscape_evidence_ids", []),
+            "E1",
+        ]
+
+    packet_path = controller.root / "refine-logs" / "FINAL_METHOD_PACKET.json"
+    packet_path.parent.mkdir(parents=True, exist_ok=True)
+    packet_path.write_text(
+        json.dumps(packet, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return packet_path
 
 
 def validation_result(
@@ -7418,12 +7510,12 @@ def test_final_method_novelty_uses_layered_return_targets(
     assert (selected_record is not None) is selected_remains
 
 
-def test_current_proposal_first_downstream_reaches_final_human_without_future_artifacts(
+def test_current_packet_first_downstream_reaches_existing_final_human_boundary(
     tmp_path: Path,
 ) -> None:
     controller = confirmed_validation_controller(tmp_path)
-    future_packet = tmp_path / "refine-logs" / "FINAL_METHOD_PACKET.json"
-    assert not future_packet.exists()
+    packet_path = tmp_path / "refine-logs" / "FINAL_METHOD_PACKET.json"
+    assert not packet_path.exists()
     with controller._store.mutate() as state:
         core = state["scientific_core"]
         core["status"] = "ACTIVE"
@@ -7450,9 +7542,13 @@ def test_current_proposal_first_downstream_reaches_final_human_without_future_ar
     controller.start_current_phase()
     refine_state = tmp_path / "refine-logs" / "REFINE_STATE.json"
     refine_state.write_text('{"status":"final_review"}\n', encoding="utf-8")
+    write_batch4_final_packet(controller)
     method_request = controller.refresh_current_review_request()
-    assert "refine-logs/FINAL_METHOD_PACKET.json" not in method_request["artifact_bindings"]
-    method_verdict_id = "method-ready-proposal-first"
+    assert method_request["artifact_bindings"][
+        "refine-logs/FINAL_METHOD_PACKET.json"
+    ] == sha256_file(packet_path)
+    assert "refine-logs/FINAL_PROPOSAL.md" not in method_request["artifact_bindings"]
+    method_verdict_id = "method-ready-packet-first"
     (tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
         formal_verdict_artifact(controller, verdict_id=method_verdict_id),
         encoding="utf-8",
@@ -7464,7 +7560,7 @@ def test_current_proposal_first_downstream_reaches_final_human_without_future_ar
     )
 
     controller.start_current_phase()
-    novelty_verdict_id = "novel-proposal-first"
+    novelty_verdict_id = "novel-after-packet"
     (tmp_path / "idea-stage" / "FINAL_METHOD_NOVELTY_VERDICT.md").write_text(
         formal_verdict_artifact(controller, verdict_id=novelty_verdict_id),
         encoding="utf-8",
@@ -7485,6 +7581,126 @@ def test_current_proposal_first_downstream_reaches_final_human_without_future_ar
     assert controller.status()["scientific_core"]["status"] == (
         "METHOD_CONFIRMED_AWAITING_USER_VALIDATION"
     )
+
+
+@pytest.mark.parametrize(
+    "fatality,terminal_allowed",
+    [
+        ("FATAL_UNRECOVERABLE", True),
+        ("FATAL_REPAIRABLE_OR_RESTRICTED", False),
+    ],
+)
+def test_method_refinement_no_go_requires_unrecoverable_fatal_feasibility(
+    tmp_path: Path, fatality: str, terminal_allowed: bool
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        core["status"] = "ACTIVE"
+        core["current_phase"] = "method_refinement"
+        core["validation_entry"] = None
+        core["approval_request"] = None
+        state["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
+        for phase_name in (
+            "method_refinement", "final_method_novelty_gate",
+            "final_method_human_acceptance",
+        ):
+            phase = run_state._find_phase(state, phase_name)
+            phase["status"] = "pending"
+            phase["review_request"] = None
+        for raw_path in (
+            "refine-logs/FINAL_PROPOSAL.md",
+            "refine-logs/FINAL_BLIND_REVIEW.md",
+            "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+            "idea-stage/IDEA_REPORT.md",
+        ):
+            core["accepted_artifacts"].pop(raw_path, None)
+
+    controller.start_current_phase()
+    (tmp_path / "refine-logs" / "REFINE_STATE.json").write_text(
+        '{"status":"final_review"}\n', encoding="utf-8"
+    )
+    packet_path = write_batch4_final_packet(controller)
+    packet = json.loads(packet_path.read_text(encoding="utf-8"))
+    restriction_ids = [] if terminal_allowed else ["RESTRICT-1"]
+    packet["feasibility_closure"] = {
+        "supported_conditions": ["observable in the accepted envelope"],
+        "unresolved_feasibility_debts": [
+            {
+                "debt_id": "DEBT-1",
+                "dimension": "observability",
+                "debt": "fatal feasibility debt",
+                "fatal": True,
+                "evidence_refs": ["E1"],
+                "restriction_ids": restriction_ids,
+                "repair_disposition": (
+                    "EVIDENCE_EXCLUDED" if terminal_allowed else "REPAIR_AVAILABLE"
+                ),
+                "claim_restriction_disposition": (
+                    "CANNOT_PRESERVE_CORE_SEED"
+                    if terminal_allowed
+                    else "RESTRICTION_PRESERVES_SEED"
+                ),
+                "excluded_recovery_evidence_refs": ["E1"] if terminal_allowed else [],
+            }
+        ],
+        "claim_restrictions": (
+            []
+            if terminal_allowed
+            else [
+                {
+                    "restriction_id": "RESTRICT-1",
+                    "claim_element_ids": ["CLAIM-1"],
+                    "debt_ids": ["DEBT-1"],
+                    "boundary": "restrict the claim to the observable envelope",
+                }
+            ]
+        ),
+        "fatality_disposition": fatality,
+    }
+    packet_path.write_text(
+        json.dumps(packet, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    request = controller.refresh_current_review_request()
+    no_go = {
+        "subject": {
+            "final_method_id": "FM-1",
+            "fatal_feasibility_debt_ids": ["DEBT-1"],
+        },
+        "reason": "the fatal debt destroys the core seed",
+        "evidence_refs": ["E1"],
+        "excluded_recoveries": ["REVISE", "RETHINK", "HOLD", "RCA_CONFLICT"],
+    }
+    verdict_id = f"no-go-{fatality.lower()}"
+    metadata = {
+        "schema_version": 1,
+        "run_id": controller.run_id,
+        "review_request_id": request["id"],
+        "reviewer": "codex-gpt-5.6-sol",
+        "verdict_id": verdict_id,
+        "decision": "NO_GO",
+        "reviewed_artifact_hashes": request["artifact_bindings"],
+        "no_go": no_go,
+    }
+    (tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
+        "# Final review\n\n```json\n" + json.dumps(metadata) + "\n```\n",
+        encoding="utf-8",
+    )
+
+    if not terminal_allowed:
+        with pytest.raises(ControllerError, match="fatal-unrecoverable"):
+            controller.complete_current_phase()
+        return
+
+    controller.complete_current_phase()
+    attest(controller, request["required_reviewer_role"], metadata)
+    state = controller.terminate_scientific_core(
+        verdict_id, "codex-gpt-5.6-sol"
+    )
+    assert state["scientific_core"]["status"] == "SCIENTIFIC_NO_GO"
+    assert state["scientific_core"]["current_phase"] is None
+    assert state["scientific_core"]["validation_entry"] is None
+    assert state["scientific_core"]["no_go_record"]["no_go"] == no_go
 
 
 def test_tampering_accepted_policy_or_field_map_blocks_transition(tmp_path: Path) -> None:
@@ -9136,6 +9352,9 @@ def test_adaptation_gap_evidence_refreshes_the_current_final_review_binding(
     selected_path = tmp_path / "idea-stage" / "SELECTED_PRINCIPLE.yaml"
     selected = yaml.safe_load(selected_path.read_text(encoding="utf-8"))
     selected["root_cause_binding"]["analysis_sha256"] = sha256_file(root_cause_path)
+    selected["accepted_assumptions"] = [
+        {"assumption_id": "ASM-1", "assumption": "assumption A"}
+    ]
     selected_path.write_text(yaml.safe_dump(selected, sort_keys=False), encoding="utf-8")
     card_path = tmp_path / ".aris" / "canonical" / "run-1" / "evidence-P2.json"
     card_path.parent.mkdir(parents=True, exist_ok=True)
@@ -9242,9 +9461,10 @@ def test_adaptation_gap_evidence_refreshes_the_current_final_review_binding(
         "P2", obligation_ids=["OBL-1"]
     )["status"] == "RE_ADOPTED"
 
+    packet_path = write_batch4_final_packet(controller)
     request = controller.refresh_current_review_request()
-    assert request["artifact_bindings"]["refine-logs/FINAL_PROPOSAL.md"] == sha256_file(
-        tmp_path / "refine-logs" / "FINAL_PROPOSAL.md"
+    assert request["artifact_bindings"]["refine-logs/FINAL_METHOD_PACKET.json"] == sha256_file(
+        packet_path
     )
     assert request["artifact_bindings"]["idea-stage/SELECTED_PRINCIPLE.yaml"] == sha256_file(
         selected_path

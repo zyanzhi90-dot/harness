@@ -203,10 +203,46 @@
       "format": "json",
       "schema_version": 1,
       "lifecycle": "method_refinement_canonical_machine_authority",
-      "required_fields": ["schema_version", "final_method_id", "problem_binding", "necessity_binding", "root_cause_binding", "selected_principle_binding", "target_constraints", "assumption_constraint_collisions", "minimal_faithful_realization", "principle_only_closure", "residual_musts", "minimal_necessary_composition", "core_method_changes", "causal_repair_dag", "mechanism_delta", "intervention_alignment", "target_only_natural_derivation", "feasibility_closure", "counterfactual_necessity_obligations", "final_scientific_delta_claim", "claim_validation_obligations", "failure_and_applicability_boundaries"]
+      "required_fields": ["schema_version", "final_method_id", "problem_binding", "necessity_binding", "root_cause_binding", "selected_principle_binding", "target_constraints", "assumption_constraint_collisions", "minimal_faithful_realization", "principle_only_closure", "residual_musts", "minimal_necessary_composition", "core_method_changes", "causal_repair_dag", "mechanism_delta", "intervention_alignment", "target_only_natural_derivation", "feasibility_closure", "counterfactual_necessity_obligations", "final_scientific_delta_claim", "claim_validation_obligations", "failure_and_applicability_boundaries"],
+      "problem_binding_fields": ["problem_id", "problem_version", "problem_contract_sha256", "evidence_capsule_sha256"],
+      "necessity_binding_fields": ["necessity_id", "closure_sha256", "verdict_id", "verdict_sha256", "residual_failure_ids"],
+      "root_cause_binding_fields": ["analysis_id", "analysis_sha256", "verdict_id", "verdict_sha256", "primary_causal_chain_ids"],
+      "selected_principle_binding_fields": ["principle_id", "principle_version", "selected_principle_sha256"],
+      "target_constraint_fields": ["constraint_id", "constraint", "source_ref_ids", "evidence_refs"],
+      "collision_fields": ["collision_id", "assumption_id", "target_constraint_id", "disposition", "rationale", "residual_must_ids"],
+      "collision_disposition_enum": ["ADAPTED", "CLOSED", "RESIDUAL_GAP"],
+      "minimal_faithful_realization_fields": ["selected_intervention", "target_realization", "reused_implementation_machinery", "core_method_change_ids", "fidelity_rationale"],
+      "principle_only_closure_fields": ["closure_id", "subject_type", "subject_id", "status", "predicted_mechanism_change", "rationale", "residual_must_ids"],
+      "principle_only_closure_subject_enum": ["CAUSAL_CHAIN", "RMC", "CAPABILITY", "OBLIGATION", "ACTIVATION_CONDITION", "FAILURE_CONDITION", "APPLICABILITY_BOUNDARY"],
+      "principle_only_closure_status_enum": ["CLOSED", "RESIDUAL_GAP"],
+      "residual_must_fields": ["residual_must_id", "closure_id", "gap", "acceptance_condition"],
+      "composition_fields": ["support_id", "residual_must_ids", "mechanism", "activation_conditions", "integration_interface", "assumption_compatibility", "core_method_change_ids"],
+      "core_method_change_fields": ["core_method_change_id", "change", "change_type", "causal_parent_refs", "served_rmc_ids", "served_capability_ids", "served_obligation_ids"],
+      "core_method_change_type_enum": ["PRINCIPLE_REALIZATION", "RESIDUAL_SUPPORT"],
+      "causal_dag_node_fields": ["node_id", "node_type", "ref_id"],
+      "causal_dag_node_type_enum": ["PRIMARY_ROOT_CAUSE", "TARGET_CONSTRAINT", "INCOMPATIBILITY", "CORE_METHOD_CHANGE"],
+      "causal_dag_edge_fields": ["edge_id", "from_node_id", "to_node_id", "validation_obligation_id"],
+      "mechanism_delta_fields": ["existing_causal_or_computational_relation", "new_causal_or_computational_relation", "intervention_change", "nearest_prior_separation"],
+      "nearest_prior_separation_fields": ["prior_id", "evidence_refs", "existing_intervention", "existing_mechanism_or_relation", "final_separation"],
+      "intervention_alignment_fields": ["alignment_id", "rmc_id", "selected_intervention", "final_computational_change_ids", "rationale"],
+      "intervention_alignment_optional_fields": ["source_intervention"],
+      "natural_derivation_fields": ["residual_failure_ids", "root_cause_refs", "rmc_ids", "target_constraint_ids", "core_method_change_ids", "derivation", "source_story_removed"],
+      "feasibility_closure_fields": ["supported_conditions", "unresolved_feasibility_debts", "claim_restrictions", "fatality_disposition"],
+      "feasibility_debt_fields": ["debt_id", "dimension", "debt", "fatal", "evidence_refs", "restriction_ids", "repair_disposition", "claim_restriction_disposition", "excluded_recovery_evidence_refs"],
+      "claim_restriction_fields": ["restriction_id", "claim_element_ids", "debt_ids", "boundary"],
+      "feasibility_fatality_enum": ["NO_FATAL_DEBT", "FATAL_REPAIRABLE_OR_RESTRICTED", "FATAL_UNRECOVERABLE"],
+      "counterfactual_obligation_fields": ["counterfactual_obligation_id", "support_id", "removal_condition", "expected_failed_closure_ids", "discriminating_consequence", "evidence_status"],
+      "counterfactual_evidence_status_enum": ["FUTURE_OBLIGATION"],
+      "final_scientific_delta_claim_fields": ["claim_status", "claim_elements"],
+      "final_scientific_delta_claim_status_enum": ["FINAL_PENDING_VALIDATION"],
+      "claim_element_fields": ["claim_element_id", "claim", "causal_chain_ids", "mechanism_change_ids", "capability_ids", "obligation_ids", "core_method_change_ids", "boundary_refs"],
+      "claim_validation_obligation_fields": ["validation_obligation_id", "claim_element_id", "predicted_mechanism_change", "observed_mechanism_change_required", "discriminating_evidence_required", "performance_consequence_required", "falsifying_pattern"],
+      "boundary_fields": ["boundary_id", "boundary_type", "boundary", "source_refs"],
+      "boundary_type_enum": ["FAILURE_CONDITION", "APPLICABILITY_BOUNDARY", "CLAIM_RESTRICTION"]
     },
     "final_proposal": {
       "format": "markdown",
+      "authority": "deterministic_view_of_final_method_packet",
       "required_sections": ["Selected Principle binding", "Target-domain adaptation", "Minimal faithful realization", "Principle-only closure attempt", "Residual mechanism and adaptation gaps", "Minimal necessary composition", "Core method changes", "Predicted mechanism changes", "Failure conditions and applicability boundaries", "Final Scientific Delta Claim", "Claim-validation obligations"]
     },
     "top_venue_method_strength_verdict": {
@@ -562,8 +598,8 @@
       "phase": "method_refinement",
       "depends_on": ["principle_evaluation"],
       "required_inputs": ["idea-stage/ACTIVE_FIELD_MAP.md", "idea-stage/RESEARCH_CONTRACT.md", "@artifact:necessity_closure", "@artifact:necessity_verdict", "@artifact:root_cause_analysis", "@artifact:root_cause_verdict", "@artifact:selected_principle"],
-      "produced_artifacts": ["@artifact:final_proposal", "@artifact:final_method_review", "@artifact:refine_state"],
-      "reviewed_artifacts": ["@artifact:final_proposal"],
+      "produced_artifacts": ["@artifact:final_method_packet", "@artifact:final_proposal", "@artifact:final_method_review", "@artifact:refine_state"],
+      "reviewed_artifacts": ["@artifact:final_method_packet"],
       "requires_validated_artifacts": [
         {"phase": "problem_necessity", "artifacts": ["@artifact:necessity_closure", "@artifact:necessity_verdict"]},
         {"phase": "root_cause_analysis", "artifacts": ["idea-stage/RESEARCH_CONTRACT.md", "@artifact:necessity_closure", "@artifact:necessity_verdict", "@artifact:root_cause_analysis"]},
@@ -581,6 +617,12 @@
         "RETHINK": "method_design",
         "HOLD": "method_refinement",
         "RCA_CONFLICT": "root_cause_analysis"
+      },
+      "terminal_verdicts": {
+        "NO_GO": {
+          "action": "terminate_scientific_core",
+          "status": "SCIENTIFIC_NO_GO"
+        }
       }
     },
     {

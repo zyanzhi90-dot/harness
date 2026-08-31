@@ -45,6 +45,7 @@ from .validators import (
     validate_principle_evidence_context,
     validate_selected_principle,
     render_field_map,
+    render_final_method_view,
     render_method_design_view,
     render_principle_test_plan_view,
     sha256_file,
@@ -3275,8 +3276,8 @@ class ARISController:
             request["return_feedback"] = feedback
         reviewed_artifacts = self._resolved_phase_paths(state, phase["phase"], "reviewed_artifacts")
         if reviewed_artifacts:
-            # Method refinement creates the proposal before it can be reviewed.
-            # Retain one live request ID, then bind its final proposal version
+            # Main creates the reviewed artifact before it can be bound.
+            # Retain one live request ID, then bind its final packet version
             # immediately after completion and before any attestation is accepted.
             request["reviewed_artifacts_pending"] = reviewed_artifacts
         return request
@@ -3604,6 +3605,14 @@ class ARISController:
                 view_path.parent.mkdir(parents=True, exist_ok=True)
                 view_path.write_text(
                     render_principle_test_plan_view(main_artifact["plan"]), encoding="utf-8"
+                )
+            elif phase["phase"] == "method_refinement":
+                view_path = self.root / str(
+                    self.workflow["artifact_manifest"]["final_proposal"]
+                )
+                view_path.parent.mkdir(parents=True, exist_ok=True)
+                view_path.write_text(
+                    render_final_method_view(main_artifact["packet"]), encoding="utf-8"
                 )
             self._record_reviewed_artifact_history(state, phase)
             expected = self._phase_review_bindings(state, str(phase["phase"]))
@@ -4332,7 +4341,7 @@ class ARISController:
                     self._current_phase_evidence_ids(state, phase_name)
                     if phase_name in {
                         "problem_generation", "problem_necessity", "root_cause_analysis",
-                        "method_design", "principle_evaluation",
+                        "method_design", "principle_evaluation", "method_refinement",
                     }
                     else None
                 ),
@@ -4769,7 +4778,15 @@ class ARISController:
             if spec.get("formal_gate"):
                 try:
                     validation_result = run_state._assert_outputs(
-                        str(self.root), state, spec, phase["phase"]
+                        str(self.root),
+                        state,
+                        spec,
+                        phase["phase"],
+                        current_phase_evidence_ids=(
+                            self._current_phase_evidence_ids(state, phase["phase"])
+                            if phase["phase"] == "method_refinement"
+                            else None
+                        ),
                     )
                 except ValueError as exc:
                     raise ControllerError(str(exc)) from exc
@@ -5179,7 +5196,15 @@ class ARISController:
             self._assert_phase_inputs_current(state, str(phase["phase"]))
             try:
                 result = run_state._assert_outputs(
-                    str(self.root), state, spec, str(phase["phase"])
+                    str(self.root),
+                    state,
+                    spec,
+                    str(phase["phase"]),
+                    current_phase_evidence_ids=(
+                        self._current_phase_evidence_ids(state, str(phase["phase"]))
+                        if phase["phase"] == "method_refinement"
+                        else None
+                    ),
                 ) or {}
             except ValueError as exc:
                 raise ControllerError(str(exc)) from exc
@@ -5197,6 +5222,19 @@ class ARISController:
             if decision not in request.get("terminal_verdicts", []):
                 raise ControllerError("review verdict is not terminal for this formal Gate")
             self._assert_candidate_verdict_attested(state, phase, request, result)
+            if phase["phase"] == "method_refinement":
+                reviewer_payload = self._attested_reviewer_payload(
+                    role=str(request["required_reviewer_role"]),
+                    request_id=str(request["id"]),
+                    reviewer=reviewer,
+                    verdict_id=verdict_id,
+                    decision=str(decision),
+                    artifact_bindings=dict(request["artifact_bindings"]),
+                )
+                if reviewer_payload.get("no_go") != result.get("no_go"):
+                    raise ControllerError(
+                        "scientific NO_GO record differs from the attested reviewer verdict"
+                    )
             attestation = self._consume_review_attestation(
                 role=str(request["required_reviewer_role"]),
                 request_id=str(request["id"]),
@@ -5218,6 +5256,8 @@ class ARISController:
                 "terminal_status": terminal["status"],
                 "terminated_at": terminated_at,
             }
+            if phase["phase"] == "method_refinement":
+                record["no_go"] = deepcopy(result["no_go"])
             phase["review_request"] = None
             phase["terminal_decision"] = dict(record)
             phase["updated"] = terminated_at

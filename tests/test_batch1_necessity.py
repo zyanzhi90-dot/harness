@@ -310,6 +310,21 @@ def test_controller_terminal_verdict_cannot_take_accept_or_return_path(
     controller._assert_candidate_verdict_attested = MethodType(
         lambda self, current, current_phase, current_request, result: None, controller
     )
+    controller._current_phase_evidence_ids = MethodType(
+        lambda self, current, name: {"E-1"}, controller
+    )
+    no_go = {
+        "subject": {
+            "final_method_id": "FM-1",
+            "fatal_feasibility_debt_ids": ["DEBT-1"],
+        },
+        "reason": "fatal feasibility excludes the core seed",
+        "evidence_refs": ["E-1"],
+        "excluded_recoveries": ["REVISE", "HOLD", "RETHINK", "RCA_CONFLICT"],
+    }
+    controller._attested_reviewer_payload = MethodType(
+        lambda self, **kwargs: {"no_go": deepcopy(no_go)}, controller
+    )
     controller._consume_review_attestation = MethodType(
         lambda self, **kwargs: {"payload_sha256": "f" * 64}, controller
     )
@@ -320,6 +335,7 @@ def test_controller_terminal_verdict_cannot_take_accept_or_return_path(
             "gate_verdict": "NO_GO",
             "verdict_id": "V-1",
             "reviewer": "codex-gpt-5.6-sol",
+            "no_go": deepcopy(no_go),
         },
     )
     result = controller.terminate_scientific_core("V-1", "codex-gpt-5.6-sol")

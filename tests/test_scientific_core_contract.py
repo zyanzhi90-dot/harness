@@ -336,10 +336,12 @@ def test_problem_contract_and_method_proposal_are_separate() -> None:
     assert "## Certified Problem Contract" in contract
     assert "## Problem Evidence Capsule" not in contract
     assert "# Problem Evidence Capsule" in capsule
-    assert "## Selected Principle binding" in proposal
-    assert "Required Mechanism Change IDs" in proposal
-    assert "## Principle-only closure attempt" in proposal
-    assert "## Claim-validation obligations" in proposal
+    assert "FINAL_METHOD_PACKET.json" in proposal
+    assert "Packet is the only" in proposal
+    assert "Controller deterministically renders" in proposal
+    assert "Target RMC" in proposal
+    assert "principle_only_closure" in proposal
+    assert "claim-validation obligations" in proposal
     assert "Established Scientific Delta" in proposal
 
 def test_problem_evidence_capsule_has_one_documented_form_across_active_skills() -> None:
@@ -456,10 +458,10 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
         refinement = next(item for item in workflow["phases"] if item["phase"] == "method_refinement")
         assert refinement["required_inputs"][-1] == "@artifact:selected_principle"
         assert refinement["produced_artifacts"] == [
-            "@artifact:final_proposal", "@artifact:final_method_review",
-            "@artifact:refine_state",
+            "@artifact:final_method_packet", "@artifact:final_proposal",
+            "@artifact:final_method_review", "@artifact:refine_state",
         ]
-        assert refinement["reviewed_artifacts"] == ["@artifact:final_proposal"]
+        assert refinement["reviewed_artifacts"] == ["@artifact:final_method_packet"]
         assert refinement["accepted_verdicts"] == ["METHOD_READY"]
         assert refinement["return_targets"] == {
             "REVISE": "method_refinement",
@@ -467,7 +469,12 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
             "HOLD": "method_refinement",
             "RCA_CONFLICT": "root_cause_analysis",
         }
-        assert "terminal_verdicts" not in refinement
+        assert refinement["terminal_verdicts"] == {
+            "NO_GO": {
+                "action": "terminate_scientific_core",
+                "status": "SCIENTIFIC_NO_GO",
+            }
+        }
         assert "top_venue_method_strength_gate" not in workflow["scientific_core"]["phases"]
         assert all(
             item["phase"] != "top_venue_method_strength_gate"
@@ -478,7 +485,7 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
             if item["phase"] == "final_method_human_acceptance"
         )
         assert final_human["depends_on"] == ["final_method_novelty_gate"]
-        assert "@artifact:final_method_packet" not in json.dumps(
+        assert "@artifact:final_method_packet" in json.dumps(
             {
                 "scientific_core": workflow["scientific_core"],
                 "phases": workflow["phases"],

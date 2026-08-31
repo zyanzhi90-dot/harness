@@ -1066,7 +1066,7 @@ def _validate_method_main_artifact(
 ) -> dict:
     from arisctl.validators import (
         ValidationError,
-        validate_final_proposal_for_principle,
+        validate_final_method_packet,
         validate_method_design_packet,
         validate_principle_test_plan,
         validate_principle_evaluation,
@@ -1231,14 +1231,32 @@ def _validate_method_main_artifact(
             selected = yaml.safe_load(path.read_text(encoding="utf-8"))
             if not isinstance(selected, dict):
                 raise ValidationError("Selected Principle must be a YAML object")
-            proposal_path = str(workflow["artifact_manifest"]["final_proposal"])
-            text = _artifact_path(root, proposal_path).read_text(encoding="utf-8")
-            validate_final_proposal_for_principle(
-                text,
-                selected_principle=selected,
-                required_sections=list(contracts["final_proposal"]["required_sections"]),
+            packet_path = str(workflow["artifact_manifest"]["final_method_packet"])
+            packet = json.loads(_artifact_path(root, packet_path).read_text(encoding="utf-8"))
+            necessity_binding = _accepted_necessity_binding(root, state)
+            root_analysis, root_analysis_path = _accepted_json_artifact(
+                root, state, "root_cause_analysis"
             )
-            return {"selected_principle": selected}
+            root_verdict, root_verdict_path = _accepted_json_artifact(
+                root, state, "root_cause_verdict"
+            )
+            result = validate_final_method_packet(
+                packet,
+                contract=contracts["final_method_packet"],
+                problem_binding=dict(selected["problem_binding"]),
+                necessity_binding=necessity_binding,
+                root_cause_binding={
+                    "analysis_id": root_analysis["analysis_id"],
+                    "analysis_sha256": _sha256(_artifact_path(root, root_analysis_path)),
+                    "verdict_id": root_verdict["verdict_id"],
+                    "verdict_sha256": _sha256(_artifact_path(root, root_verdict_path)),
+                    "primary_causal_chain_ids": list(root_analysis["primary_causal_chain_ids"]),
+                },
+                selected_principle=selected,
+                selected_principle_sha256=_sha256(path),
+                current_evidence_ids=current_phase_evidence_ids,
+            )
+            return {**result, "selected_principle": selected}
     except (ValidationError, OSError, json.JSONDecodeError, yaml.YAMLError, KeyError) as exc:
         raise ValueError(f"phase {phase!r} has an invalid Principle-first method artifact: {exc}") from exc
     return {}
@@ -1258,6 +1276,7 @@ def _validate_principle_method_outputs(
     from arisctl.validators import (
         ValidationError,
         validate_json_review_verdict_artifact,
+        validate_final_method_view,
         validate_method_design_view,
         validate_principle_test_plan_view,
         validate_necessity_verdict,
@@ -1388,6 +1407,13 @@ def _validate_principle_method_outputs(
                 raise ValidationError(
                     "non-converged Principle verdict must not carry Selected Principle authority"
                 )
+        elif phase == "method_refinement":
+            proposal_path = str(workflow["artifact_manifest"]["final_proposal"])
+            validate_final_method_view(
+                _artifact_path(root, proposal_path).read_text(encoding="utf-8"),
+                main["packet"],
+            )
+            return main
         else:
             return None
     except (ValidationError, OSError, json.JSONDecodeError, KeyError) as exc:
@@ -1623,8 +1649,13 @@ def _assert_outputs(
                     formal_evidence_source_ids=_current_decision_grade_evidence_card_source_ids(root, state),
                 )
             else:
+                verdict_path = (
+                    str(workflow["artifact_manifest"]["final_method_review"])
+                    if spec.get("gate_id") == "method_refinement"
+                    else output_paths[0]
+                )
                 verdict = validate_markdown_review_verdict_artifact(
-                    _artifact_path(root, output_paths[1] if spec.get("gate_id") == "method_refinement" else output_paths[0]).read_text(encoding="utf-8"),
+                    _artifact_path(root, verdict_path).read_text(encoding="utf-8"),
                     label=label,
                     request_id=request_id,
                     artifact_bindings=bindings,
@@ -1636,6 +1667,43 @@ def _assert_outputs(
                         raise ValueError(
                             f"{label} requires non-empty structured return_guidance for a return verdict"
                         )
+                if spec.get("gate_id") == "method_refinement":
+                    no_go = verdict.get("no_go")
+                    if verdict["decision"] == "NO_GO":
+                        if not isinstance(no_go, dict):
+                            raise ValueError("final blind review NO_GO requires a structured no_go record")
+                        required = {"subject", "reason", "evidence_refs", "excluded_recoveries"}
+                        if not required <= set(no_go):
+                            raise ValueError("final blind review NO_GO record is incomplete")
+                        subject = no_go.get("subject")
+                        if not isinstance(subject, dict) or set(subject) != {
+                            "final_method_id", "fatal_feasibility_debt_ids"
+                        }:
+                            raise ValueError("final blind review NO_GO subject is invalid")
+                        if (
+                            subject["final_method_id"] != (method_result or {}).get("final_method_id")
+                            or set(subject["fatal_feasibility_debt_ids"] or [])
+                            != set((method_result or {}).get("fatal_debt_ids") or [])
+                            or (method_result or {}).get("fatality_disposition")
+                            != "FATAL_UNRECOVERABLE"
+                        ):
+                            raise ValueError("final blind review NO_GO does not bind fatal-unrecoverable packet debts")
+                        if not isinstance(no_go["reason"], str) or not no_go["reason"].strip():
+                            raise ValueError("final blind review NO_GO requires a reason")
+                        evidence_refs = no_go["evidence_refs"]
+                        if (
+                            not isinstance(evidence_refs, list)
+                            or not evidence_refs
+                            or any(not isinstance(item, str) or not item for item in evidence_refs)
+                            or not set(evidence_refs) <= set((method_result or {}).get("current_evidence_ids") or [])
+                        ):
+                            raise ValueError("final blind review NO_GO Evidence refs are not current")
+                        if set(no_go["excluded_recoveries"] or []) != set(
+                            (spec.get("return_targets") or {}).keys()
+                        ):
+                            raise ValueError("final blind review NO_GO must exclude every reasonable fixed return")
+                    elif no_go is not None:
+                        raise ValueError("non-terminal final blind review must not carry a no_go record")
         except ValueError as exc:
             raise ValueError(f"phase {phase!r} has invalid {label}: {exc}") from exc
         return {
@@ -1645,6 +1713,7 @@ def _assert_outputs(
             "reviewer": verdict["reviewer"],
             "review_request_id": verdict["review_request_id"],
             "reviewed_artifact_hashes": verdict["reviewed_artifact_hashes"],
+            **({"no_go": verdict["no_go"]} if verdict.get("no_go") is not None else {}),
             **(
                 {
                     "candidate_ids": verdict["candidate_ids"],

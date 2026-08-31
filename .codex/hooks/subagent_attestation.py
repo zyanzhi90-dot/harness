@@ -405,7 +405,7 @@ def main() -> int:
         if role in {
             "coverage_reviewer", "independent_problem_reviewer",
             "independent_novelty_reviewer", "independent_root_cause_reviewer",
-            "result_to_claim_reviewer",
+            "independent_method_reviewer", "result_to_claim_reviewer",
         }:
             # The Controller, rather than Main, will validate and atomically
             # materialize this exact reviewer-owned verdict payload.

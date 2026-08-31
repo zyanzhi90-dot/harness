@@ -24,10 +24,13 @@ Controller-materialized `idea-stage/SELECTED_PRINCIPLE.yaml`, including its
 accepted origin/alignment, Target novelty, assumptions/predictions/updates,
 Evidence closure, and boundaries. Adapt that
 Principle to the target domain, derive its minimal faithful realization, attempt
-Principle-only closure, identify concrete residual adaptation/mechanism gaps,
-and add only the minimal composition necessary to close named gaps. Bound the
-Final Scientific Delta Claim and its validation obligations without treating it
-as established before Full Validation.
+Principle-only closure, create Residual MUSTs only for real gaps, and add only
+the minimal composition necessary to close those MUSTs. Persist the causal
+repair DAG, Existing-to-New Mechanism Delta, nearest-prior separation,
+Target-only natural derivation, claim-proportional feasibility/restrictions,
+and one future counterfactual necessity obligation per retained support. Bound
+the Final Scientific Delta Claim and its validation obligations without
+treating it as established before Full Validation.
 
 Require accepted convergence artifacts and the active Selected Principle; do
 not treat a pre-convergence realization, prose proposal, or `IDEA_REPORT.md` as
@@ -43,8 +46,9 @@ Preserve:
 - `UNRESOLVED_ISSUES.md`
 - `round-N-review.md`
 - `round-N-decision.md`
+- `FINAL_METHOD_PACKET.json` — sole Final Method machine authority
 - `FINAL_BLIND_REVIEW.md`
-- `FINAL_PROPOSAL.md`
+- `FINAL_PROPOSAL.md` — deterministic Controller-rendered view only
 - `REVIEW_SUMMARY.md`
 - `REFINEMENT_REPORT.md`
 
@@ -69,15 +73,18 @@ acceptance.
 
 Do not start a second final blind audit. The Controller-issued
 `independent_method_reviewer` is the sole final independent review and receives
-the frozen Problem/RCA/Selected-Principle bindings, compact Field Evidence Map,
-cited Evidence Cards, current proposal, and constraints without iterative
+the frozen Problem/Necessity/RCA/Selected-Principle bindings, compact Field Evidence Map,
+cited Evidence Cards, current `FINAL_METHOD_PACKET.json`, and constraints without iterative
 thread history, scores, or change summaries.
 
-Its only formal outcomes are `METHOD_READY`, `REVISE`, `RETHINK`, `HOLD`, and
-`RCA_CONFLICT`:
+Its only formal outcomes are `METHOD_READY`, `REVISE`, `RETHINK`, `HOLD`,
+`RCA_CONFLICT`, and `NO_GO`:
 only `METHOD_READY` advances; `REVISE/HOLD` return to `method_refinement`; and
 `RETHINK` returns to `method_design`; `RCA_CONFLICT` returns to
 `root_cause_analysis`. Do not manufacture a local acceptance status.
+`NO_GO` uses the existing `SCIENTIFIC_NO_GO` terminal only for fatal feasibility
+that current Evidence proves cannot be repaired, claim-restricted, or recovered
+through any fixed return.
 Only the Controller may record `acceptance_status: accepted` after consuming
 the bound formal attestation.
 

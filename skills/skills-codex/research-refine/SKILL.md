@@ -14,9 +14,9 @@ Execute the post-convergence scientific sequence:
 
 ```text
 Selected Principle -> target-domain adaptation -> minimal faithful realization
-  -> Principle-only closure attempt -> residual mechanism/adaptation gaps
-  -> minimal necessary composition -> Final Scientific Delta Claim
-  -> claim-validation obligations -> independent final method review
+  -> Principle-only closure -> Residual MUSTs -> minimal necessary composition
+  -> FINAL_METHOD_PACKET.json -> deterministic FINAL_PROPOSAL.md
+  -> independent final method review
 ```
 
 Do not enter from a rough Method, prose selection, test-only realization, or
@@ -39,7 +39,8 @@ Read these once, then execute rather than restating them:
    — preserve formal review independence.
 
 Use [`templates/METHOD_PROPOSAL_TEMPLATE.md`](../../templates/METHOD_PROPOSAL_TEMPLATE.md)
-for `ACTIVE_PROPOSAL.md` and `FINAL_PROPOSAL.md`.
+as the Packet authoring/view guide. Main writes `FINAL_METHOD_PACKET.json`;
+the Controller alone renders `FINAL_PROPOSAL.md` from that validated packet.
 
 ## Input preflight
 
@@ -73,7 +74,7 @@ Allow explicit overrides. Do not hard-code domain doctrine.
 
 ## Execution
 
-Follow R0–R6 in `method-refinement-protocol.md`:
+Follow R0–R7 in `method-refinement-protocol.md`:
 
 - bind the active Problem, RCA, and complete Selected Principle closure without
   drift; use its accepted origin/alignment, novelty, assumptions, predictions,
@@ -82,11 +83,19 @@ Follow R0–R6 in `method-refinement-protocol.md`:
 - construct the minimal faithful realization and attempt Principle-only
   closure against every selected RMC, Capability, Obligation, condition, and
   boundary;
-- declare stable residual-gap IDs before adding support;
+- give every closure subject `CLOSED` or `RESIDUAL_GAP`; only the latter may
+  create a stable Residual MUST;
 - retain only the smallest mechanisms needed to close those gaps through real
   interfaces;
+- form an acyclic causal repair DAG whose core nodes have only accepted Primary
+  Root Cause, Target Constraint, or earlier-design incompatibility parents;
+- state the Existing-to-New computational relation, current nearest-prior
+  separation, Target-only natural derivation, claim-proportional feasibility,
+  and one future counterfactual necessity obligation per retained support;
 - write a bounded `Final Scientific Delta Claim` and traceable
   claim-validation obligations;
+- write all scientific facts to `refine-logs/FINAL_METHOD_PACKET.json`; never
+  maintain `FINAL_PROPOSAL.md` as an independent truth;
 - keep `Established Scientific Delta` unavailable until Full Validation returns
   `VALIDATED`.
 
@@ -104,7 +113,7 @@ content for a manual backend. Continuity may verify that reviewer's own issues;
 it cannot accept the phase.
 
 The Controller-issued `independent_method_reviewer` is the sole formal final
-reviewer. When `FINAL_PROPOSAL.md` is final and all Evidence work is complete,
+reviewer. When `FINAL_METHOD_PACKET.json` is final and all Evidence work is complete,
 invoke:
 
 ```text
@@ -119,19 +128,20 @@ METHOD_READY -> final_method_novelty_gate
 REVISE/HOLD  -> method_refinement
 RETHINK      -> method_design
 RCA_CONFLICT -> root_cause_analysis
+NO_GO        -> SCIENTIFIC_NO_GO only for a fatal, Evidence-proven unrecoverable feasibility debt
 ```
 
 ## Recovery
 
 On resume, read only the focused accepted bindings, `REFINE_STATE.json`, the
-current proposal, unresolved issue IDs, current Evidence named by those issues,
+current Packet/working proposal, unresolved issue IDs, current Evidence named by those issues,
 and the latest return feedback. Older rounds remain audit history.
 
 ## Completion rules
 
 - Preserve every selected Principle/RCA/RMC/Capability/Obligation binding.
-- Use the exact required `FINAL_PROPOSAL.md` sections from the refinement
-  protocol.
+- Treat `FINAL_METHOD_PACKET.json` as the sole Final Method machine authority;
+  accept only the Controller-rendered deterministic Proposal view.
 - Keep evidence, inference, proposal, and unvalidated Claim distinct.
 - Do not add support without a demonstrated residual adaptation/mechanism gap.
 - Do not manufacture Evidence, results, novelty, convergence, or readiness.
