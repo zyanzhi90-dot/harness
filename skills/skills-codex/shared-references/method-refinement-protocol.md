@@ -92,8 +92,11 @@ Copy the active Problem, RCA, and Selected Principle identities unchanged. A
 proposal may adapt the Principle but cannot silently switch its ID/version,
 causal chains, RMCs, Capabilities, or Obligations. A contradiction in the
 selected Principle returns `RETHINK`; a contradiction in the accepted RCA uses
-`RCA_CONFLICT`; a material Problem change uses the existing Problem revision or
-validation-return path.
+`RCA_CONFLICT`; a contradiction in the accepted Necessity premise or residual
+failure envelope uses `NECESSITY_CONFLICT`; and a contradiction that invalidates
+or materially changes the accepted Problem identity or premise uses
+`PROBLEM_CONFLICT`. Never rewrite an accepted RCA, Necessity, or Problem in
+place to avoid its canonical return.
 
 ## R1 — Target-domain adaptation
 
@@ -278,12 +281,35 @@ Formal outcomes are:
 | `HOLD` | obtain or explain missing method-level Evidence in `method_refinement` |
 | `RETHINK` | return to `method_design` because the selected Principle or its scientific delta must be reconsidered |
 | `RCA_CONFLICT` | return linked Evidence and mechanism conflict to `root_cause_analysis` |
+| `NECESSITY_CONFLICT` | return Evidence that invalidates the accepted Necessity premise or residual failure envelope to `problem_necessity` |
+| `PROBLEM_CONFLICT` | return Evidence that invalidates or materially changes the accepted Problem identity or premise to `problem_generation` |
 | `NO_GO` | enter existing `SCIENTIFIC_NO_GO` only for a fatal feasibility debt after Evidence excludes repair, claim restriction, and every fixed return |
 
-The formal reviewer does not select a new Principle or rewrite the RCA.
-`NO_GO` must include the Final Method/debt subject, current Evidence, reason,
-and excluded `REVISE`, `HOLD`, `RETHINK`, and `RCA_CONFLICT` recoveries. A
-repairable/restrictable debt uses the normal fixed return.
+The canonical return lifecycle is reused without a refinement-specific
+invalidation subsystem. `NECESSITY_CONFLICT` retains the accepted Problem but
+invalidates the accepted Necessity and every downstream current scientific
+artifact, including RCA, Method Design/Test/Convergence, `SELECTED_PRINCIPLE`,
+and Final Method; downstream work resumes only after the existing Necessity
+Producer, Reviewer, and Gate accept a new closure. `PROBLEM_CONFLICT` enters the
+existing Problem revision/replacement lifecycle, invalidates the old Problem
+and all downstream current scientific artifacts, and requires the new Problem
+to pass the existing Quality, Novelty, and Human Acceptance lifecycle.
+
+The formal reviewer does not select a new Principle or rewrite the RCA,
+Necessity, or Problem. It returns the most upstream accepted scientific premise
+that current formal Evidence actually invalidates: Problem before Necessity,
+Necessity before RCA, RCA before Principle, and Principle before final Method.
+Evidence that merely involves an upstream object does not justify escalation
+when that accepted premise remains valid. Main findings, warnings, or proposed
+consequences never authorize a transition.
+
+Every non-accepting return uses structured `return_guidance` with non-empty
+`missing_evidence`, `required_check`, and a `decision_target` equal to the
+canonical return target above. `NO_GO` must include the Final Method/debt
+subject, current Evidence, reason, and excluded `REVISE`, `HOLD`, `RETHINK`,
+`RCA_CONFLICT`, `NECESSITY_CONFLICT`, and `PROBLEM_CONFLICT` recoveries. If
+Necessity or Problem recovery remains reasonable, or a debt is repairable or
+claim-restrictable, use the corresponding fixed return instead.
 
 ## Downstream boundaries
 

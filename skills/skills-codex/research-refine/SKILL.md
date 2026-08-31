@@ -59,8 +59,10 @@ Consume the latest feedback before revision. `REVISE`, `HOLD`,
 `REVISE_METHOD_DELTA`, final Human `request_revision`, and
 `METHOD_REFINEMENT_REQUIRED` preserve the same Selected Principle. `RETHINK`,
 `RETHINK_PRINCIPLE_DELTA`, `SELECTED_PRINCIPLE_REJECTED`, `RCA_CONFLICT`,
-`ROOT_CAUSE_REJECTED`, and `PROBLEM_PREMISE_REJECTED` reopen upstream science;
-stop if the Selected Principle is no longer active.
+`NECESSITY_CONFLICT`, `PROBLEM_CONFLICT`, `ROOT_CAUSE_REJECTED`, and
+`PROBLEM_PREMISE_REJECTED` reopen upstream science; stop if the Selected
+Principle is no longer active. Never rewrite an accepted RCA, Necessity, or
+Problem in place to consume conflicting Evidence.
 
 ## Configuration
 
@@ -132,8 +134,17 @@ METHOD_READY -> final_method_novelty_gate
 REVISE/HOLD  -> method_refinement
 RETHINK      -> method_design
 RCA_CONFLICT -> root_cause_analysis
+NECESSITY_CONFLICT -> problem_necessity
+PROBLEM_CONFLICT   -> problem_generation
 NO_GO        -> SCIENTIFIC_NO_GO only for a fatal, Evidence-proven unrecoverable feasibility debt
 ```
+
+The formal Reviewer returns the most upstream accepted scientific premise that
+current formal Evidence actually invalidates. Main analysis, findings,
+warnings, and proposed consequences cannot drive a return. Every return verdict
+uses non-empty structured `return_guidance` whose `decision_target` is the
+canonical phase above. `NO_GO` is forbidden while any fixed recovery, including
+Necessity or Problem recovery, remains reasonable.
 
 ## Recovery
 

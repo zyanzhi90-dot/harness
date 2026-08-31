@@ -1819,14 +1819,16 @@ def formal_verdict_artifact(
         "decision": decision,
         "reviewed_artifact_hashes": bindings,
     }
+    spec = controller._phase_spec(controller.status(), phase["phase"])
+    return_target = (spec.get("return_targets") or {}).get(decision)
+    if return_target:
+        metadata["return_guidance"] = {
+            "missing_evidence": ["The formal review identified an unresolved scientific conflict."],
+            "decision_target": return_target,
+            "required_check": ["Re-evaluate the invalidated premise against current formal Evidence."],
+        }
     if phase["phase"] == "final_method_novelty_gate":
         metadata["run_id"] = controller.run_id
-    if phase["phase"] == "final_method_novelty_gate" and decision != "NOVEL":
-        metadata["return_guidance"] = {
-            "missing_evidence": ["The declared novelty delta is not yet established."],
-            "decision_target": "Resolve the novelty review's declared blocking layer.",
-            "required_check": ["Consume the bound final novelty feedback."],
-        }
     if phase["phase"] in {"problem_quality_gate", "problem_novelty_gate"}:
         if phase["phase"] == "problem_quality_gate":
             assessment = {
@@ -7510,6 +7512,178 @@ def test_final_method_novelty_uses_layered_return_targets(
     assert (selected_record is not None) is selected_remains
 
 
+def activate_method_refinement_review(controller: ARISController) -> dict:
+    """Reopen the Batch 4 fixture at a clean current refinement review."""
+
+    with controller._store.mutate() as state:
+        core = state["scientific_core"]
+        core["status"] = "ACTIVE"
+        core["current_phase"] = "method_refinement"
+        core["validation_entry"] = None
+        core["approval_request"] = None
+        state["research_lit"]["current_stage"] = "LANDSCAPE_ACCEPTED"
+        for phase_name in (
+            "method_refinement",
+            "final_method_novelty_gate",
+            "final_method_human_acceptance",
+        ):
+            phase = run_state._find_phase(state, phase_name)
+            phase["status"] = "pending"
+            phase["review_request"] = None
+        for raw_path in (
+            "refine-logs/FINAL_METHOD_PACKET.json",
+            "refine-logs/FINAL_PROPOSAL.md",
+            "refine-logs/FINAL_BLIND_REVIEW.md",
+            "refine-logs/REFINE_STATE.json",
+            "idea-stage/FINAL_METHOD_NOVELTY_VERDICT.md",
+            "idea-stage/IDEA_REPORT.md",
+        ):
+            core["accepted_artifacts"].pop(raw_path, None)
+            path = controller.root / raw_path
+            if path.is_file():
+                path.unlink()
+
+    controller.start_current_phase()
+    (controller.root / "refine-logs" / "REFINE_STATE.json").write_text(
+        '{"status":"final_review"}\n', encoding="utf-8"
+    )
+    write_batch4_final_packet(controller)
+    return controller.refresh_current_review_request()
+
+
+@pytest.mark.parametrize(
+    ("decision", "target"),
+    [
+        ("NECESSITY_CONFLICT", "problem_necessity"),
+        ("PROBLEM_CONFLICT", "problem_generation"),
+    ],
+)
+def test_method_refinement_upstream_conflicts_use_canonical_return_lifecycle(
+    tmp_path: Path, decision: str, target: str
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    activate_method_refinement_review(controller)
+    verdict_id = f"refinement-{decision.lower()}"
+    (tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
+        formal_verdict_artifact(
+            controller, verdict_id=verdict_id, decision=decision
+        ),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    attest_current_review(
+        controller, verdict_id, "claude-sonnet-4", decision=decision
+    )
+    returned = controller.return_current_phase(verdict_id, "claude-sonnet-4")
+
+    core = returned["scientific_core"]
+    event = core["return_history"][-1]
+    assert core["current_phase"] == target
+    assert event["decision"] == decision
+    assert event["return_target"] == target
+    assert event["return_guidance"]["decision_target"] == target
+    assert (tmp_path / "idea-stage" / "ACTIVE_FIELD_MAP.md").is_file()
+    assert (tmp_path / "idea-stage" / "RESEARCH_CONTRACT.md").is_file() is (
+        decision == "NECESSITY_CONFLICT"
+    )
+    assert (core["active_problem_version"] is not None) is (
+        decision == "NECESSITY_CONFLICT"
+    )
+    if decision == "PROBLEM_CONFLICT":
+        assert core["pending_problem_revision"]["allow_problem_replacement"] is True
+    for raw_path in (
+        "idea-stage/NECESSITY_CLOSURE.json",
+        "idea-stage/NECESSITY_VERDICT.json",
+        "idea-stage/ROOT_CAUSE_ANALYSIS.json",
+        "idea-stage/ROOT_CAUSE_VERDICT.json",
+        "idea-stage/SELECTED_PRINCIPLE.yaml",
+        "refine-logs/FINAL_METHOD_PACKET.json",
+        "refine-logs/FINAL_BLIND_REVIEW.md",
+    ):
+        assert not (tmp_path / raw_path).exists()
+        assert raw_path not in core["accepted_artifacts"]
+    assert core["selected_for_testing"] is None
+
+
+@pytest.mark.parametrize(
+    ("decision", "guidance", "error"),
+    [
+        ("NECESSITY_CONFLICT", None, "return_guidance"),
+        ("PROBLEM_CONFLICT", None, "return_guidance"),
+        (
+            "NECESSITY_CONFLICT",
+            {
+                "missing_evidence": ["conflicting Evidence"],
+                "required_check": ["recheck Necessity"],
+                "decision_target": "root_cause_analysis",
+            },
+            "canonical return target",
+        ),
+        (
+            "PROBLEM_CONFLICT",
+            {
+                "missing_evidence": ["conflicting Evidence"],
+                "required_check": ["recheck Problem"],
+                "decision_target": "problem_necessity",
+            },
+            "canonical return target",
+        ),
+    ],
+)
+def test_method_refinement_conflict_guidance_is_structured_and_target_bound(
+    tmp_path: Path, decision: str, guidance: dict | None, error: str
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    request = activate_method_refinement_review(controller)
+    metadata = {
+        "schema_version": 1,
+        "run_id": controller.run_id,
+        "review_request_id": request["id"],
+        "reviewer": "claude-sonnet-4",
+        "verdict_id": f"invalid-{decision.lower()}-guidance",
+        "decision": decision,
+        "reviewed_artifact_hashes": request["artifact_bindings"],
+    }
+    if guidance is not None:
+        metadata["return_guidance"] = guidance
+    (tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
+        "# Final review\n\n```json\n" + json.dumps(metadata) + "\n```\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ControllerError, match=error):
+        controller.complete_current_phase()
+    assert controller.status()["scientific_core"]["current_phase"] == (
+        "method_refinement"
+    )
+
+
+def test_method_refinement_main_finding_or_unknown_conflict_cannot_return(
+    tmp_path: Path,
+) -> None:
+    controller = confirmed_validation_controller(tmp_path)
+    activate_method_refinement_review(controller)
+    (tmp_path / "refine-logs" / "ACTIVE_PROPOSAL.md").write_text(
+        "Main finding: PROBLEM_CONFLICT should return to problem_generation.\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ControllerError, match="must be done before return"):
+        controller.return_current_phase("main-finding", "main_research_agent")
+    assert controller.status()["scientific_core"]["current_phase"] == (
+        "method_refinement"
+    )
+
+    (tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
+        formal_verdict_artifact(
+            controller,
+            verdict_id="unknown-conflict",
+            decision="UPSTREAM_CONFLICT",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ControllerError, match="decision is not allowed"):
+        controller.complete_current_phase()
+
+
 def test_current_packet_first_downstream_reaches_existing_final_human_boundary(
     tmp_path: Path,
 ) -> None:
@@ -7681,7 +7855,10 @@ def test_method_refinement_no_go_requires_unrecoverable_fatal_feasibility(
         },
         "reason": "the fatal debt destroys the core seed",
         "evidence_refs": ["E1"],
-        "excluded_recoveries": ["REVISE", "RETHINK", "HOLD", "RCA_CONFLICT"],
+        "excluded_recoveries": [
+            "REVISE", "RETHINK", "HOLD", "RCA_CONFLICT",
+            "NECESSITY_CONFLICT", "PROBLEM_CONFLICT",
+        ],
     }
     verdict_id = f"no-go-{fatality.lower()}"
     metadata = {
@@ -7698,6 +7875,23 @@ def test_method_refinement_no_go_requires_unrecoverable_fatal_feasibility(
         "# Final review\n\n```json\n" + json.dumps(metadata) + "\n```\n",
         encoding="utf-8",
     )
+
+    if terminal_allowed:
+        incomplete = deepcopy(metadata)
+        incomplete["no_go"] = deepcopy(no_go)
+        incomplete["no_go"]["excluded_recoveries"] = [
+            "REVISE", "RETHINK", "HOLD", "RCA_CONFLICT",
+        ]
+        (tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
+            "# Final review\n\n```json\n" + json.dumps(incomplete) + "\n```\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ControllerError, match="exclude every reasonable fixed return"):
+            controller.complete_current_phase()
+        (tmp_path / "refine-logs" / "FINAL_BLIND_REVIEW.md").write_text(
+            "# Final review\n\n```json\n" + json.dumps(metadata) + "\n```\n",
+            encoding="utf-8",
+        )
 
     if not terminal_allowed:
         with pytest.raises(ControllerError, match="fatal-unrecoverable"):

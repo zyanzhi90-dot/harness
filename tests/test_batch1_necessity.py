@@ -320,7 +320,10 @@ def test_controller_terminal_verdict_cannot_take_accept_or_return_path(
         },
         "reason": "fatal feasibility excludes the core seed",
         "evidence_refs": ["E-1"],
-        "excluded_recoveries": ["REVISE", "HOLD", "RETHINK", "RCA_CONFLICT"],
+        "excluded_recoveries": [
+            "REVISE", "HOLD", "RETHINK", "RCA_CONFLICT",
+            "NECESSITY_CONFLICT", "PROBLEM_CONFLICT",
+        ],
     }
     controller._attested_reviewer_payload = MethodType(
         lambda self, **kwargs: {"no_go": deepcopy(no_go)}, controller

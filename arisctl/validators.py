@@ -880,6 +880,7 @@ def validate_markdown_review_verdict_artifact(
     request_id: str,
     artifact_bindings: dict[str, str],
     decisions: set[str],
+    return_targets: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Read the single JSON metadata block embedded in a human-readable verdict."""
 
@@ -901,6 +902,12 @@ def validate_markdown_review_verdict_artifact(
     )
     if verdict["decision"] not in decisions:
         raise ValidationError(f"{label} decision is not allowed by the Gate")
+    if return_targets and verdict["decision"] in return_targets:
+        guidance = _validate_return_guidance(verdict, label=label, required=True)
+        if guidance["decision_target"] != return_targets[verdict["decision"]]:
+            raise ValidationError(
+                f"{label}.return_guidance.decision_target does not match the canonical return target"
+            )
     return verdict
 
 

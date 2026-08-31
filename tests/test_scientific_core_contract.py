@@ -468,6 +468,8 @@ def test_refine_phase_mapping_matches_shared_protocol() -> None:
             "RETHINK": "method_design",
             "HOLD": "method_refinement",
             "RCA_CONFLICT": "root_cause_analysis",
+            "NECESSITY_CONFLICT": "problem_necessity",
+            "PROBLEM_CONFLICT": "problem_generation",
         }
         assert refinement["terminal_verdicts"] == {
             "NO_GO": {
@@ -574,6 +576,14 @@ def test_formal_negative_verdicts_have_fixed_earlier_return_targets() -> None:
         "REVISE_EVALUATION": "principle_evaluation",
         "MORE_EVIDENCE": "principle_test_design",
         "CANDIDATE_REJECTED": "method_design",
+        "RCA_CONFLICT": "root_cause_analysis",
+        "NECESSITY_CONFLICT": "problem_necessity",
+        "PROBLEM_CONFLICT": "problem_generation",
+    }
+    assert by_phase["method_refinement"]["return_targets"] == {
+        "REVISE": "method_refinement",
+        "RETHINK": "method_design",
+        "HOLD": "method_refinement",
         "RCA_CONFLICT": "root_cause_analysis",
         "NECESSITY_CONFLICT": "problem_necessity",
         "PROBLEM_CONFLICT": "problem_generation",

@@ -78,13 +78,19 @@ cited Evidence Cards, current `FINAL_METHOD_PACKET.json`, and constraints withou
 thread history, scores, or change summaries.
 
 Its only formal outcomes are `METHOD_READY`, `REVISE`, `RETHINK`, `HOLD`,
-`RCA_CONFLICT`, and `NO_GO`:
+`RCA_CONFLICT`, `NECESSITY_CONFLICT`, `PROBLEM_CONFLICT`, and `NO_GO`:
 only `METHOD_READY` advances; `REVISE/HOLD` return to `method_refinement`; and
 `RETHINK` returns to `method_design`; `RCA_CONFLICT` returns to
-`root_cause_analysis`. Do not manufacture a local acceptance status.
+`root_cause_analysis`; `NECESSITY_CONFLICT` returns to `problem_necessity`; and
+`PROBLEM_CONFLICT` returns to `problem_generation`. The formal Reviewer returns
+the most upstream accepted scientific premise that current formal Evidence
+actually invalidates. Main findings cannot drive a return, and accepted RCA,
+Necessity, or Problem artifacts must not be rewritten in place. Every return
+verdict uses non-empty structured `return_guidance` whose `decision_target` is
+the canonical phase. Do not manufacture a local acceptance status.
 `NO_GO` uses the existing `SCIENTIFIC_NO_GO` terminal only for fatal feasibility
 that current Evidence proves cannot be repaired, claim-restricted, or recovered
-through any fixed return.
+through any fixed return, including Necessity or Problem recovery.
 Only the Controller may record `acceptance_status: accepted` after consuming
 the bound formal attestation.
 

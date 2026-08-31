@@ -616,7 +616,9 @@
         "REVISE": "method_refinement",
         "RETHINK": "method_design",
         "HOLD": "method_refinement",
-        "RCA_CONFLICT": "root_cause_analysis"
+        "RCA_CONFLICT": "root_cause_analysis",
+        "NECESSITY_CONFLICT": "problem_necessity",
+        "PROBLEM_CONFLICT": "problem_generation"
       },
       "terminal_verdicts": {
         "NO_GO": {

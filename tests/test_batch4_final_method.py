@@ -660,6 +660,14 @@ def test_workflow_binds_formal_review_to_packet_and_declares_no_go() -> None:
         "@artifact:refine_state",
     ]
     assert phase["reviewed_artifacts"] == ["@artifact:final_method_packet"]
+    assert phase["return_targets"] == {
+        "REVISE": "method_refinement",
+        "RETHINK": "method_design",
+        "HOLD": "method_refinement",
+        "RCA_CONFLICT": "root_cause_analysis",
+        "NECESSITY_CONFLICT": "problem_necessity",
+        "PROBLEM_CONFLICT": "problem_generation",
+    }
     assert phase["terminal_verdicts"] == {
         "NO_GO": {
             "action": "terminate_scientific_core",
@@ -667,3 +675,26 @@ def test_workflow_binds_formal_review_to_packet_and_declares_no_go() -> None:
         }
     }
     assert "top_venue_method_strength_gate" not in WORKFLOW["scientific_core"]["phases"]
+
+
+def test_refinement_reviewer_owns_the_most_upstream_conflict_layer() -> None:
+    reviewer = (
+        ROOT / ".codex" / "agents" / "independent_method_reviewer.toml"
+    ).read_text(encoding="utf-8")
+    protocol = (
+        ROOT / "skills" / "shared-references" / "method-refinement-protocol.md"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        "`PROBLEM_CONFLICT` when the accepted Problem identity or premise fails",
+        "`NECESSITY_CONFLICT` when the Problem remains valid but the accepted Necessity premise or residual failure envelope fails",
+        "`RCA_CONFLICT` when Problem and Necessity remain valid but RCA fails",
+        "`RETHINK` when those upstream premises remain valid but the Selected Principle fails",
+        "`REVISE` or `HOLD` when only the final Method realization or refinement is defective",
+        "Main analysis, findings, warnings, and proposed consequences have no transition authority",
+    ):
+        assert marker in reviewer
+    assert "most upstream accepted scientific premise" in protocol
+    assert "merely involves an upstream object does not justify escalation" in protocol
+    assert "Validator" not in reviewer.split(
+        "Return the most upstream accepted scientific premise", 1
+    )[1].split("`METHOD_READY` advances", 1)[0]

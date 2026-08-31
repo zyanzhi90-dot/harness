@@ -1660,6 +1660,11 @@ def _assert_outputs(
                     request_id=request_id,
                     artifact_bindings=bindings,
                     decisions=phase_decisions,
+                    return_targets=(
+                        spec.get("return_targets")
+                        if spec.get("gate_id") == "method_refinement"
+                        else None
+                    ),
                 )
                 if verdict["decision"] in (spec.get("return_targets") or {}):
                     return_guidance = verdict.get("return_guidance")
