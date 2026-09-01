@@ -18,7 +18,7 @@ except ModuleNotFoundError:  # Python 3.10 support
     import tomli as tomllib
 
 from arisctl import ARISController, ControllerError
-from arisctl import approvals, reviews
+from arisctl import reviews
 from arisctl.__main__ import build_parser, main
 from arisctl.project_setup import install_project_codex_layer
 from arisctl.gateways import (
@@ -58,8 +58,7 @@ WORKFLOW = REPO / "skills" / "shared-references" / "idea-workflow.yaml"
 
 
 @pytest.fixture(autouse=True)
-def isolated_approval_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(approvals, "_approval_root", lambda: tmp_path / "ui-receipts")
+def isolated_attestations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ARIS_REVIEW_ATTESTATION_ROOT", str(tmp_path / "review-attestations"))
     # Formal authorization uses Codex's inherited task cwd. The ordinary
     # fixtures model a correctly rooted formal project unless a test changes it.
@@ -1193,17 +1192,7 @@ def test_diagnosis_ready_requires_every_root_cause_rubric_to_pass() -> None:
 
 
 def approve(controller: ARISController, gate: str, *, selected_id: str | None = None) -> dict:
-    request = controller.validate_human_gate_request(gate)
     decision = "select" if gate == "principle_selection" else "approve"
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        gate,
-        request["id"],
-        decision,
-        selected_id=selected_id,
-        artifact_bindings=request["artifact_bindings"],
-    )
     return controller.human_approve(gate, decision, selected_id=selected_id)
 
 
@@ -1219,19 +1208,6 @@ def request_human_gate_revision(
     feedback = human_feedback if gate in {
         "problem_acceptance", "principle_selection", "principle_test_approval"
     } else None
-    request = controller.validate_human_gate_decision(
-        gate, "request_revision", selected_id=selected_id, human_feedback=feedback
-    )
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        gate,
-        request["id"],
-        "request_revision",
-        selected_id=selected_id,
-        human_feedback=feedback,
-        artifact_bindings=request["artifact_bindings"],
-    )
     return controller.human_approve(
         gate, "request_revision", selected_id=selected_id, human_feedback=feedback
     )
@@ -1243,22 +1219,6 @@ def reject_problem_candidate(
     selected_id: str = "P-1",
     human_feedback: str = "The selected problem premise does not hold.",
 ) -> dict:
-    request = controller.validate_human_gate_decision(
-        "problem_acceptance",
-        "reject",
-        selected_id=selected_id,
-        human_feedback=human_feedback,
-    )
-    receipt_path = approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "problem_acceptance",
-        request["id"],
-        "reject",
-        selected_id=selected_id,
-        human_feedback=human_feedback,
-        artifact_bindings=request["artifact_bindings"],
-    )
     return controller.human_approve(
         "problem_acceptance",
         "reject",
@@ -1268,28 +1228,10 @@ def reject_problem_candidate(
 
 
 def request_source_policy_revision(controller: ARISController) -> dict:
-    request = controller.validate_human_gate_request("source_policy_approval")
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "source_policy_approval",
-        request["id"],
-        "request_revision",
-        artifact_bindings=request["artifact_bindings"],
-    )
     return controller.request_source_policy_revision()
 
 
 def revise_problem(controller: ARISController, reason: str) -> dict:
-    request = controller.request_problem_revision(reason)
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "problem_revision",
-        request["id"],
-        "approve",
-        artifact_bindings=request["artifact_bindings"],
-    )
     return controller.revise_problem(reason)
 
 
@@ -4077,16 +4019,6 @@ def test_problem_chain_rejects_unknown_selection_and_mismatched_capsule(
     controller = start_controller(tmp_path)
     reach_problem_human_acceptance(controller)
 
-    request = controller.validate_human_gate_request("problem_acceptance")
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "problem_acceptance",
-        request["id"],
-        "approve",
-        selected_id="P-404",
-        artifact_bindings=request["artifact_bindings"],
-    )
     with pytest.raises(ControllerError, match="quality-certified and covered"):
         controller.human_approve("problem_acceptance", "approve", selected_id="P-404")
 
@@ -4123,16 +4055,6 @@ def test_problem_contract_must_bind_the_selected_candidate_novelty_decision(
         capsule.read_text(encoding="utf-8").replace("**Problem ID**: P-1", "**Problem ID**: P-404"),
         encoding="utf-8",
     )
-    request = controller.validate_human_gate_request("problem_acceptance")
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "problem_acceptance",
-        request["id"],
-        "approve",
-        selected_id="P-1",
-        artifact_bindings=request["artifact_bindings"],
-    )
     with pytest.raises(ControllerError, match="Problem ID does not match"):
         controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
 
@@ -4149,11 +4071,6 @@ def test_problem_acceptance_rejects_incomplete_contract_or_unresolved_capsule_ev
         ),
         encoding="utf-8",
     )
-    request = controller.validate_human_gate_request("problem_acceptance")
-    approvals.issue_ui_approval_receipt(
-        controller.root, controller.run_id, "problem_acceptance", request["id"], "approve",
-        selected_id="P-1", artifact_bindings=request["artifact_bindings"],
-    )
     with pytest.raises(ControllerError, match="Feasible discriminating probe"):
         controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
 
@@ -4163,11 +4080,6 @@ def test_problem_acceptance_rejects_incomplete_contract_or_unresolved_capsule_ev
     capsule.write_text(
         capsule.read_text(encoding="utf-8").replace("**Included evidence IDs**: P1", "**Included evidence IDs**: P404"),
         encoding="utf-8",
-    )
-    request = controller.validate_human_gate_request("problem_acceptance")
-    approvals.issue_ui_approval_receipt(
-        controller.root, controller.run_id, "problem_acceptance", request["id"], "approve",
-        selected_id="P-1", artifact_bindings=request["artifact_bindings"],
     )
     with pytest.raises(ControllerError, match="do not resolve"):
         controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
@@ -4958,14 +4870,14 @@ def test_problem_human_revision_of_novel_candidate_has_no_other_candidate_guidan
     assert "revision_guidance" not in audit["novelty_assessment"]
 
 
-def test_human_gate_requires_one_time_codex_ui_receipt(tmp_path: Path) -> None:
+def test_human_gate_records_explicit_command_once(tmp_path: Path) -> None:
     write_policy(tmp_path)
     controller = ARISController.start(tmp_path, "run-human", executor="codex")
-    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
-        controller.human_approve("source_policy_approval", "approve")
-    assert controller.current_stage() == "WAITING_FOR_HUMAN"
-    approve(controller, "source_policy_approval")
+    controller.human_approve("source_policy_approval", "approve")
     assert controller.current_stage() == "QUERY_PLANNING"
+    assert controller.status()["research_lit"]["approvals"][-1][
+        "confirmed_in"
+    ] == "explicit_human_command"
     with pytest.raises(ControllerError):
         controller.human_approve("source_policy_approval", "approve")
 
@@ -4994,7 +4906,6 @@ def test_scope_and_problem_human_gate_revision_return_through_declared_targets(
         selected_id="P-1",
         human_feedback="Correct the selected problem's stated scope.",
     )
-    receipt_path = approvals._receipt_path(controller.root, controller.run_id, request["id"])
     returned = request_human_gate_revision(controller, "problem_acceptance")
     assert controller.current_stage() == "PROBLEM_GENERATION"
     core = returned["scientific_core"]
@@ -5002,8 +4913,7 @@ def test_scope_and_problem_human_gate_revision_return_through_declared_targets(
     assert record["return_target"] == "problem_generation"
     assert record["decision"] == "request_revision"
     assert record["approval_request_id"] == request["id"]
-    assert not receipt_path.exists()
-    assert receipt_path.with_suffix(".consumed.json").is_file()
+    assert record["confirmed_in"] == "explicit_human_command"
     assert not (controller.root / "idea-stage" / "RESEARCH_CONTRACT.md").exists()
     assert not (controller.root / "idea-stage" / "PROBLEM_EVIDENCE_CAPSULE.md").exists()
     assert core["active_problem_version"] is None
@@ -5070,7 +4980,7 @@ def test_problem_human_return_readopts_only_prior_problem_generation_evidence(
         controller.readopt_incremental_evidence("P1")
 
 
-def test_problem_human_returns_require_feedback_and_bind_the_exact_receipt(
+def test_problem_human_returns_require_feedback_and_record_the_exact_decision(
     tmp_path: Path,
 ) -> None:
     controller = start_controller(tmp_path)
@@ -5092,52 +5002,17 @@ def test_problem_human_returns_require_feedback_and_bind_the_exact_receipt(
         selected_id="P-1",
         human_feedback=feedback,
     )
-    receipt_path = approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "problem_acceptance",
-        request["id"],
-        "request_revision",
-        selected_id="P-1",
-        human_feedback=feedback,
-        artifact_bindings=request["artifact_bindings"],
-    )
-    tampered = json.loads(receipt_path.read_text(encoding="utf-8"))
-    tampered["human_feedback"] = "Different feedback."
-    receipt_path.write_text(json.dumps(tampered), encoding="utf-8")
-    with pytest.raises(ControllerError, match="does not match the pending Gate"):
-        controller.human_approve(
-            "problem_acceptance",
-            "request_revision",
-            selected_id="P-1",
-            human_feedback=feedback,
-        )
-    assert controller.current_stage() == "PROBLEM_HUMAN_ACCEPTANCE"
-
-    missing = start_controller(tmp_path / "missing-feedback")
-    reach_problem_human_acceptance(missing)
-    request = missing.validate_human_gate_decision(
+    returned = controller.human_approve(
         "problem_acceptance",
         "request_revision",
         selected_id="P-1",
         human_feedback=feedback,
     )
-    approvals.issue_ui_approval_receipt(
-        missing.root,
-        missing.run_id,
-        "problem_acceptance",
-        request["id"],
-        "request_revision",
-        selected_id="P-1",
-        artifact_bindings=request["artifact_bindings"],
-    )
-    with pytest.raises(ControllerError, match="does not match the pending Gate"):
-        missing.human_approve(
-            "problem_acceptance",
-            "request_revision",
-            selected_id="P-1",
-            human_feedback=feedback,
-        )
+    record = returned["scientific_core"]["return_history"][-1]
+    assert record["approval_request_id"] == request["id"]
+    assert record["selected_id"] == "P-1"
+    assert record["human_feedback"] == feedback
+    assert record["confirmed_in"] == "explicit_human_command"
 
 
 def test_problem_human_request_revision_preserves_the_selected_candidate_baseline(
@@ -5240,76 +5115,37 @@ def test_scope_revision_remains_available_when_new_audit_finds_coverage_gap(
     assert controller.current_stage() == "QUERY_PLANNING"
 
 
-def test_human_receipt_with_wrong_artifact_binding_cannot_approve(tmp_path: Path) -> None:
+def test_human_gate_rejects_changed_bound_artifact(tmp_path: Path) -> None:
     write_policy(tmp_path)
     controller = ARISController.start(tmp_path, "run-bound-human", executor="codex")
-    request = controller.validate_human_gate_request("source_policy_approval")
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "source_policy_approval",
-        request["id"],
-        "approve",
-        artifact_bindings={"idea-stage\\SOURCE_ADMISSION_POLICY.yaml": "0" * 64},
-    )
-    with pytest.raises(ControllerError, match="does not match the pending Gate"):
+    policy = tmp_path / "idea-stage" / "SOURCE_ADMISSION_POLICY.yaml"
+    policy.write_text(policy.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
+    with pytest.raises(ControllerError, match="changed before approval"):
         controller.human_approve("source_policy_approval", "approve")
     assert controller.current_stage() == "WAITING_FOR_HUMAN"
 
 
-def test_human_receipt_is_restored_when_bound_outputs_disappear_after_consumption(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_human_gate_rejects_missing_bound_outputs_and_allows_retry(
+    tmp_path: Path,
 ) -> None:
     controller = start_controller(tmp_path)
     reach_problem_human_acceptance(controller)
-    request = controller.validate_human_gate_request("problem_acceptance")
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "problem_acceptance",
-        request["id"],
-        "approve",
-        selected_id="P-1",
-        artifact_bindings=request["artifact_bindings"],
-    )
-    receipt_path = approvals._receipt_path(controller.root, controller.run_id, request["id"])
     contract = controller.root / "idea-stage" / "RESEARCH_CONTRACT.md"
     contract_text = contract.read_text(encoding="utf-8")
-    consume = approvals.consume_ui_approval_receipt
-
-    def consume_then_remove_output(*args: object, **kwargs: object) -> dict:
-        receipt = consume(*args, **kwargs)
-        contract.unlink()
-        return receipt
-
-    monkeypatch.setattr(approvals, "consume_ui_approval_receipt", consume_then_remove_output)
+    contract.unlink()
     with pytest.raises(ControllerError, match="missing required"):
         controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
-    assert receipt_path.is_file()
-    assert not receipt_path.with_suffix(".consumed.json").exists()
 
-    monkeypatch.setattr(approvals, "consume_ui_approval_receipt", consume)
     contract.write_text(contract_text, encoding="utf-8")
     controller.human_approve("problem_acceptance", "approve", selected_id="P-1")
-    assert not receipt_path.exists()
-    assert receipt_path.with_suffix(".consumed.json").is_file()
+    assert controller.current_stage() == "PROBLEM_NECESSITY"
 
 
-def test_state_save_failure_restores_receipt_and_successful_retry_consumes_it(
+def test_state_save_failure_rolls_back_human_gate_and_allows_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     write_policy(tmp_path)
     controller = ARISController.start(tmp_path, "save-recovery", executor="codex")
-    request = controller.validate_human_gate_request("source_policy_approval")
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "source_policy_approval",
-        request["id"],
-        "approve",
-        artifact_bindings=request["artifact_bindings"],
-    )
-    receipt_path = approvals._receipt_path(controller.root, controller.run_id, request["id"])
     save = run_state._save
     failed = False
 
@@ -5323,21 +5159,10 @@ def test_state_save_failure_restores_receipt_and_successful_retry_consumes_it(
     monkeypatch.setattr(run_state, "_save", fail_once)
     with pytest.raises(OSError, match="simulated state save failure"):
         controller.human_approve("source_policy_approval", "approve")
-    assert receipt_path.is_file()
     assert controller.current_stage() == "WAITING_FOR_HUMAN"
 
     controller.human_approve("source_policy_approval", "approve")
-    assert not receipt_path.exists()
-    assert receipt_path.with_suffix(".consumed.json").is_file()
-    with pytest.raises(ValueError, match="no Codex UI approval receipt"):
-        approvals.consume_ui_approval_receipt(
-            controller.root,
-            controller.run_id,
-            "source_policy_approval",
-            request["id"],
-            "approve",
-            artifact_bindings=request["artifact_bindings"],
-        )
+    assert controller.current_stage() == "QUERY_PLANNING"
 
 
 def test_same_family_reviewer_attestation_is_accepted(
@@ -5437,16 +5262,12 @@ def test_fresh_project_drafts_validates_and_human_approves_policy_before_query(
             "test field", "fake", lambda value: calls.append(value) or []
         )
     assert calls == []
-    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
-        controller.human_approve("source_policy_approval", "approve")
-    assert controller.current_stage() == "WAITING_FOR_HUMAN"
-
     approve(controller, "source_policy_approval")
     approved = controller.status()["research_lit"]
     assert controller.current_stage() == "QUERY_PLANNING"
     assert approved["accepted_artifacts"]["source_admission_policy"][
         "approved_by"
-    ] == "codex_ui_user"
+    ] == "human"
     assert approved["pending_source_policy"] is None
 
     controller.submit_query_plan(
@@ -5472,9 +5293,6 @@ def test_existing_valid_policy_can_be_revised_only_through_human_gate(tmp_path: 
     assert controller.allowed_agents() == []
     with pytest.raises(ControllerError, match="SOURCE_POLICY_DRAFTING"):
         controller.submit_source_admission_policy(policy_payload())
-    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
-        controller.request_source_policy_revision()
-
     with controller._store.mutate() as state:
         state["research_lit"]["human_fulltext_request"] = {"papers": [{"paper_id": "stale"}]}
 
@@ -6782,8 +6600,6 @@ def test_happy_path_reaches_and_passes_real_scope_human_gate(tmp_path: Path) -> 
     attest(controller, "coverage_reviewer", review)
     state = controller.submit_coverage_review(review)
     assert state["research_lit"]["waiting_for"] == "scope_human_approval"
-    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
-        controller.human_approve("scope_human_approval", "approve")
     final = approve(controller, "scope_human_approval")
     assert final["research_lit"]["current_stage"] == "LANDSCAPE_ACCEPTED"
     assert run_state._find_phase(final, "scope_human_approval")["status"] == "human_accepted"
@@ -7005,8 +6821,6 @@ def test_explicit_problem_revision_creates_a_draft_version_and_requires_reaccept
     approve(controller, "problem_acceptance", selected_id="P-1")
     assert controller.status()["scientific_core"]["active_problem_version"]["version"] == 1
 
-    with pytest.raises(ControllerError, match="no Codex UI approval receipt"):
-        controller.revise_problem("New evidence narrows the accepted phenomenon boundary.")
     revised = revise_problem(
         controller, "New evidence narrows the accepted phenomenon boundary."
     )
@@ -7104,16 +6918,6 @@ def test_human_candidate_revision_paths_return_feedback_to_method_design(
     selected_id = "PR-A@1,PR-B@1" if decision == "combine" else None
     request = controller.validate_human_gate_decision(
         "principle_selection", decision, selected_id=selected_id, human_feedback=feedback
-    )
-    approvals.issue_ui_approval_receipt(
-        controller.root,
-        controller.run_id,
-        "principle_selection",
-        request["id"],
-        decision,
-        selected_id=selected_id,
-        human_feedback=feedback,
-        artifact_bindings=request["artifact_bindings"],
     )
     returned = controller.human_approve(
         "principle_selection", decision, selected_id=selected_id, human_feedback=feedback

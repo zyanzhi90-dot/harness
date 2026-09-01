@@ -1,4 +1,4 @@
-"""Controller CLI whose Human Gates are confirmed in the Codex approval UI."""
+"""Controller CLI for formal ARIS workflow transitions."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import sys
 
 import yaml
 
-from . import approvals
 from . import reviews
 from .controller import ARISController, ControllerError
 from .recovery import save_recovery_snapshot
@@ -460,22 +459,6 @@ def main() -> int:
                     ),
                 )
             elif args.command == "human-approve":
-                request = controller.validate_human_gate_decision(
-                    args.gate,
-                    args.decision,
-                    selected_id=args.selected_id,
-                    human_feedback=args.human_feedback,
-                )
-                approvals.issue_ui_approval_receipt(
-                    controller.root,
-                    controller.run_id,
-                    args.gate,
-                    str(request["id"]),
-                    args.decision,
-                    selected_id=args.selected_id,
-                    human_feedback=args.human_feedback,
-                    artifact_bindings=request["artifact_bindings"],
-                )
                 result = controller.human_approve(
                     args.gate,
                     args.decision,
@@ -483,26 +466,8 @@ def main() -> int:
                     human_feedback=args.human_feedback,
                 )
             elif args.command == "request-source-policy-revision":
-                request = controller.validate_human_gate_request("source_policy_approval")
-                approvals.issue_ui_approval_receipt(
-                    controller.root,
-                    controller.run_id,
-                    "source_policy_approval",
-                    str(request["id"]),
-                    "request_revision",
-                    artifact_bindings=request["artifact_bindings"],
-                )
                 result = controller.request_source_policy_revision()
             elif args.command == "revise-problem":
-                request = controller.request_problem_revision(args.reason)
-                approvals.issue_ui_approval_receipt(
-                    controller.root,
-                    controller.run_id,
-                    "problem_revision",
-                    str(request["id"]),
-                    "approve",
-                    artifact_bindings=request["artifact_bindings"],
-                )
                 result = controller.revise_problem(args.reason)
             elif args.command == "submit-source-policy":
                 result = controller.submit_source_admission_policy(

@@ -14,7 +14,7 @@
   evidence for that phase.
 - Scientific judgment belongs to Main, `paper_reader`, and the independent reviewer; mechanical constraints and all transition decisions belong to code.
 - A formal reviewer may answer only a live Controller-issued request and must return its request ID, run ID, reviewer/verdict IDs, fixed decision, and exact reviewed-artifact hashes; the external attestation is consumed once by the Controller.
-- Human approval receipts bind the live request, current artifact hashes, any required selection, and an explicit decision; a file in the workspace is never an approval.
+- Human Gate commands bind the live request, current artifact hashes, any required selection, and an explicit decision before the Controller records or advances the phase.
 - `force` is legacy/development-only for unstructured runs and cannot advance a declared workflow or Controller-managed formal run.
 - Final method acceptance stops at `METHOD_CONFIRMED_AWAITING_USER_VALIDATION`; validation starts only when the user explicitly initiates it.
 

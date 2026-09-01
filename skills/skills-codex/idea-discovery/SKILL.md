@@ -91,7 +91,7 @@ Compatibility defaults remain explicit: `AUTO_EXPERIMENT_PLAN = false` and
 `AUTO_COMMIT = false`. At every human checkpoint, **If no response, stop here**
 and preserve the artifacts; silence is not consent.
 Main may prepare the checkpoint's declared handoff artifact after the user has
-stated a selection, but only the Controller's UI-confirmed `human-approve`
+stated a selection, but only the Controller's `human-approve`
 action may record acceptance or advance the phase.
 
 ## Phase 0 — Load Research Brief
@@ -175,7 +175,7 @@ older view.
 Present a compact scope checkpoint to the user. Persist the decision with the
 Controller's `human-approve` action; do not infer approval from a later message
 or from a completed search. The accepted scope artifact IDs, hashes, provenance,
-and approval receipt become the registered input hook for problem generation.
+and recorded Human Gate decision become the registered input hook for problem generation.
 State that the formal review object remains `ACTIVE_FIELD_MAP.md`; the user may
 also consult sibling `ACTIVE_FIELD_MAP_AUDIT.md` for its supporting papers and
 Evidence, but it is auxiliary only and requires no approval.

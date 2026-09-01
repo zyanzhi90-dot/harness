@@ -19,7 +19,7 @@ from tools import run_state
 from tools.literature_coverage_audit import audit_landscape
 from tools.provenance import model_family
 
-from . import approvals, reviews
+from . import reviews
 from .gateways import (
     FullTextPayload,
     HumanSearchRequired,
@@ -2913,42 +2913,6 @@ class ARISController:
             raise ControllerError(f"could not consume {role} attestation") from exc
         return attestation
 
-    def _consume_ui_approval_receipt(
-        self,
-        gate: str,
-        request_id: str,
-        decision: str,
-        *,
-        selected_id: str | None = None,
-        human_feedback: str | None = None,
-        artifact_bindings: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        """Consume a UI receipt, restoring it if the enclosing state write fails."""
-
-        try:
-            receipt = approvals.consume_ui_approval_receipt(
-                self.root,
-                self.run_id,
-                gate,
-                request_id,
-                decision,
-                selected_id=selected_id,
-                human_feedback=human_feedback,
-                artifact_bindings=artifact_bindings,
-            )
-        except ValueError as exc:
-            raise ControllerError(str(exc)) from exc
-        try:
-            self._store.recover_on_mutation_failure(
-                lambda: approvals.restore_ui_approval_receipt(
-                    self.root, self.run_id, request_id
-                )
-            )
-        except BaseException:
-            approvals.restore_ui_approval_receipt(self.root, self.run_id, request_id)
-            raise
-        return receipt
-
     def _consume_review_attestation(
         self,
         *,
@@ -3654,7 +3618,7 @@ class ARISController:
     def _human_approval_bindings(
         self, state: dict, phase_name: str, spec: dict[str, Any]
     ) -> dict[str, str]:
-        """Bind the accepted problem handoffs into its one-time UI receipt."""
+        """Bind the accepted problem handoffs into the live Human Gate decision."""
 
         bindings = self._phase_input_bindings(state, phase_name)
         if phase_name != "problem_human_acceptance":
@@ -3882,7 +3846,7 @@ class ARISController:
         *,
         candidate: dict[str, Any],
         request: dict[str, Any],
-        receipt: dict[str, Any],
+        approval_record: dict[str, Any],
     ) -> dict[str, Any]:
         core = state["scientific_core"]
         packet_path = str(self.workflow["artifact_manifest"]["method_design_packet"])
@@ -3902,7 +3866,7 @@ class ARISController:
                 "path": review_path,
                 "sha256": accepted[review_path]["sha256"],
             },
-            "confirmed_in": receipt["confirmed_in"],
+            "confirmed_in": approval_record["confirmed_in"],
             "selected_at": now(),
         }
         core["selected_for_testing"] = binding
@@ -5074,7 +5038,7 @@ class ARISController:
         }
 
     def _build_landscape_handoff(
-        self, state: dict, approval_receipt: dict[str, Any]
+        self, state: dict, approval_record: dict[str, Any]
     ) -> dict[str, Any]:
         research = state["research_lit"]
         artifacts: dict[str, dict[str, Any]] = {}
@@ -5093,7 +5057,7 @@ class ARISController:
                 provenance={
                     "controller": "ARISController",
                     "run_id": self.run_id,
-                    "scope_approval_request_id": approval_receipt.get("request_id"),
+                    "scope_approval_request_id": approval_record.get("request_id"),
                     "accepted_registry_record": dict(
                         (research.get("accepted_artifacts") or {}).get(name) or {}
                     ),
@@ -5104,7 +5068,7 @@ class ARISController:
         return {
             "run_id": self.run_id,
             "created_at": now(),
-            "scope_approval": dict(approval_receipt),
+            "scope_approval": dict(approval_record),
             "coverage_status": run_state._find_phase(state, "landscape").get(
                 "coverage_status"
             ),
@@ -5112,14 +5076,14 @@ class ARISController:
         }
 
     def _activate_scientific_core(
-        self, state: dict, approval_receipt: dict[str, Any]
+        self, state: dict, approval_record: dict[str, Any]
     ) -> None:
         core = state["scientific_core"]
         first = self.workflow["scientific_core"]["phases"][0]
         core["status"] = "ACTIVE"
         core["current_phase"] = first
         core["landscape_handoff"] = self._build_landscape_handoff(
-            state, approval_receipt
+            state, approval_record
         )
         core["approval_request"] = None
         core["transition_log"].append(
@@ -5748,7 +5712,7 @@ class ARISController:
             return state
 
     def request_problem_revision(self, reason: str) -> dict[str, Any]:
-        """Issue the receipt-bound human request for an explicit problem revision."""
+        """Issue the artifact-bound human request for an explicit problem revision."""
 
         reason = reason.strip()
         if not reason:
@@ -5790,7 +5754,7 @@ class ARISController:
             return dict(request)
 
     def revise_problem(self, reason: str) -> dict:
-        """Apply one UI-confirmed problem revision at a Controller boundary."""
+        """Apply one explicit problem revision at a Controller boundary."""
 
         reason = reason.strip()
         if not reason:
@@ -5820,12 +5784,10 @@ class ARISController:
             current_index = phases.index(str(phase["phase"]))
             if current_index <= phases.index("problem_human_acceptance"):
                 raise ControllerError("problem revision is available only after problem acceptance")
-            receipt = self._consume_ui_approval_receipt(
-                "problem_revision",
-                str(request["id"]),
-                "approve",
-                artifact_bindings=dict(request["artifact_bindings"]),
-            )
+            approval_record = {
+                "request_id": str(request["id"]),
+                "confirmed_in": "explicit_human_command",
+            }
             reset_phases = phases[target_index : current_index + 1]
             reset_names = set(reset_phases)
             invalidated_at = now()
@@ -5886,7 +5848,7 @@ class ARISController:
                     "decision": "approve",
                     "approval_request_id": request["id"],
                     "artifact_bindings": request["artifact_bindings"],
-                    "confirmed_in": receipt["confirmed_in"],
+                    "confirmed_in": approval_record["confirmed_in"],
                     "at": invalidated_at,
                 }
             )
@@ -5901,7 +5863,7 @@ class ARISController:
                     ],
                     "problem_revision": dict(revision),
                     "approval_request_id": request["id"],
-                    "confirmed_in": receipt["confirmed_in"],
+                    "confirmed_in": approval_record["confirmed_in"],
                     **invalidation,
                 }
             )
@@ -5957,7 +5919,7 @@ class ARISController:
         phase: dict[str, Any],
         spec: dict[str, Any],
         request: dict[str, Any],
-        receipt: dict[str, Any],
+        approval_record: dict[str, Any],
         decision: str,
         target: str,
         selected_id: str | None,
@@ -6086,7 +6048,7 @@ class ARISController:
                 "human_feedback": human_feedback,
                 "approval_request_id": request["id"],
                 "artifact_bindings": dict(request["artifact_bindings"]),
-                "confirmed_in": receipt["confirmed_in"],
+                "confirmed_in": approval_record["confirmed_in"],
                 "at": invalidated_at,
             }
         )
@@ -6099,7 +6061,7 @@ class ARISController:
                 "invalidated_artifact_paths": [
                     record["path"] for record in invalidated_artifacts
                 ],
-                "confirmed_in": receipt["confirmed_in"],
+                "confirmed_in": approval_record["confirmed_in"],
                 "selected_id": selected_id,
                 "human_feedback": human_feedback,
                 **(
@@ -6277,7 +6239,7 @@ class ARISController:
         selected_id: str | None = None,
         human_feedback: str | None = None,
     ) -> dict[str, Any]:
-        """Check a declared Human Gate decision before a UI receipt is issued."""
+        """Check a declared Human Gate decision against the live request."""
 
         decision = decision.strip().casefold()
         if not decision:
@@ -6375,22 +6337,18 @@ class ARISController:
                     else dict(request.get("artifact_bindings") or {})
                 )
                 if request.get("artifact_bindings") != approval_bindings:
-                    raise ControllerError("Human Gate approval artifacts changed before receipt consumption")
+                    raise ControllerError("Human Gate approval artifacts changed before approval was recorded")
+                approval_record = {
+                    "request_id": str(request["id"]),
+                    "confirmed_in": "explicit_human_command",
+                }
                 if target is not None:
-                    receipt = self._consume_ui_approval_receipt(
-                        gate,
-                        str(request["id"]),
-                        decision,
-                        selected_id=selected_id,
-                        human_feedback=human_feedback,
-                        artifact_bindings=approval_bindings,
-                    )
                     return self._return_human_phase(
                         state,
                         phase,
                         spec,
                         request,
-                        receipt,
+                        approval_record,
                         decision,
                         target,
                         selected_id,
@@ -6400,14 +6358,6 @@ class ARISController:
                     raise ControllerError(
                         f"Human Gate {gate} requires an explicit selected_id"
                     )
-                receipt = self._consume_ui_approval_receipt(
-                    gate,
-                    str(request["id"]),
-                    decision,
-                    selected_id=selected_id,
-                    human_feedback=human_feedback,
-                    artifact_bindings=approval_bindings,
-                )
                 registered = self._register_phase_outputs(
                     state,
                     phase["phase"],
@@ -6416,9 +6366,9 @@ class ARISController:
                         "run_id": self.run_id,
                         "human_gate": gate,
                         "approval_request_id": request["id"],
-                        "approved_by": "codex_ui_user",
+                        "approved_by": "human",
                         "selected_id": selected_id,
-                        "confirmed_in": receipt["confirmed_in"],
+                        "confirmed_in": approval_record["confirmed_in"],
                     },
                 )
                 phase["status"] = "human_accepted"
@@ -6428,7 +6378,7 @@ class ARISController:
                     "selected_id": selected_id,
                     "approval_request_id": request["id"],
                     "artifact_bindings": approval_bindings,
-                    "confirmed_in": receipt["confirmed_in"],
+                    "confirmed_in": approval_record["confirmed_in"],
                     "recorded_at": now(),
                 }
                 if phase["phase"] == "problem_human_acceptance":
@@ -6444,7 +6394,7 @@ class ARISController:
                         state,
                         candidate=candidate,
                         request=request,
-                        receipt=receipt,
+                        approval_record=approval_record,
                     )
                     phase["selected_for_testing"] = deepcopy(binding)
                 elif phase["phase"] == "principle_test_human_approval":
@@ -6459,7 +6409,7 @@ class ARISController:
                         "decision": decision,
                         "selected_id": selected_id,
                         "approval_request_id": request["id"],
-                        "confirmed_in": receipt["confirmed_in"],
+                        "confirmed_in": approval_record["confirmed_in"],
                         "at": now(),
                     }
                 )
@@ -6479,6 +6429,10 @@ class ARISController:
                 or live_request.get("artifact_bindings") != request.get("artifact_bindings")
             ):
                 raise ControllerError("Human Gate changed before approval was recorded")
+            approval_record = {
+                "request_id": str(request["id"]),
+                "confirmed_in": "explicit_human_command",
+            }
             if gate == "source_policy_approval":
                 if decision != "approve":
                     raise ControllerError("source-policy revisions use request-source-policy-revision")
@@ -6492,7 +6446,7 @@ class ARISController:
                     "validator_result": "PASS",
                     "sha256": candidate["sha256"],
                     "author_role": candidate["author_role"],
-                    "approved_by": "codex_ui_user",
+                    "approved_by": "human",
                     "approval_request_id": request["id"],
                     "artifact_bindings": dict(request["artifact_bindings"]),
                     "approved_at": now(),
@@ -6508,13 +6462,6 @@ class ARISController:
                 run_state._assert_dependencies(str(self.root), state, spec, "scope_human_approval")
                 target = self._human_gate_decision_target(spec, decision)
                 if target is not None:
-                    receipt = self._consume_ui_approval_receipt(
-                        gate,
-                        str(request["id"]),
-                        decision,
-                        selected_id=selected_id,
-                        artifact_bindings=dict(request.get("artifact_bindings") or {}),
-                    )
                     phase.update(
                         {
                             "status": "pending",
@@ -6529,7 +6476,7 @@ class ARISController:
                         "decision": decision,
                         "approval_request_id": request["id"],
                         "artifact_bindings": dict(request["artifact_bindings"]),
-                        "confirmed_in": receipt["confirmed_in"],
+                        "confirmed_in": approval_record["confirmed_in"],
                         "at": now(),
                     })
                     research["current_stage"] = "QUERY_PLANNING"
@@ -6547,24 +6494,17 @@ class ARISController:
                 research["waiting_for"] = None
             else:
                 raise ControllerError(f"unsupported human gate {gate!r}")
-            receipt = self._consume_ui_approval_receipt(
-                gate,
-                str(request["id"]),
-                decision,
-                selected_id=selected_id,
-                artifact_bindings=dict(request.get("artifact_bindings") or {}),
-            )
             research["approvals"].append({
                 "gate": gate,
                 "decision": decision,
                 "selected_id": selected_id,
                 "approval_request_id": request["id"],
-                "confirmed_in": receipt["confirmed_in"],
+                "confirmed_in": approval_record["confirmed_in"],
                 "at": now(),
             })
             research["approval_request"] = None
             if gate == "scope_human_approval":
-                self._activate_scientific_core(state, receipt)
+                self._activate_scientific_core(state, approval_record)
             return state
 
     def request_source_policy_revision(self) -> dict:
@@ -6580,19 +6520,17 @@ class ARISController:
                 raise ControllerError("Human Gate changed before source policy revision")
             if request.get("artifact_sha256") != candidate["sha256"]:
                 raise ControllerError("Human Gate does not match the validated source policy")
-            receipt = self._consume_ui_approval_receipt(
-                gate,
-                str(request["id"]),
-                "request_revision",
-                artifact_bindings=dict(request.get("artifact_bindings") or {}),
-            )
+            approval_record = {
+                "request_id": str(request["id"]),
+                "confirmed_in": "explicit_human_command",
+            }
             research["approvals"].append({
                 "gate": gate,
                 "decision": "request_revision",
                 "approval_request_id": request["id"],
                 "artifact_sha256": candidate["sha256"],
                 "artifact_bindings": dict(request["artifact_bindings"]),
-                "confirmed_in": receipt["confirmed_in"],
+                "confirmed_in": approval_record["confirmed_in"],
                 "at": now(),
             })
             research["current_stage"] = "SOURCE_POLICY_DRAFTING"
