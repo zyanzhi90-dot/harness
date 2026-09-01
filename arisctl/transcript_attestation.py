@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .reviews import review_attestation_path
 
@@ -61,7 +63,12 @@ def _generic_coverage_reviewer_id(
 
 
 def attest_review_transcript(
-    root: str | Path, run_id: str, role: str, transcript_path: str | Path
+    root: str | Path,
+    run_id: str,
+    role: str,
+    transcript_path: str | Path,
+    *,
+    payload_validator: Callable[[dict[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
     """Write one externally stored review receipt from an immutable child log.
 
@@ -111,6 +118,8 @@ def attest_review_transcript(
     bindings = payload.get("reviewed_artifact_hashes")
     if not isinstance(bindings, dict):
         raise ValueError("review payload lacks reviewed artifact bindings")
+    if payload_validator is not None:
+        payload_validator(payload)
     canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     receipt = {
         "project_root": str(root_path),
@@ -133,7 +142,37 @@ def attest_review_transcript(
         raise ValueError("review payload lacks verdict identity")
     target = review_attestation_path(root_path, run_id, role, request_id)
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists() or target.with_suffix(".consumed.json").exists():
-        raise ValueError("an attestation already exists for this review request")
-    target.write_text(json.dumps(receipt, ensure_ascii=True, indent=2), encoding="utf-8")
+    consumed = target.with_suffix(".consumed.json")
+    if consumed.exists():
+        raise ValueError("the attestation for this review request has already been consumed")
+    if target.exists():
+        existing = json.loads(target.read_text(encoding="utf-8"))
+        if existing.get("payload_sha256") == receipt["payload_sha256"]:
+            return existing
+        stable_fields = (
+            "project_root",
+            "agent_type",
+            "agent_id",
+            "correlation_id",
+            "run_id",
+            "artifact_bindings",
+            "transcript_path",
+        )
+        if any(existing.get(field) != receipt.get(field) for field in stable_fields):
+            raise ValueError(
+                "an attestation from a different reviewer response already exists for this review request"
+            )
+        if existing.get("turn_id") == receipt.get("turn_id"):
+            raise ValueError(
+                "the existing reviewer completion cannot be replaced without a later completed turn"
+            )
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(receipt, ensure_ascii=True, indent=2), encoding="utf-8"
+        )
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
     return receipt

@@ -3,7 +3,7 @@ import json
 import pytest
 
 from arisctl.transcript_attestation import attest_review_transcript
-from arisctl.reviews import load_review_attestation
+from arisctl.reviews import consume_review_attestation, load_review_attestation
 
 
 BLOCKING_REVIEWER_ROLES = (
@@ -75,12 +75,118 @@ def test_transcript_verifier_writes_distinct_external_review_receipt(tmp_path, m
     assert receipt["verdict_payload"]["review_request_id"] == "request-1"
 
 
+def test_transcript_verifier_replaces_unconsumed_receipt_with_later_completion(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ARIS_REVIEW_ATTESTATION_ROOT", str(tmp_path / "external"))
+    transcript = tmp_path / "child.jsonl"
+    _transcript(
+        transcript,
+        role="independent_root_cause_reviewer",
+        reviewer="gpt-5.6-sol",
+    )
+    first = attest_review_transcript(
+        tmp_path,
+        "run-1",
+        "independent_root_cause_reviewer",
+        transcript,
+    )
+    corrected = {
+        **first["verdict_payload"],
+        "reasons": ["The corrected completion preserves the scientific rationale."],
+        "observation_fidelity": "PASS",
+    }
+    with transcript.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "\n"
+            + json.dumps(
+                {
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "turn_id": "turn-2",
+                        "last_agent_message": json.dumps(corrected),
+                    },
+                }
+            )
+        )
+
+    replacement = attest_review_transcript(
+        tmp_path,
+        "run-1",
+        "independent_root_cause_reviewer",
+        transcript,
+    )
+    loaded = load_review_attestation(
+        tmp_path,
+        "run-1",
+        role="independent_root_cause_reviewer",
+        request_id="request-1",
+        artifact_bindings={"map": "abc"},
+    )
+
+    assert replacement["turn_id"] == "turn-2"
+    assert loaded["payload_sha256"] == replacement["payload_sha256"]
+    assert loaded["verdict_payload"]["reasons"] == corrected["reasons"]
+
+
+def test_transcript_verifier_never_replaces_consumed_receipt(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARIS_REVIEW_ATTESTATION_ROOT", str(tmp_path / "external"))
+    transcript = tmp_path / "child.jsonl"
+    _transcript(transcript)
+    receipt = attest_review_transcript(
+        tmp_path, "run-1", "coverage_reviewer", transcript
+    )
+    consume_review_attestation(
+        tmp_path,
+        "run-1",
+        role="coverage_reviewer",
+        request_id="request-1",
+        reviewer=receipt["reviewer"],
+        verdict_id=receipt["verdict_id"],
+        decision=receipt["decision"],
+        artifact_bindings={"map": "abc"},
+    )
+
+    with pytest.raises(ValueError, match="already been consumed"):
+        attest_review_transcript(
+            tmp_path, "run-1", "coverage_reviewer", transcript
+        )
+
+
 def test_transcript_verifier_rejects_wrong_configured_role(tmp_path, monkeypatch):
     monkeypatch.setenv("ARIS_REVIEW_ATTESTATION_ROOT", str(tmp_path / "external"))
     transcript = tmp_path / "child.jsonl"
     _transcript(transcript, role="paper_reader")
     with pytest.raises(ValueError, match="role"):
         attest_review_transcript(tmp_path, "run-1", "coverage_reviewer", transcript)
+
+
+def test_transcript_verifier_validates_payload_before_writing_receipt(
+    tmp_path, monkeypatch
+):
+    external = tmp_path / "external"
+    monkeypatch.setenv("ARIS_REVIEW_ATTESTATION_ROOT", str(external))
+    transcript = tmp_path / "child.jsonl"
+    _transcript(
+        transcript,
+        role="independent_root_cause_reviewer",
+        reviewer="gpt-5.6-sol",
+    )
+
+    def reject_payload(_payload):
+        raise ValueError("root-cause verdict observation_fidelity must be PASS")
+
+    with pytest.raises(ValueError, match="observation_fidelity must be PASS"):
+        attest_review_transcript(
+            tmp_path,
+            "run-1",
+            "independent_root_cause_reviewer",
+            transcript,
+            payload_validator=reject_payload,
+        )
+
+    assert not any(external.rglob("*.json"))
 
 
 def test_transcript_verifier_accepts_existing_generic_coverage_dispatch(tmp_path, monkeypatch):

@@ -91,6 +91,12 @@ problem-revision path. A conflict with the accepted diagnosis uses the declared
 `RCA_CONFLICT` return with linked Evidence and guidance; do not rewrite the RCA
 inside method design.
 
+Before deriving RMCs, consume the accepted Root-Cause Verdict's `reasons` and
+every `NON_BLOCKING` issue as qualifications on the accepted chains. Carry any
+material qualification into the chain disposition, capability, or Design
+Obligation it constrains; do not re-perform the review merely because rubric
+statuses are machine-readable scalars.
+
 ## D0 — Derive the machine-resolvable intervention chain
 
 Start from every accepted primary causal chain. Derive the following relation

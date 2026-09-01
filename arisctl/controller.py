@@ -4605,6 +4605,139 @@ class ARISController:
             )
         return record
 
+    def _validate_live_review_payload(
+        self,
+        state: dict[str, Any],
+        phase: dict[str, Any],
+        spec: dict[str, Any],
+        *,
+        role: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Validate a transcript payload before it becomes a live Gate receipt."""
+
+        request = self._assert_core_review_request_current(
+            state, phase, spec, allow_pending_reviewed_artifacts=True
+        )
+        expected = {
+            "run_id": self.run_id,
+            "review_request_id": request["id"],
+            "reviewed_artifact_hashes": request["artifact_bindings"],
+        }
+        if role != request["required_reviewer_role"] or any(
+            payload.get(key) != value for key, value in expected.items()
+        ):
+            raise ControllerError(
+                "review transcript payload does not match the live Controller request"
+            )
+        if payload.get("decision") not in request["allowed_review_verdicts"]:
+            raise ControllerError("review transcript decision is not allowed for the live Gate")
+
+        try:
+            if phase["phase"] == "root_cause_gate":
+                from .validators import load_json, validate_root_cause_verdict
+
+                inputs = self._resolved_phase_paths(
+                    state, phase["phase"], "required_inputs"
+                )
+                (
+                    problem_contract,
+                    evidence_capsule,
+                    necessity_closure,
+                    necessity_verdict,
+                    analysis_path,
+                    _analysis_view,
+                ) = inputs
+                analysis = load_json(self.root / analysis_path)
+                bindings = request["artifact_bindings"]
+                validate_root_cause_verdict(
+                    payload,
+                    run_id=self.run_id,
+                    analysis_id=analysis["analysis_id"],
+                    reviewed_analysis_sha256=bindings[analysis_path],
+                    problem_contract_sha256=bindings[problem_contract],
+                    evidence_capsule_sha256=bindings[evidence_capsule],
+                    necessity_closure_sha256=bindings[necessity_closure],
+                    necessity_verdict_sha256=bindings[necessity_verdict],
+                )
+            elif phase["phase"] == "problem_necessity":
+                from .validators import load_json, validate_necessity_verdict
+
+                problem_contract, evidence_capsule = self._resolved_phase_paths(
+                    state, phase["phase"], "required_inputs"
+                )
+                closure_path = str(
+                    self.workflow["artifact_manifest"]["necessity_closure"]
+                )
+                closure = load_json(self.root / closure_path)
+                bindings = request["artifact_bindings"]
+                validate_necessity_verdict(
+                    payload,
+                    contract=self.workflow["artifact_contracts"]["necessity_verdict"],
+                    run_id=self.run_id,
+                    request_id=str(request["id"]),
+                    artifact_bindings=dict(bindings),
+                    closure=closure,
+                    reviewed_closure_sha256=bindings[closure_path],
+                    problem_contract_sha256=bindings[problem_contract],
+                    evidence_capsule_sha256=bindings[evidence_capsule],
+                )
+        except (KeyError, ValueError, ValidationError) as exc:
+            raise ControllerError(str(exc)) from exc
+        return payload
+
+    def validate_review_transcript_payload(
+        self, role: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Preflight one native reviewer completion against its live Gate."""
+
+        state = self.status()
+        if role == "coverage_reviewer":
+            request = state["research_lit"].get("coverage_review_request")
+            if not isinstance(request, dict):
+                raise ControllerError("no live coverage review request")
+            expected = {
+                "run_id": self.run_id,
+                "review_request_id": request["id"],
+                "reviewed_artifact_hashes": request["artifact_bindings"],
+            }
+            if any(payload.get(key) != value for key, value in expected.items()):
+                raise ControllerError(
+                    "coverage review transcript does not match the live request"
+                )
+            try:
+                validate_coverage_review(
+                    payload,
+                    development_trace_count=request.get("development_trace_count"),
+                )
+            except ValidationError as exc:
+                raise ControllerError(str(exc)) from exc
+            return payload
+        if role == VALIDATION_REVIEWER_ROLE:
+            entry = state["scientific_core"].get("validation_entry") or {}
+            request = entry.get("validation_review_request")
+            expected = {
+                "run_id": self.run_id,
+                "review_request_id": request.get("id") if isinstance(request, dict) else None,
+                "reviewed_artifact_hashes": (
+                    request.get("artifact_bindings") if isinstance(request, dict) else None
+                ),
+            }
+            if (
+                not isinstance(request, dict)
+                or request.get("required_reviewer_role") != role
+                or any(payload.get(key) != value for key, value in expected.items())
+            ):
+                raise ControllerError(
+                    "validation review transcript does not match the live request"
+                )
+            return payload
+        phase = self._current_core_phase(state)
+        spec = self._phase_spec(state, str(phase["phase"]))
+        return self._validate_live_review_payload(
+            state, phase, spec, role=role, payload=payload
+        )
+
     def _materialize_root_cause_verdict(self, state: dict, phase: dict, spec: dict) -> None:
         """Persist the reviewer-owned root-cause verdict through the Controller.
 
@@ -4642,6 +4775,13 @@ class ARISController:
             or payload.get("decision") != attestation.get("decision")
         ):
             raise ControllerError("root-cause reviewer verdict does not match its live attestation")
+        self._validate_live_review_payload(
+            state,
+            phase,
+            spec,
+            role=str(request["required_reviewer_role"]),
+            payload=payload,
+        )
         output_paths = self._resolved_phase_paths(state, phase["phase"], "produced_artifacts")
         if len(output_paths) != 1:
             raise ControllerError("root-cause Gate must declare exactly one canonical verdict artifact")
@@ -4685,6 +4825,13 @@ class ARISController:
         }
         if any(payload.get(key) != value for key, value in expected.items()):
             raise ControllerError("problem-necessity reviewer verdict does not match its live attestation")
+        self._validate_live_review_payload(
+            state,
+            phase,
+            spec,
+            role=str(request["required_reviewer_role"]),
+            payload=payload,
+        )
         target = self.root / str(self.workflow["artifact_manifest"]["necessity_verdict"])
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")

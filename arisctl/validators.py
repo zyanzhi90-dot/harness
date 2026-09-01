@@ -3884,7 +3884,9 @@ def validate_necessity_verdict(
         "evidence_sufficiency",
     )
     for field in rubrics:
-        if verdict[field] not in {"PASS", "FAIL", "UNCERTAIN"}:
+        if not isinstance(verdict[field], str) or verdict[field] not in {
+            "PASS", "FAIL", "UNCERTAIN"
+        }:
             raise ValidationError(f"Necessity Verdict.{field} must be PASS, FAIL, or UNCERTAIN")
     if decision != "UNRESOLVED" and (blocking or any(verdict[field] != "PASS" for field in rubrics)):
         raise ValidationError(f"{decision} requires all Necessity rubrics PASS and no BLOCKING issue")
@@ -4150,7 +4152,9 @@ def validate_root_cause_verdict(
         "evidence_calibration", "intervention_relevance", "falsifiability",
         "residual_failure_alignment",
     ):
-        if verdict[field] not in {"PASS", "FAIL", "UNCERTAIN"}:
+        if not isinstance(verdict[field], str) or verdict[field] not in {
+            "PASS", "FAIL", "UNCERTAIN"
+        }:
             raise ValidationError(f"root-cause verdict {field} must be PASS, FAIL, or UNCERTAIN")
     if verdict["decision"] == "DIAGNOSIS_READY" and any(
         verdict[field] != "PASS"

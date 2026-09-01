@@ -692,7 +692,13 @@ def main() -> int:
                 result = controller.submit_coverage_review(_json_file(args.json_file))
             elif args.command == "attest-review-transcript":
                 result = attest_review_transcript(
-                    controller.root, controller.run_id, args.role, args.transcript_path
+                    controller.root,
+                    controller.run_id,
+                    args.role,
+                    args.transcript_path,
+                    payload_validator=lambda payload: controller.validate_review_transcript_payload(
+                        args.role, payload
+                    ),
                 )
             elif args.command == "submit-coverage-review-transcript":
                 request = controller.status()["research_lit"]["coverage_review_request"]

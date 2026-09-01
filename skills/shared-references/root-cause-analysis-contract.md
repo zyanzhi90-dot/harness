@@ -296,6 +296,14 @@ one of the eight rubrics. Schema validity and hash/ID
 bindings are Type-A checks; the eight scientific judgments remain the fresh
 reviewer's Type-B responsibility.
 
+Each rubric field is a machine-readable scalar, not a `{status, rationale}`
+object. Preserve the scientific basis for the decision in `reasons`, and record
+actionable caveats in `issues`; the attested receipt carries the complete
+verdict payload and must never reduce the reviewer judgment to rubric statuses
+alone. Downstream Method Design reads the accepted analysis and this complete
+verdict, so the reasons must retain every material qualification needed to use
+the diagnosis without re-performing the review.
+
 ## Method-design handoff
 
 Pass the accepted problem unchanged plus the validated analysis and verdict.

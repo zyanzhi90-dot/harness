@@ -3949,6 +3949,92 @@ def test_root_cause_registers_nonliterature_evidence_and_binds_it_to_review(
         controller.complete_current_phase()
 
 
+def test_root_cause_receipt_is_schema_checked_before_canonical_materialization(
+    tmp_path: Path,
+) -> None:
+    controller = start_controller(tmp_path)
+    reach_problem_human_acceptance(controller)
+    approve(controller, "problem_acceptance", selected_id="P-1")
+    necessity_verdict_id, necessity_reviewer = complete_problem_necessity(controller)
+    controller.accept_current_phase(necessity_verdict_id, necessity_reviewer)
+    necessity_binding = run_state._accepted_necessity_binding(
+        str(controller.root), controller.status()
+    )
+    active = controller.status()["scientific_core"]["active_problem_version"]
+    analysis = root_cause_payload(evidence_ref="P1")
+    analysis["problem_contract_sha256"] = active["contract_sha256"]
+    analysis["evidence_capsule_sha256"] = active["evidence_capsule_sha256"]
+    analysis["necessity_binding"] = necessity_binding
+
+    controller.start_current_phase()
+    analysis_path = tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.json"
+    analysis_path.write_text(json.dumps(analysis), encoding="utf-8")
+    (tmp_path / "idea-stage" / "ROOT_CAUSE_ANALYSIS.md").write_text(
+        "# Root cause\n"
+        + "; ".join(
+            [
+                analysis["analysis_id"],
+                analysis["problem_id"],
+                analysis["problem_contract_sha256"],
+                analysis["evidence_capsule_sha256"],
+                necessity_binding["necessity_id"],
+                necessity_binding["closure_sha256"],
+                necessity_binding["verdict_id"],
+                necessity_binding["verdict_sha256"],
+                *necessity_binding["residual_failure_ids"],
+                *analysis["primary_causal_chain_ids"],
+            ]
+        ),
+        encoding="utf-8",
+    )
+    controller.complete_current_phase()
+    controller.start_current_phase()
+    request = run_state._find_phase(
+        controller.status(), "root_cause_gate"
+    )["review_request"]
+    malformed = {
+        "schema_version": 1,
+        "run_id": controller.run_id,
+        "review_request_id": request["id"],
+        "reviewer": "gpt-5.6-sol",
+        "verdict_id": "RCA-MALFORMED-RUBRIC",
+        "analysis_id": analysis["analysis_id"],
+        "reviewed_analysis_sha256": sha256_file(analysis_path),
+        "problem_contract_sha256": active["contract_sha256"],
+        "evidence_capsule_sha256": active["evidence_capsule_sha256"],
+        "necessity_closure_sha256": necessity_binding["closure_sha256"],
+        "necessity_verdict_sha256": necessity_binding["verdict_sha256"],
+        "decision": "DIAGNOSIS_READY",
+        "reasons": ["The scientific rationale remains part of the full verdict."],
+        "issues": [],
+        "observation_fidelity": {
+            "status": "PASS",
+            "rationale": "This object is not the canonical machine rubric type.",
+        },
+        "grouping_adequacy": "PASS",
+        "causal_depth": "PASS",
+        "explanatory_coverage": "PASS",
+        "evidence_calibration": "PASS",
+        "intervention_relevance": "PASS",
+        "falsifiability": "PASS",
+        "residual_failure_alignment": "PASS",
+        "reviewed_artifact_hashes": request["artifact_bindings"],
+    }
+
+    with pytest.raises(ControllerError, match="observation_fidelity must be PASS"):
+        controller.validate_review_transcript_payload(
+            "independent_root_cause_reviewer", malformed
+        )
+
+    verdict_path = tmp_path / "idea-stage" / "ROOT_CAUSE_VERDICT.json"
+    sentinel = '{"sentinel":"preserve-existing-canonical-artifact"}\n'
+    verdict_path.write_text(sentinel, encoding="utf-8")
+    attest(controller, "independent_root_cause_reviewer", malformed)
+    with pytest.raises(ControllerError, match="observation_fidelity must be PASS"):
+        controller.complete_current_phase()
+    assert verdict_path.read_text(encoding="utf-8") == sentinel
+
+
 def test_root_cause_reuses_only_capsule_bound_existing_nonliterature_evidence(
     tmp_path: Path,
 ) -> None:
