@@ -119,6 +119,31 @@ def test_every_scientific_core_reviewer_uses_direct_codex_cli() -> None:
         assert "exact model identifier" in text
 
 
+def test_method_reviewer_can_read_bound_artifacts_without_mutation_authority() -> None:
+    repo = Path(__file__).resolve().parents[1]
+    config = tomllib.loads(
+        (repo / ".codex" / "agents" / "independent_method_reviewer.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert config["sandbox_mode"] == "read-only"
+    assert config["approval_policy"] == "never"
+    assert config["features"]["shell_tool"] is True
+    assert config["tools"]["web_search"] is False
+
+    instructions = config["developer_instructions"]
+    assert "list bound paths" in instructions
+    assert "read their original contents" in instructions
+    assert "search within those files" in instructions
+    assert "compute or verify their hashes" in instructions
+    assert "Do not use inline handoff text as a substitute" in instructions
+    assert "Do not create, edit, delete, rename, copy" in instructions
+    assert "do not run `arisctl` or any Controller/Gate command" in instructions
+    assert "`reviewed_artifact` must be a JSON object with exactly `path` and `sha256`" in instructions
+    assert "never return a path string there" in instructions
+
+
 @pytest.mark.parametrize(
     "role",
     ("independent_problem_reviewer", "independent_novelty_reviewer"),
